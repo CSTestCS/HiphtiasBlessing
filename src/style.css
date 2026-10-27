@@ -93,3 +93,8 @@ label { display: block; font-size: 13px; color: #b8bdd6; margin: 10px 0 4px; }
 #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; z-index: 40; transition: opacity .4s; }
 #fade.on { opacity: 1; }
 .loading { font-size: 22px; color: #ccc; }
+
+.fill.stam { background: linear-gradient(90deg,#00b894,#55efc4); }
+.bar.thin { height: 7px; }
+#hud-meters { top: 140px; width: 300px; }
+#hud-top { max-width: 560px; }

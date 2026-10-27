@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Level, mat } from '../level.js';
+import { Level } from '../level.js';
 
 export function buildApartment() {
   const L = new Level('apartment');
@@ -65,7 +65,9 @@ export function buildApartment() {
 
   L.spawn = { x: -3.0, z: -2.6, yaw: Math.PI / 2 };
   L.doorSpawn = { x: 0, z: 3.8, yaw: Math.PI };
+  L.pois.celesti = { x: 1.6, z: 2.0, yaw: -Math.PI * 0.75 };
   L.indoor = true;
-  L.buildNav(0.75);
+  L.finalize();
+  L.buildNav(0.6);
   return L;
 }

@@ -1,6 +1,8 @@
-// Level building blocks: boxes with collision/occlusion, labels, interactables,
-// and an automatic navigation grid for NPC path finding.
+// Level building blocks: boxes with collision/occlusion, labels, stations,
+// fast sight-line tests (box ray casts with a spatial hash), mesh merging,
+// and an automatic navigation grid with A* for NPC path finding.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const mats = {};
 export function mat(color, opts = {}) {
@@ -9,28 +11,6 @@ export function mat(color, opts = {}) {
     mats[key] = new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.85, metalness: 0, ...opts });
   }
   return mats[key];
-}
-
-export function textSprite(text, { color = '#ffffff', bg = 'rgba(0,0,0,0.55)', size = 48, scale = 0.6 } = {}) {
-  const c = document.createElement('canvas');
-  const ctx = c.getContext('2d');
-  ctx.font = `bold ${size}px sans-serif`;
-  const w = Math.ceil(ctx.measureText(text).width) + 24;
-  c.width = w;
-  c.height = size + 20;
-  ctx.font = `bold ${size}px sans-serif`;
-  if (bg) {
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, c.width, c.height);
-  }
-  ctx.fillStyle = color;
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, 12, c.height / 2);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false }));
-  s.scale.set((c.width / c.height) * scale, scale, 1);
-  return s;
 }
 
 export function textPlane(text, { color = '#ffffff', bg = '#2d3436', size = 64, height = 0.5 } = {}) {
@@ -49,11 +29,50 @@ export function textPlane(text, { color = '#ffffff', bg = '#2d3436', size = 64, 
   ctx.fillText(text, c.width / 2, c.height / 2);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const m = new THREE.Mesh(
-    new THREE.PlaneGeometry((c.width / c.height) * height, height),
-    new THREE.MeshBasicMaterial({ map: tex })
-  );
-  return m;
+  return new THREE.Mesh(new THREE.PlaneGeometry((c.width / c.height) * height, height), new THREE.MeshBasicMaterial({ map: tex }));
+}
+
+const CELL = 4;
+
+// Binary heap for A*
+class Heap {
+  constructor() {
+    this.a = [];
+  }
+  push(k, f) {
+    const a = this.a;
+    a.push([k, f]);
+    let i = a.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (a[p][1] <= a[i][1]) break;
+      [a[p], a[i]] = [a[i], a[p]];
+      i = p;
+    }
+  }
+  pop() {
+    const a = this.a;
+    const top = a[0];
+    const last = a.pop();
+    if (a.length) {
+      a[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = i * 2 + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < a.length && a[l][1] < a[m][1]) m = l;
+        if (r < a.length && a[r][1] < a[m][1]) m = r;
+        if (m === i) break;
+        [a[m], a[i]] = [a[i], a[m]];
+        i = m;
+      }
+    }
+    return top[0];
+  }
+  get size() {
+    return this.a.length;
+  }
 }
 
 export class Level {
@@ -61,13 +80,16 @@ export class Level {
     this.name = name;
     this.group = new THREE.Group();
     this.colliders = []; // {minX,maxX,minZ,maxZ,h}
-    this.occluders = []; // meshes that block sight
-    this.interactables = new Map(); // id -> {id,x,z,r,label,...}
-    this.pois = {}; // named points / lists for NPCs
+    this.occ = []; // sight blockers {minX,maxX,minY,maxY,minZ,maxZ}
+    this.interactables = new Map();
+    this.stations = []; // {id, tag, x, z, yaw, label, room}
+    this.pois = {};
     this.bounds = { minX: -10, maxX: 10, minZ: -10, maxZ: 10 };
     this.spawn = { x: 0, z: 0, yaw: 0 };
     this.indoor = true;
     this.updaters = [];
+    this.staticMeshes = [];
+    this.stamp = 0;
   }
 
   add(obj) {
@@ -84,18 +106,48 @@ export class Level {
     m.castShadow = opts.shadow !== false;
     m.receiveShadow = true;
     this.group.add(m);
+    if (opts.static !== false && !opts.matOpts?.transparent) this.staticMeshes.push(m);
+    const rot = opts.rotY && Math.abs(Math.sin(opts.rotY * 2)) > 0.1;
+    const hw = rot ? Math.max(w, d) / 2 : Math.abs(Math.cos(opts.rotY || 0)) > 0.5 ? w / 2 : d / 2;
+    const hd = rot ? Math.max(w, d) / 2 : Math.abs(Math.cos(opts.rotY || 0)) > 0.5 ? d / 2 : w / 2;
     if (opts.collide !== false && y0 < 1.2) {
-      this.colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2, h: y0 + h });
+      this.colliders.push({ minX: x - hw, maxX: x + hw, minZ: z - hd, maxZ: z + hd, h: y0 + h });
     }
-    if (opts.occlude !== false) this.occluders.push(m);
+    if (opts.occlude !== false) {
+      this.occ.push({ minX: x - hw, maxX: x + hw, minY: y0, maxY: y0 + h, minZ: z - hd, maxZ: z + hd });
+    }
     return m;
   }
 
-  /** Axis-aligned wall from (x1,z1) to (x2,z2). */
-  wall(x1, z1, x2, z2, h = 2.8, color = '#e8e2d6', t = 0.2) {
+  wall(x1, z1, x2, z2, h = 3, color = '#e8e2d6', t = 0.2) {
     const w = Math.abs(x2 - x1) || t;
     const d = Math.abs(z2 - z1) || t;
     return this.box((x1 + x2) / 2, (z1 + z2) / 2, w + (x1 !== x2 ? t : 0), d + (z1 !== z2 ? t : 0), h, color);
+  }
+
+  /** Wall along X (z fixed) with door gaps [{c, w}] (gap centers on x). */
+  wallX(z, x1, x2, gaps = [], h = 3, color = '#e8e2d6') {
+    const segs = this.splitGaps(x1, x2, gaps);
+    for (const [a, b] of segs) if (b - a > 0.05) this.wall(a, z, b, z, h, color);
+  }
+
+  wallZ(x, z1, z2, gaps = [], h = 3, color = '#e8e2d6') {
+    const segs = this.splitGaps(z1, z2, gaps);
+    for (const [a, b] of segs) if (b - a > 0.05) this.wall(x, a, x, b, h, color);
+  }
+
+  splitGaps(a, b, gaps) {
+    const lo = Math.min(a, b);
+    const hi = Math.max(a, b);
+    const g = gaps.map((x) => [x.c - x.w / 2, x.c + x.w / 2]).sort((p, q) => p[0] - q[0]);
+    const out = [];
+    let cur = lo;
+    for (const [s, e] of g) {
+      if (s > cur) out.push([cur, Math.min(s, hi)]);
+      cur = Math.max(cur, e);
+    }
+    if (cur < hi) out.push([cur, hi]);
+    return out;
   }
 
   floor(x, z, w, d, color, y = 0) {
@@ -104,6 +156,7 @@ export class Level {
     m.position.set(x, y + 0.001, z);
     m.receiveShadow = true;
     this.group.add(m);
+    this.staticMeshes.push(m);
     return m;
   }
 
@@ -121,49 +174,120 @@ export class Level {
     return it;
   }
 
-  /** Simple chair (visual, low collision). */
+  /** Register a work station (target for tasks). Also makes it interactable. */
+  station(tag, x, z, yaw, label, room, opts = {}) {
+    const id = opts.id || `${tag}#${this.stations.length}`;
+    const s = { id, tag, x, z, yaw, label, room, ...opts };
+    this.stations.push(s);
+    this.interactable(id, x, z, label, { r: opts.r || 1.15, station: s });
+    return s;
+  }
+
+  stationsByTag(tag) {
+    return this.stations.filter((s) => s.tag === tag);
+  }
+
   chair(x, z, rotY = 0, color = '#6d4c41') {
-    const g = new THREE.Group();
-    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.06, 0.45), mat(color));
-    seat.position.y = 0.45;
-    const back = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.5, 0.06), mat(color));
-    back.position.set(0, 0.72, -0.2);
-    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.42, 0.4), mat('#3e2723'));
-    legs.position.y = 0.21;
-    legs.scale.set(1, 1, 1);
-    g.add(seat, back, legs);
-    g.position.set(x, 0, z);
-    g.rotation.y = rotY;
-    g.traverse((o) => {
-      if (o.isMesh) {
-        o.castShadow = true;
-        o.receiveShadow = true;
-      }
-    });
-    this.group.add(g);
-    return g;
+    this.box(x, z, 0.45, 0.45, 0.45, color, { collide: false, occlude: false });
+    const bx = x - Math.sin(rotY) * 0.2;
+    const bz = z - Math.cos(rotY) * 0.2;
+    const along = Math.abs(Math.cos(rotY)) > 0.5;
+    this.box(bx, bz, along ? 0.45 : 0.06, along ? 0.06 : 0.45, 0.5, color, { y: 0.45, collide: false, occlude: false });
   }
 
   plant(x, z, s = 1) {
-    const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.22 * s, 0.17 * s, 0.4 * s, 12), mat('#a0522d'));
-    pot.position.set(x, 0.2 * s, z);
+    this.box(x, z, 0.4 * s, 0.4 * s, 0.4 * s, '#a0522d');
     const leaves = new THREE.Mesh(new THREE.IcosahedronGeometry(0.4 * s, 1), mat('#2e8b57'));
     leaves.position.set(x, 0.75 * s, z);
-    [pot, leaves].forEach((m) => {
-      m.castShadow = true;
-      this.group.add(m);
-    });
-    this.colliders.push({ minX: x - 0.25 * s, maxX: x + 0.25 * s, minZ: z - 0.25 * s, maxZ: z + 0.25 * s, h: 1 });
-    this.occluders.push(leaves);
+    leaves.castShadow = true;
+    this.group.add(leaves);
+    this.staticMeshes.push(leaves);
+    this.occ.push({ minX: x - 0.35 * s, maxX: x + 0.35 * s, minY: 0.4 * s, maxY: 1.1 * s, minZ: z - 0.35 * s, maxZ: z + 0.35 * s });
+  }
+
+  /** Merge static meshes by material to cut draw calls, and build spatial hashes. */
+  finalize() {
+    const byMat = new Map();
+    for (const m of this.staticMeshes) {
+      if (!m.parent || m.parent !== this.group) continue;
+      if (!byMat.has(m.material)) byMat.set(m.material, []);
+      byMat.get(m.material).push(m);
+    }
+    for (const [material, list] of byMat) {
+      if (list.length < 2) continue;
+      const geos = [];
+      for (const m of list) {
+        m.updateMatrix();
+        let g = m.geometry.clone();
+        if (g.index) g = g.toNonIndexed();
+        g.applyMatrix4(m.matrix);
+        for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+        geos.push(g);
+        this.group.remove(m);
+      }
+      const merged = mergeGeometries(geos, false);
+      if (!merged) {
+        list.forEach((m) => this.group.add(m));
+        continue;
+      }
+      const mm = new THREE.Mesh(merged, material);
+      mm.castShadow = list.some((m) => m.castShadow);
+      mm.receiveShadow = true;
+      this.group.add(mm);
+    }
+    this.staticMeshes = [];
+    this.buildHashes();
+  }
+
+  buildHashes() {
+    const hash = (list) => {
+      const h = new Map();
+      list.forEach((b, i) => {
+        const x0 = Math.floor(b.minX / CELL);
+        const x1 = Math.floor(b.maxX / CELL);
+        const z0 = Math.floor(b.minZ / CELL);
+        const z1 = Math.floor(b.maxZ / CELL);
+        for (let x = x0; x <= x1; x++)
+          for (let z = z0; z <= z1; z++) {
+            const k = x * 73856 + z;
+            if (!h.has(k)) h.set(k, []);
+            h.get(k).push(i);
+          }
+      });
+      return h;
+    };
+    this.colHash = hash(this.colliders);
+    this.occHash = hash(this.occ);
+    this.colStamp = new Uint32Array(this.colliders.length);
+    this.occStamp = new Uint32Array(this.occ.length);
+  }
+
+  _query(hash, stampArr, minX, maxX, minZ, maxZ, fn) {
+    const st = ++this.stamp;
+    const x0 = Math.floor(minX / CELL);
+    const x1 = Math.floor(maxX / CELL);
+    const z0 = Math.floor(minZ / CELL);
+    const z1 = Math.floor(maxZ / CELL);
+    for (let x = x0; x <= x1; x++)
+      for (let z = z0; z <= z1; z++) {
+        const l = hash.get(x * 73856 + z);
+        if (!l) continue;
+        for (const i of l) {
+          if (stampArr[i] === st) continue;
+          stampArr[i] = st;
+          if (fn(i)) return true;
+        }
+      }
+    return false;
   }
 
   // ---- collision -------------------------------------------------------
-
-  /** Push a circle (x,z,r) out of all colliders. Returns corrected {x,z}. */
   resolve(x, z, r) {
+    if (!this.colHash) this.buildHashes();
     for (let iter = 0; iter < 3; iter++) {
-      for (const c of this.colliders) {
-        if (c.h < 0.25) continue;
+      this._query(this.colHash, this.colStamp, x - r, x + r, z - r, z + r, (i) => {
+        const c = this.colliders[i];
+        if (c.h < 0.25) return false;
         const cx = Math.max(c.minX, Math.min(x, c.maxX));
         const cz = Math.max(c.minZ, Math.min(z, c.maxZ));
         const dx = x - cx;
@@ -175,16 +299,16 @@ export class Level {
             x = cx + (dx / d) * r;
             z = cz + (dz / d) * r;
           } else {
-            // Center inside box: push out along the smallest axis.
             const pen = [x - c.minX, c.maxX - x, z - c.minZ, c.maxZ - z];
-            const i = pen.indexOf(Math.min(...pen));
-            if (i === 0) x = c.minX - r;
-            else if (i === 1) x = c.maxX + r;
-            else if (i === 2) z = c.minZ - r;
+            const k = pen.indexOf(Math.min(...pen));
+            if (k === 0) x = c.minX - r;
+            else if (k === 1) x = c.maxX + r;
+            else if (k === 2) z = c.minZ - r;
             else z = c.maxZ + r;
           }
         }
-      }
+        return false;
+      });
     }
     const b = this.bounds;
     x = Math.max(b.minX + r, Math.min(b.maxX - r, x));
@@ -193,12 +317,13 @@ export class Level {
   }
 
   blockedPoint(x, z, r) {
-    for (const c of this.colliders) {
-      if (c.h < 0.25) continue;
-      if (x > c.minX - r && x < c.maxX + r && z > c.minZ - r && z < c.maxZ + r) return true;
-    }
+    if (!this.colHash) this.buildHashes();
     const b = this.bounds;
-    return x < b.minX + r || x > b.maxX - r || z < b.minZ + r || z > b.maxZ - r;
+    if (x < b.minX + r || x > b.maxX - r || z < b.minZ + r || z > b.maxZ - r) return true;
+    return this._query(this.colHash, this.colStamp, x - r, x + r, z - r, z + r, (i) => {
+      const c = this.colliders[i];
+      return c.h >= 0.25 && x > c.minX - r && x < c.maxX + r && z > c.minZ - r && z < c.maxZ + r;
+    });
   }
 
   segmentClear(x1, z1, x2, z2, r = 0.3) {
@@ -211,9 +336,52 @@ export class Level {
     return true;
   }
 
-  // ---- navigation ------------------------------------------------------
+  // ---- sight -----------------------------------------------------------
+  /** Distance along the ray (o + d*t) to the first sight blocker, or Infinity. d must be normalized. */
+  rayHit(ox, oy, oz, dx, dy, dz, maxT) {
+    if (!this.occHash) this.buildHashes();
+    const ex = ox + dx * maxT;
+    const ez = oz + dz * maxT;
+    let best = Infinity;
+    this._query(this.occHash, this.occStamp, Math.min(ox, ex), Math.max(ox, ex), Math.min(oz, ez), Math.max(oz, ez), (i) => {
+      const b = this.occ[i];
+      let t0 = 0;
+      let t1 = maxT;
+      const axes = [
+        [ox, dx, b.minX, b.maxX],
+        [oy, dy, b.minY, b.maxY],
+        [oz, dz, b.minZ, b.maxZ],
+      ];
+      for (const [o, d, lo, hi] of axes) {
+        if (Math.abs(d) < 1e-9) {
+          if (o < lo || o > hi) return false;
+        } else {
+          let ta = (lo - o) / d;
+          let tb = (hi - o) / d;
+          if (ta > tb) [ta, tb] = [tb, ta];
+          t0 = Math.max(t0, ta);
+          t1 = Math.min(t1, tb);
+          if (t0 > t1) return false;
+        }
+      }
+      if (t0 < best) best = t0;
+      return false;
+    });
+    return best;
+  }
 
-  buildNav(step = 1.0, r = 0.35) {
+  lineOfSight(a, b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const dz = b.z - a.z;
+    const d = Math.hypot(dx, dy, dz);
+    if (d < 0.01) return true;
+    return this.rayHit(a.x, a.y, a.z, dx / d, dy / d, dz / d, d - 0.12) === Infinity;
+  }
+
+  // ---- navigation ------------------------------------------------------
+  buildNav(step = 0.8, r = 0.32) {
+    if (!this.colHash) this.buildHashes();
     const b = this.bounds;
     const nx = Math.floor((b.maxX - b.minX) / step);
     const nz = Math.floor((b.maxZ - b.minZ) / step);
@@ -224,7 +392,7 @@ export class Level {
         const x = b.minX + i * step;
         const z = b.minZ + j * step;
         if (!this.blockedPoint(x, z, r)) {
-          idx.set(i + ',' + j, nodes.length);
+          idx.set(i * 10000 + j, nodes.length);
           nodes.push({ x, z, i, j, n: [] });
         }
       }
@@ -233,82 +401,92 @@ export class Level {
       for (let di = -1; di <= 1; di++) {
         for (let dj = -1; dj <= 1; dj++) {
           if (!di && !dj) continue;
-          const k = idx.get(node.i + di + ',' + (node.j + dj));
+          const k = idx.get((node.i + di) * 10000 + node.j + dj);
           if (k === undefined) continue;
           const o = nodes[k];
-          if (this.segmentClear(node.x, node.z, o.x, o.z, r * 0.9)) node.n.push(k);
+          if (di && dj) {
+            // diagonal: both orthogonal neighbours must exist
+            if (idx.get((node.i + di) * 10000 + node.j) === undefined || idx.get(node.i * 10000 + node.j + dj) === undefined) continue;
+          }
+          node.n.push(k);
+          void o;
         }
       }
     }
-    this.nav = { nodes, step, r };
+    this.nav = { nodes, step, r, idx };
   }
 
   nearestNode(x, z) {
+    const { step, idx, nodes } = this.nav;
+    const b = this.bounds;
+    const ci = Math.round((x - b.minX) / step);
+    const cj = Math.round((z - b.minZ) / step);
     let best = -1;
     let bd = Infinity;
-    const nodes = this.nav.nodes;
-    for (let k = 0; k < nodes.length; k++) {
-      const d = (nodes[k].x - x) ** 2 + (nodes[k].z - z) ** 2;
-      if (d < bd) {
-        bd = d;
-        best = k;
-      }
+    for (let rad = 0; rad < 8 && best < 0; rad++) {
+      for (let di = -rad; di <= rad; di++)
+        for (let dj = -rad; dj <= rad; dj++) {
+          if (Math.max(Math.abs(di), Math.abs(dj)) !== rad) continue;
+          const k = idx.get((ci + di) * 10000 + cj + dj);
+          if (k === undefined) continue;
+          const d = (nodes[k].x - x) ** 2 + (nodes[k].z - z) ** 2;
+          if (d < bd) {
+            bd = d;
+            best = k;
+          }
+        }
     }
     return best;
   }
 
-  /** A* path from (x1,z1) to (x2,z2). Returns list of {x,z}. */
   findPath(x1, z1, x2, z2) {
-    if (this.segmentClear(x1, z1, x2, z2, 0.3)) return [{ x: x2, z: z2 }];
+    if (Math.hypot(x2 - x1, z2 - z1) < 12 && this.segmentClear(x1, z1, x2, z2, 0.3)) return [{ x: x2, z: z2 }];
     if (!this.nav) return [{ x: x2, z: z2 }];
     const nodes = this.nav.nodes;
     const s = this.nearestNode(x1, z1);
     const g = this.nearestNode(x2, z2);
     if (s < 0 || g < 0) return [{ x: x2, z: z2 }];
-    const open = new Set([s]);
     const came = new Map();
     const gS = new Map([[s, 0]]);
-    const fS = new Map([[s, 0]]);
-    const h = (k) => Math.hypot(nodes[k].x - nodes[g].x, nodes[k].z - nodes[g].z);
+    const open = new Heap();
+    open.push(s, 0);
+    const closed = new Set();
+    const gx = nodes[g].x;
+    const gz = nodes[g].z;
     let guard = 0;
-    while (open.size && guard++ < 6000) {
-      let cur = -1;
-      let bf = Infinity;
-      for (const k of open) {
-        const f = fS.get(k);
-        if (f < bf) {
-          bf = f;
-          cur = k;
-        }
-      }
+    while (open.size && guard++ < 20000) {
+      const cur = open.pop();
       if (cur === g) break;
-      open.delete(cur);
-      for (const nb of nodes[cur].n) {
-        const t = gS.get(cur) + Math.hypot(nodes[cur].x - nodes[nb].x, nodes[cur].z - nodes[nb].z);
+      if (closed.has(cur)) continue;
+      closed.add(cur);
+      const cn = nodes[cur];
+      for (const nb of cn.n) {
+        if (closed.has(nb)) continue;
+        const o = nodes[nb];
+        const t = gS.get(cur) + (o.x !== cn.x && o.z !== cn.z ? 1.414 : 1);
         if (t < (gS.has(nb) ? gS.get(nb) : Infinity)) {
           came.set(nb, cur);
           gS.set(nb, t);
-          fS.set(nb, t + h(nb));
-          open.add(nb);
+          open.push(nb, t + Math.hypot(o.x - gx, o.z - gz) / this.nav.step);
         }
       }
     }
+    if (!came.has(g) && g !== s) return [{ x: x2, z: z2 }];
     const path = [];
     let k = g;
-    if (!came.has(g) && g !== s) return [{ x: x2, z: z2 }];
     while (k !== undefined && k !== s) {
       path.unshift({ x: nodes[k].x, z: nodes[k].z });
       k = came.get(k);
     }
     path.push({ x: x2, z: z2 });
-    // String pulling: skip nodes we can see past.
+    // String pulling
     const out = [];
     let px = x1;
     let pz = z1;
     let i = 0;
     while (i < path.length) {
-      let j = path.length - 1;
-      while (j > i && !this.segmentClear(px, pz, path[j].x, path[j].z, 0.3)) j--;
+      let j = Math.min(path.length - 1, i + 14);
+      while (j > i && !this.segmentClear(px, pz, path[j].x, path[j].z, 0.28)) j--;
       out.push(path[j]);
       px = path[j].x;
       pz = path[j].z;
@@ -318,7 +496,7 @@ export class Level {
   }
 
   randomFreePoint(rng = Math.random, area = this.bounds) {
-    for (let t = 0; t < 50; t++) {
+    for (let t = 0; t < 60; t++) {
       const x = area.minX + rng() * (area.maxX - area.minX);
       const z = area.minZ + rng() * (area.maxZ - area.minZ);
       if (!this.blockedPoint(x, z, 0.5)) return { x, z };

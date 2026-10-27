@@ -1,70 +1,120 @@
-// NPCs: coworkers, customers and pedestrians. Each one walks around, looks
-// around, and has a cone of vision used for stealth detection.
+// NPCs: coworkers, the manager, customers and pedestrians. Each one runs a
+// queue of activity steps (walk somewhere, work at a station, sit, hide...),
+// looks around, and has a cone of vision used for stealth detection.
 import * as THREE from 'three';
 
-const coneMatBase = new THREE.MeshBasicMaterial({
-  color: 0xfff3a0,
-  transparent: true,
-  opacity: 0.13,
-  depthWrite: false,
-  side: THREE.DoubleSide,
-});
+const coneMatBase = new THREE.MeshBasicMaterial({ color: 0xfff3a0, transparent: true, opacity: 0.13, depthWrite: false, side: THREE.DoubleSide });
+const coneGeoCache = {};
 
 let uid = 0;
-const angDiff = (a, b) => {
+export const angDiff = (a, b) => {
   let d = a - b;
   while (d > Math.PI) d -= Math.PI * 2;
   while (d < -Math.PI) d += Math.PI * 2;
   return d;
 };
-export { angDiff };
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+
+export function propMesh(kind) {
+  let m;
+  const M = (c) => new THREE.MeshStandardMaterial({ color: c });
+  if (kind === 'tray' || kind === 'cup') {
+    m = new THREE.Group();
+    m.add(new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.03, 18), M('#b2bec3')));
+    const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.1, 0.04, 14), M('#ffffff'));
+    plate.position.set(0.08, 0.03, 0);
+    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.14, 10), M('#e17055'));
+    cup.position.set(-0.12, 0.08, 0.05);
+    m.add(plate, cup);
+    m.userData.up = 0.3;
+    m.userData.cover = 1.1;
+  } else if (kind === 'box' || kind === 'basket') {
+    m = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.38), M(kind === 'basket' ? '#e84118' : '#c8a27a'));
+    m.userData.up = 0.12;
+    m.userData.cover = 1.35;
+  } else if (kind === 'bag') {
+    m = new THREE.Mesh(new THREE.SphereGeometry(0.26, 12, 10), M('#2d3436'));
+    m.scale.y = 1.2;
+    m.userData.up = 0.05;
+    m.userData.cover = 1.2;
+  } else if (kind === 'books') {
+    m = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.3, 0.26), M('#8e44ad'));
+    m.userData.up = 0.12;
+    m.userData.cover = 0.95;
+  } else if (kind === 'bucket' || kind === 'can') {
+    m = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.14, 0.3, 12), M(kind === 'can' ? '#27ae60' : '#f1c40f'));
+    m.userData.up = 0.0;
+    m.userData.cover = 0.7;
+  } else if (kind === 'mop') {
+    m = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.4, 6), M('#a1887f'));
+    m.userData.up = 0.2;
+    m.userData.cover = 0.2;
+  } else {
+    m = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.42, 0.04), M('#0984e3'));
+    m.userData.up = 0.05;
+    m.userData.cover = 0.8;
+  }
+  m.traverse((o) => o.isMesh && (o.castShadow = true));
+  m.userData.kind = kind;
+  return m;
+}
 
 export class NPC {
   constructor(game, char, o) {
     this.id = ++uid;
     this.game = game;
     this.char = char;
-    this.kind = o.kind; // coworker | customer | pedestrian
+    this.kind = o.kind;
     this.name = o.name || '';
     this.personality = o.personality || null;
     this.index = o.index ?? -1;
     this.station = o.station || null;
-    this.loop = o.loop || null;
-    this.loopIdx = o.loopIdx || 0;
-    this.spot = o.spot || null;
     this.legwearType = o.legwearType || 'pants';
     this.x = o.x;
     this.z = o.z;
     this.yaw = o.yaw || 0;
     this.lookYaw = this.yaw;
+    this.baseYaw = this.yaw;
     this.speed = o.speed || 1.25;
     this.range = o.range || 12;
     this.fov = o.fov || (110 * Math.PI) / 180;
     this.eyeH = (char.eyeHeight || 1.5) * 0.98;
-    this.suspicion = 0;
+    this.suspicion = 0; // toward the player
+    this.npcSusp = new Map(); // toward sneaking NPCs
     this.noticeCooldown = 0;
-    this.state = 'idle';
-    this.timer = 1 + Math.random() * 3;
+    this.steps = [];
+    this.cur = null;
     this.path = [];
     this.seed = Math.random() * 100;
     this.curSpeed = 0;
-    this.vision = true;
+    this.vision = o.vision !== false;
     this.sitting = false;
+    this.crouch = false;
+    this.working = false;
     this.removed = false;
-    this.onArrive = null;
+    this.sneaking = false;
+    this.watchedT = 0;
+    this.glanceT = 2 + Math.random() * 5;
+    this.bubbleT = 0;
+    this.carry = null;
+    this.state = 'idle';
     char.root.position.set(this.x, 0, this.z);
     char.root.rotation.y = this.yaw;
-
-    const geo = new THREE.CircleGeometry(this.range, 28, -Math.PI / 2 - this.fov / 2, this.fov);
-    geo.rotateX(-Math.PI / 2);
-    this.coneMat = coneMatBase.clone();
-    this.cone = new THREE.Mesh(geo, this.coneMat);
-    this.cone.position.y = 0.03;
-    this.cone.renderOrder = 2;
-    this.cone.visible = false;
-    game.scene.add(this.cone);
+    if (this.vision) {
+      const key = this.range + ':' + this.fov.toFixed(2);
+      if (!coneGeoCache[key]) {
+        const geo = new THREE.CircleGeometry(this.range, 24, -Math.PI / 2 - this.fov / 2, this.fov);
+        geo.rotateX(-Math.PI / 2);
+        coneGeoCache[key] = geo;
+      }
+      this.coneMat = coneMatBase.clone();
+      this.cone = new THREE.Mesh(coneGeoCache[key], this.coneMat);
+      this.cone.position.y = 0.03;
+      this.cone.renderOrder = 2;
+      this.cone.visible = false;
+      game.scene.add(this.cone);
+    }
     game.scene.add(char.root);
-
     this.el = document.createElement('div');
     this.el.className = 'npc-tag';
     game.ui.tagLayer.appendChild(this.el);
@@ -72,199 +122,215 @@ export class NPC {
 
   destroy() {
     this.removed = true;
-    this.game.scene.remove(this.cone);
+    if (this.cone) this.game.scene.remove(this.cone);
     this.game.scene.remove(this.char.root);
-    this.cone.geometry.dispose();
+    this.char.setProp(null);
     this.el.remove();
   }
 
-  goTo(x, z, onArrive) {
-    const L = this.game.level;
-    this.path = L.findPath(this.x, this.z, x, z);
-    this.state = 'walk';
-    this.sitting = false;
-    this.onArrive = onArrive || null;
+  // ---- activity queue ----------------------------------------------------
+  plan(steps) {
+    this.steps = steps;
+    this.cur = null;
+    this.path = [];
+    this.next();
   }
 
-  // ---- behaviour --------------------------------------------------------
-  think() {
+  next() {
+    this.cur = this.steps.shift() || null;
+    this.sitting = false;
+    this.working = false;
+    if (!this.cur) {
+      this.brain();
+      return;
+    }
+    const s = this.cur;
+    if (s.go) {
+      this.path = this.game.level.findPath(this.x, this.z, s.go.x, s.go.z);
+      this.state = 'walk';
+    } else {
+      this.state = s.sit ? 'sit' : s.hide ? 'hiding' : s.work ? 'work' : 'idle';
+      this.timer = s.t ?? 2;
+      if (s.yaw !== undefined) this.baseYaw = s.yaw;
+      if (s.sit) this.sitting = true;
+      if (s.work) this.working = true;
+      if (s.hide) this.vision = false;
+    }
+    if (s.carry) this.setCarry(s.carry);
+    if (s.call) s.call();
+  }
+
+  setCarry(kind) {
+    this.carry = kind || null;
+    this.char.setProp(kind ? propMesh(kind) : null);
+  }
+
+  brain() {
     const g = this.game;
     const L = g.level;
-    if (this.kind === 'coworker') {
-      if (this.station && Math.random() < 0.55) {
-        this.goTo(this.station.x, this.station.z, () => {
-          this.state = 'idle';
-          this.baseYaw = this.station.yaw;
-          this.yaw = this.station.yaw;
-          this.timer = 7 + Math.random() * 9;
-        });
-      } else {
-        const w = L.pois.wander || [];
-        const p = w[Math.floor(Math.random() * w.length)] || L.randomFreePoint();
-        this.goTo(p.x, p.z, () => {
-          this.state = 'idle';
-          this.baseYaw = this.yaw;
-          this.timer = 3 + Math.random() * 4;
-        });
-      }
-    } else if (this.kind === 'customer') {
+    if (this.kind === 'coworker') return g.coworkerBrain(this);
+    if (this.kind === 'manager') return g.managerBrain(this);
+    if (this.kind === 'customer') {
       if (this.leaving) return;
-      const e = L.pois.entrance;
-      if (!e) return;
       this.leaving = true;
       if (this.spot) this.spot.taken = false;
-      this.goTo(e.x, e.z, () => this.game.removeNPC(this));
-    } else if (this.kind === 'pedestrian') {
-      if (this.loop) {
-        this.loopIdx = (this.loopIdx + 1) % this.loop.length;
-        const p = this.loop[this.loopIdx];
-        this.path = [{ x: p.x + (Math.random() - 0.5) * 0.8, z: p.z + (Math.random() - 0.5) * 0.8 }];
-        this.state = 'walk';
-        this.onArrive = () => {
-          if (Math.random() < 0.25) {
-            this.state = 'idle';
-            this.baseYaw = this.yaw;
-            this.timer = 2 + Math.random() * 4;
-          } else this.think();
-        };
-      } else {
-        this.state = 'idle';
-        this.timer = 999;
-      }
+      const e = L.pois.entrance;
+      if (!e) return;
+      this.plan([{ go: e }, { call: () => g.removeNPC(this) }]);
+      return;
     }
+    if (this.kind === 'pedestrian') return g.pedestrianBrain(this);
+    this.plan([{ t: 3 }]);
   }
 
-  sitAt(spot, duration) {
-    this.spot = spot;
-    spot.taken = true;
-    this.goTo(spot.x, spot.z, () => {
-      this.x = spot.x;
-      this.z = spot.z;
-      this.yaw = spot.yaw;
-      this.baseYaw = spot.yaw;
-      this.sitting = !!spot.sit;
-      this.state = 'idle';
-      this.timer = duration;
-    });
+  goTo(x, z, then = []) {
+    this.plan([{ go: { x, z } }, ...then]);
   }
 
   startInvestigate(x, z) {
-    if (this.state === 'hiding' || this.state === 'talk') return;
-    this.sitting = false;
-    this.goTo(x, z, () => {
-      this.state = 'idle';
-      this.baseYaw = this.yaw;
-      this.timer = 3;
-    });
-    this.state = 'investigate';
+    if (['hiding', 'talk'].includes(this.state) || this.sneaking) return;
     this.speedMul = 1.35;
+    this.plan([{ go: { x, z } }, { t: 3, call: () => (this.speedMul = 1) }]);
   }
 
   distract(x, z, t) {
-    if (this.state === 'hiding' || this.state === 'talk') return;
+    if (['hiding', 'talk'].includes(this.state)) return;
     this.distractPoint = { x, z };
-    this.prevState = this.state === 'distracted' ? this.prevState : this.state;
-    this.state = 'distracted';
-    this.timer = t;
+    this.distractT = t;
   }
 
-  hideAt(p) {
-    this.vision = false;
-    this.goTo(p.x, p.z, () => {
-      this.state = 'hiding';
-      this.timer = 9999;
-    });
-    this.state = 'goHide';
+  hideAt(p, t = 9999) {
+    this.plan([{ go: p }, { hide: true, t }]);
   }
 
   unhide() {
     this.vision = true;
-    this.state = 'idle';
-    this.timer = 0.5;
+    this.plan([{ t: 0.5 }]);
   }
 
   // ---- per-frame -------------------------------------------------------
   update(dt, t) {
     const g = this.game;
     this.noticeCooldown = Math.max(0, this.noticeCooldown - dt);
+    this.watchedT = Math.max(0, this.watchedT - dt);
+    if (this.bubbleT > 0) this.bubbleT -= dt;
     let moving = false;
     const p = g.player;
-    const dxp = p.x - this.x;
-    const dzp = p.z - this.z;
-    const toPlayer = Math.atan2(dxp, dzp);
-    const alerted = this.suspicion > 0.22 && this.vision && this.state !== 'talk';
+    // most suspicious target (player or a sneaking coworker)
+    let tgt = null;
+    let ts = 0.22;
+    if (this.suspicion > ts) {
+      tgt = p;
+      ts = this.suspicion;
+    }
+    for (const [n, s] of this.npcSusp) if (s > ts && !n.removed) {
+      tgt = n;
+      ts = s;
+    }
+    const toT = tgt ? Math.atan2(tgt.x - this.x, tgt.z - this.z) : 0;
+    const s = this.cur;
 
     if (this.state === 'talk') {
-      this.lookYaw = toPlayer;
-      this.yaw += angDiff(toPlayer, this.yaw) * Math.min(1, dt * 6);
-    } else if (this.state === 'distracted') {
+      const a = Math.atan2(p.x - this.x, p.z - this.z);
+      this.lookYaw = a;
+      this.yaw += angDiff(a, this.yaw) * Math.min(1, dt * 6);
+    } else if (this.distractT > 0) {
+      this.distractT -= dt;
       const d = this.distractPoint;
       const a = Math.atan2(d.x - this.x, d.z - this.z);
       this.lookYaw = a + Math.sin(t * 0.7 + this.seed) * 0.15;
       this.yaw += angDiff(a, this.yaw) * Math.min(1, dt * 4);
+    } else if (tgt && this.vision && !this.sneaking) {
+      this.lookYaw = toT;
+      this.yaw += angDiff(toT, this.yaw) * Math.min(1, dt * 3);
+    } else if (this.state === 'walk' && this.path.length) {
+      // sneakers freeze and crouch while someone is watching them
+      {
+        const wp = this.path[0];
+        const dx = wp.x - this.x;
+        const dz = wp.z - this.z;
+        const d = Math.hypot(dx, dz);
+        if (d < 0.25) {
+          this.path.shift();
+          if (!this.path.length) this.next();
+        } else {
+          const sp = this.speed * (this.speedMul || 1) * (this.crouch ? 0.55 : 1);
+          const step = Math.min(d, sp * dt);
+          this.x += (dx / d) * step;
+          this.z += (dz / d) * step;
+          const a = Math.atan2(dx, dz);
+          this.yaw += angDiff(a, this.yaw) * Math.min(1, dt * 8);
+          this.lookYaw = this.yaw + Math.sin(t * 0.9 + this.seed) * 0.3;
+          moving = true;
+        }
+      }
+    } else if (this.state === 'walk') {
+      this.next();
+    } else {
+      // stationary step: work / sit / idle / hiding
+      if (s && s.yaw !== undefined) this.yaw += angDiff(s.yaw, this.yaw) * Math.min(1, dt * 5);
+      if (this.working) {
+        // eyes on the work, with an occasional glance around
+        this.glanceT -= dt;
+        if (this.glanceT < 0) {
+          const k = -this.glanceT;
+          this.lookYaw = this.baseYaw + Math.sin(k * 2.2) * 1.3;
+          if (k > 1.6) this.glanceT = 3 + Math.random() * 5;
+        } else this.lookYaw = this.baseYaw;
+      } else if (this.state === 'hiding') {
+        this.lookYaw = this.yaw;
+      } else {
+        this.lookYaw = this.baseYaw + Math.sin(t * 0.45 + this.seed) * 1.0;
+        if (!this.sitting) this.yaw += angDiff(this.lookYaw, this.yaw) * Math.min(1, dt * 1.5);
+      }
       this.timer -= dt;
       if (this.timer <= 0) {
-        this.state = this.path.length ? 'walk' : 'idle';
-        this.timer = 1;
+        if (s && s.hide) this.vision = true;
+        if (s && s.drop) this.setCarry(null);
+        this.next();
       }
-    } else if (alerted) {
-      // Something caught their eye: stop and stare.
-      this.lookYaw = toPlayer;
-      this.yaw += angDiff(toPlayer, this.yaw) * Math.min(1, dt * 3);
-    } else if ((this.state === 'walk' || this.state === 'investigate' || this.state === 'goHide') && this.path.length) {
-      const wp = this.path[0];
-      const dx = wp.x - this.x;
-      const dz = wp.z - this.z;
-      const d = Math.hypot(dx, dz);
-      if (d < 0.25) {
-        this.path.shift();
-        if (!this.path.length) {
-          this.speedMul = 1;
-          const cb = this.onArrive;
-          this.onArrive = null;
-          if (this.state === 'walk' || this.state === 'investigate' || this.state === 'goHide') this.state = 'idle';
-          if (cb) cb();
-          else this.timer = 2;
-        }
-      } else {
-        const sp = this.speed * (this.speedMul || 1);
-        const step = Math.min(d, sp * dt);
-        this.x += (dx / d) * step;
-        this.z += (dz / d) * step;
-        const a = Math.atan2(dx, dz);
-        this.yaw += angDiff(a, this.yaw) * Math.min(1, dt * 8);
-        this.lookYaw = this.yaw + Math.sin(t * 0.9 + this.seed) * 0.25;
-        moving = true;
-      }
-    } else if (this.state === 'hiding') {
-      this.lookYaw = this.yaw;
-    } else {
-      // idle: look around
-      if (this.baseYaw === undefined) this.baseYaw = this.yaw;
-      this.lookYaw = this.baseYaw + Math.sin(t * 0.45 + this.seed) * 1.0;
-      this.yaw += angDiff(this.sitting ? this.baseYaw : this.lookYaw, this.yaw) * Math.min(1, dt * 2);
-      this.timer -= dt;
-      if (this.timer <= 0) this.think();
     }
 
-    this.curSpeed += ((moving ? this.speed * (this.speedMul || 1) : 0) - this.curSpeed) * Math.min(1, dt * 10);
+    this.crouch = this.sneaking && (this.watchedT > 0 || this.state === 'hiding');
+    this.curSpeed += ((moving ? this.speed * (this.speedMul || 1) * (this.crouch ? 0.55 : 1) : 0) - this.curSpeed) * Math.min(1, dt * 10);
     this.char.root.position.set(this.x, 0, this.z);
     this.char.root.rotation.y = this.yaw;
-    this.char.update(dt, { speed: this.curSpeed, sit: this.sitting && !moving, crouch: false, carry: false, cover: !this.char.legwearOn });
-    this.cone.position.x = this.x;
-    this.cone.position.z = this.z;
-    this.cone.rotation.y = this.lookYaw;
+    this.char.update(dt, {
+      speed: this.curSpeed,
+      sit: this.sitting && !moving,
+      crouch: this.crouch,
+      carry: !!this.carry || (this.working && !moving),
+      cover: !this.char.legwearOn,
+    });
+    if (this.cone) {
+      this.cone.position.x = this.x;
+      this.cone.position.z = this.z;
+      this.cone.rotation.y = this.lookYaw;
+    }
   }
 
   eye() {
-    const h = this.sitting ? this.eyeH * 0.72 : this.eyeH;
+    const h = this.sitting ? this.eyeH * 0.72 : this.crouch ? this.eyeH * 0.62 : this.eyeH;
     return new THREE.Vector3(this.x, h, this.z);
   }
 
+  hip() {
+    return new THREE.Vector3(this.x, this.char.hipHeight * (this.crouch ? 0.55 : this.sitting ? 0.55 : 1), this.z);
+  }
+
+  canSee() {
+    return this.vision && this.state !== 'hiding' && this.state !== 'talk';
+  }
+
   updateConeVisual(show) {
-    this.cone.visible = show && this.vision && this.state !== 'hiding' && this.state !== 'goHide';
-    const s = Math.min(1, this.suspicion);
+    if (!this.cone) return;
+    this.cone.visible = show && this.canSee();
+    let s = this.suspicion;
+    for (const v of this.npcSusp.values()) s = Math.max(s, v * 0.6);
+    s = Math.min(1, s);
     this.coneMat.color.setRGB(1, 0.95 - s * 0.75, 0.62 - s * 0.6);
-    this.coneMat.opacity = 0.11 + s * 0.22;
+    this.coneMat.opacity = 0.1 + s * 0.22;
   }
 }
+
+export { pick };
