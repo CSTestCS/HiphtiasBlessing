@@ -6,9 +6,9 @@ export function buildApartment() {
   L.bounds = { minX: -6, maxX: 6, minZ: -5, maxZ: 5 };
   const wallC = '#efe6da';
   L.floor(0, 0, 12, 10, '#b08a64');
-  L.floor(-3.75, -2, 4.5, 6, '#c9a27e'); // bedroom
-  L.floor(4.25, -3, 3.5, 4, '#dfe6e9'); // bathroom tiles
-  L.floor(1, 2.5, 3.5, 2.5, '#8e6f8e'); // rug
+  L.floor(-3.75, -2, 4.5, 6, '#c9a27e', 0.008); // bedroom
+  L.floor(4.25, -3, 3.5, 4, '#dfe6e9', 0.008); // bathroom tiles
+  L.floor(1, 2.5, 3.5, 2.5, '#8e6f8e', 0.016); // rug
   // Outer walls
   L.wall(-6, -5, 6, -5, 2.6, wallC);
   L.wall(-6, -5, -6, 5, 2.6, wallC);
@@ -52,6 +52,7 @@ export function buildApartment() {
   L.chair(3.6, 3.2, Math.PI);
   // Living room
   L.box(0.8, 0.0, 2.6, 0.9, 0.75, '#3d5a80'); // sofa
+  L.seat(0.8, 0.5, 0, 'sofa');
   L.box(0.8, -0.38, 2.6, 0.2, 1.0, '#3d5a80', { collide: false });
   L.box(0.8, 3.9, 1.8, 0.4, 0.5, '#2d3436'); // tv stand
   L.box(0.8, 3.95, 1.5, 0.08, 0.85, '#111111', { y: 0.5, collide: false });

@@ -3,23 +3,27 @@
 import * as THREE from 'three';
 import { ui, esc } from './ui.js';
 import { storage, newId } from './storage.js';
-import { JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday } from './data.js';
+import { JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
 import { createCharacter, inspectVRM, randomColors, addAngelic, clearTemplates } from './character.js';
 import { Game, controlsTable } from './game.js';
+import { listSlots, loadSlot, createSlot, writeProfile, deleteSlot, otherSlotPeople } from './saves.js';
+import { modelBuffer, modelKey } from './assets.js';
 
 const blobCache = new Map();
 let game = null;
 
-async function getBlob(key) {
-  if (!key) return null;
-  if (blobCache.has(key)) return blobCache.get(key);
-  const b = await storage.getBlob(key);
-  if (b) blobCache.set(key, b);
+/** Model buffer for {asset} (bundled) or {key} (imported) models. */
+async function getModel(model) {
+  const k = modelKey(model);
+  if (!k) return null;
+  if (blobCache.has(k)) return blobCache.get(k);
+  const b = await modelBuffer(model);
+  if (b) blobCache.set(k, b);
   return b;
 }
 
 async function getSettings() {
-  return Object.assign({ civilians: [], celesti: null, celestiName: 'Celesti' }, (await storage.get('settings')) || {});
+  return Object.assign({}, DEFAULT_SETTINGS, (await storage.get('settings')) || {});
 }
 async function putSettings(s) {
   await storage.set('settings', s);
@@ -27,13 +31,26 @@ async function putSettings(s) {
 
 // ---------------------------------------------------------------------------
 // Profile helpers
-function newOutfit(legwearType = 'pants', colors = randomColors()) {
-  return { model: null, legwearType, colors };
+/** A bundled body for a gender (white-textured models that take color tints). */
+function bundledBody(gender, older = false) {
+  const list = BUNDLED.bodies.filter((b) => !gender || b.gender === gender);
+  const b = list.find((x) => /old/i.test(x.asset) === older) || list[0] || BUNDLED.bodies[0];
+  return { asset: b.asset, title: b.title, tintable: true, legwearMaterials: null, underwearOverlay: false, wetMaterials: [] };
 }
+
+function newOutfit(legwearType = 'pants', colors = randomColors(), gender = null, older = false) {
+  return { model: gender ? bundledBody(gender, older) : null, legwearType, colors };
+}
+
+const randGender = () => (Math.random() < 0.5 ? 'female' : 'male');
 
 /** Upgrade profiles from v0.1 (single model per character, no manager). */
 function migrateProfile(p) {
-  if (!p || p.player) return p;
+  if (!p) return p;
+  if (p.player) {
+    for (const d of [p.player, p.manager, ...(p.coworkers || [])]) if (d && !d.gender) d.gender = null;
+    return p;
+  }
   const wrap = (src) => ({ model: src.model || null, legwearType: src.legwearType || 'pants', colors: src.colors || randomColors() });
   return {
     name: p.name,
@@ -77,7 +94,7 @@ class Previewer {
       this.rot += dt * 0.6;
       if (this.char) {
         this.char.root.rotation.y = Math.sin(this.rot) * 0.9;
-        this.char.update(dt, { speed: 0, cover: !this.legwear });
+        this.char.update(dt, { speed: 0 });
       }
       this.renderer.render(this.scene, this.camera);
     };
@@ -118,16 +135,21 @@ function killPreview() {
   previewer = null;
 }
 
-async function outfitOpts(o, tint = {}) {
+async function outfitOpts(o, tint = {}, gender = null) {
+  const m = o.model;
   return {
-    vrm: o.model ? await getBlob(o.model.key) : null,
+    vrm: m ? await getModel(m) : null,
     full: true,
-    legwearMaterials: o.model ? o.model.legwearMaterials : null,
-    underwearOverlay: o.model ? o.model.underwearOverlay !== false : true,
+    legwearMaterials: m ? m.legwearMaterials || null : null,
+    underwearOverlay: m ? !!m.underwearOverlay : true,
     colors: o.colors,
-    legwearType: o.legwearType,
+    tintable: !!(m && (m.tintable || m.asset)),
+    legwearType: tint.legwearType || o.legwearType,
     tintTop: tint.top || null,
     tintBottom: tint.bottom || null,
+    wetMaterials: m?.wetMaterials || [],
+    gender,
+    clothes: o.clothesFrom ? { vrm: await getModel(o.clothesFrom), key: modelKey(o.clothesFrom), legwearMaterials: o.clothesFrom.legwearMaterials || null } : null,
   };
 }
 
@@ -137,7 +159,16 @@ async function importVRM(file) {
   const key = 'vrm-' + newId();
   await storage.putBlob(key, buf);
   blobCache.set(key, buf);
-  return { key, title: info.title || file.name, file: file.name, materials: info.materials, legwearMaterials: info.autoLegwear, underwearOverlay: true };
+  // a VRoid model normally has underwear in its body texture, so no overlay by default
+  return { key, title: info.title || file.name, file: file.name, materials: info.materials, legwearMaterials: info.autoLegwear, underwearOverlay: false, wetMaterials: [] };
+}
+
+/** Fill in the material list of a bundled model (for the parts checkboxes). */
+async function ensureMaterials(model) {
+  if (!model || model.materials) return;
+  const info = await inspectVRM(await getModel(model));
+  model.materials = info.materials;
+  if (!model.legwearMaterials) model.legwearMaterials = info.autoLegwear;
 }
 
 function pickFiles(multiple = false) {
@@ -157,21 +188,22 @@ function swatches(kind, current, attr, list = COLORS[kind]) {
     .join('')}</div>`;
 }
 
-function matList(model, prefix) {
-  if (!model) return '';
+function matList(model, prefix, field = 'legwearMaterials') {
+  if (!model || !model.materials) return '';
+  const cur = model[field] || [];
   return `<div class="matlist">${model.materials
-    .map((m, i) => `<label><input type="checkbox" data-${prefix}="${i}" ${model.legwearMaterials.includes(m) ? 'checked' : ''}/> ${esc(m)}</label>`)
+    .map((m, i) => `<label><input type="checkbox" data-${prefix}="${i}" ${cur.includes(m) ? 'checked' : ''}/> ${esc(m)}</label>`)
     .join('')}</div>`;
 }
 
-function bindMatList(s, model, prefix, onChange) {
+function bindMatList(s, model, prefix, onChange, field = 'legwearMaterials') {
   s.querySelectorAll(`[data-${prefix}]`).forEach((el) => {
     el.onchange = () => {
       const name = model.materials[+el.getAttribute('data-' + prefix)];
-      const set = new Set(model.legwearMaterials);
+      const set = new Set(model[field] || []);
       if (el.checked) set.add(name);
       else set.delete(name);
-      model.legwearMaterials = [...set];
+      model[field] = [...set];
       onChange();
     };
   });
@@ -179,46 +211,112 @@ function bindMatList(s, model, prefix, onChange) {
 
 // ---------------------------------------------------------------------------
 // Title
+const slotLine = (m) => `${esc(m.name)} · ${esc(JOBS[m.job]?.label || m.job)} · Day ${m.day} (${WEEKDAYS[weekday(m.day)]})${m.done ? ' · ✦ won' : ''}`;
+
 async function showTitle() {
   killPreview();
   ui.showHUD(false);
-  let save = null;
-  let profile = null;
+  let slots = [];
   try {
-    save = await storage.get('save');
-    profile = migrateProfile(await storage.get('profile'));
+    slots = await listSlots();
   } catch (e) {
     console.warn(e);
   }
-  const canContinue = save && profile;
+  const latest = slots.find((m) => !m.done) || null;
   const s = ui.setScreen(`
     <div class="title-wrap">
       <h1>Hiphtia's Blessing</h1>
       <div class="sub">A workplace stealth comedy. No pants. No one can know.</div>
       <div class="menu">
-        ${canContinue ? `<button id="t-continue">Continue<br><span style="font-size:13px;font-weight:500">${esc(profile.name)} · ${esc(JOBS[profile.job].label)} · Day ${save.day} (${WEEKDAYS[weekday(save.day)]})</span></button>` : ''}
-        <button id="t-new" class="${canContinue ? 'secondary' : ''}">New Game</button>
+        ${latest ? `<button id="t-continue">Continue<br><span style="font-size:13px;font-weight:500">${slotLine(latest)}</span></button>` : ''}
+        ${slots.length ? `<button id="t-load" class="secondary">Load Game (${slots.length})</button>` : ''}
+        <button id="t-new" class="${latest ? 'secondary' : ''}">New Game</button>
+        <button id="t-set" class="secondary">Settings</button>
         <button id="t-civ" class="secondary">Civilian Models</button>
         <button id="t-cel" class="secondary">Celesti's Model</button>
         <button id="t-controls" class="secondary">How to Play</button>
         <button id="t-quit" class="secondary">Quit</button>
       </div>
     </div>`);
-  if (canContinue) s.querySelector('#t-continue').onclick = () => startGame(profile, save);
-  s.querySelector('#t-new').onclick = async () => {
-    if (canContinue) {
-      const ok = await ui.dialog('Start a new game?', 'Your current save will be overwritten.', [
-        { label: 'Start new game', value: true },
-        { label: 'Cancel', value: false, cls: 'secondary' },
-      ]);
-      if (!ok) return;
-    }
-    showCreator();
-  };
+  if (latest) s.querySelector('#t-continue').onclick = () => startGame(latest.id);
+  if (slots.length) s.querySelector('#t-load').onclick = showLoad;
+  s.querySelector('#t-new').onclick = showCreator;
+  s.querySelector('#t-set').onclick = showSettings;
   s.querySelector('#t-civ').onclick = showCivilians;
   s.querySelector('#t-cel').onclick = showCelesti;
   s.querySelector('#t-controls').onclick = showHowTo;
   s.querySelector('#t-quit').onclick = () => (window.gameAPI ? window.gameAPI.quit() : window.close());
+}
+
+async function showLoad() {
+  const slots = await listSlots();
+  const s = ui.setScreen(`
+    <div class="panel" style="max-width:640px">
+      <h2>Load Game</h2>
+      <p class="note" style="margin-top:0">Each save slot is its own game with its own character, job and coworkers. Coworkers from your other saves show up around town.</p>
+      ${slots
+        .map((m) => `<div class="row" style="margin:8px 0;justify-content:space-between"><span>${slotLine(m)}<br><span class="note">${new Date(m.updated || 0).toLocaleString()}</span></span>
+          <span class="row"><button data-lplay="${m.id}" ${m.done ? 'disabled' : ''}>Play</button><button class="danger" data-ldel="${m.id}">Delete</button></span></div>`)
+        .join('') || '<p>No saves.</p>'}
+      <div class="footer"><button class="secondary" id="l-back">Back</button><span></span></div>
+    </div>`);
+  s.querySelectorAll('[data-lplay]').forEach((b) => (b.onclick = () => startGame(b.dataset.lplay)));
+  s.querySelectorAll('[data-ldel]').forEach(
+    (b) =>
+      (b.onclick = async () => {
+        const ok = await ui.dialog('Delete this save?', 'This cannot be undone.', [
+          { label: 'Delete', value: true, cls: 'danger' },
+          { label: 'Cancel', value: false, cls: 'secondary' },
+        ]);
+        if (!ok) return;
+        await deleteSlot(b.dataset.ldel);
+        blobCache.clear();
+        showLoad();
+      })
+  );
+  s.querySelector('#l-back').onclick = showTitle;
+}
+
+async function showSettings() {
+  const st = await getSettings();
+  const s = ui.setScreen(`
+    <div class="panel" style="max-width:620px">
+      <h2>Settings</h2>
+      <label>Length of an in-game hour: <b id="v-hour"></b></label>
+      <input type="range" id="s-hour" min="60" max="600" step="10" value="${st.hourSeconds}" />
+      <p class="note">How many real seconds one in-game hour lasts while commuting and running errands. Longer = more time to get to work.</p>
+      <label>Shame buildup: <b id="v-shame"></b></label>
+      <input type="range" id="s-shame" min="0.25" max="2" step="0.05" value="${st.shameScale}" />
+      <p class="note">Multiplies all shame gained.</p>
+      <label>Facial expression strength: <b id="v-expr"></b></label>
+      <input type="range" id="s-expr" min="0" max="1" step="0.05" value="${st.exprMax}" />
+      <p class="note">Maximum weight of VRoid facial expressions (blend shapes) used to show how characters feel.</p>
+      <label><input type="checkbox" id="s-map" ${st.minimap ? 'checked' : ''}/> Show minimap and compass (toggle in game with M)</label>
+      <label><input type="checkbox" id="s-civ" ${st.useBundledCivilians ? 'checked' : ''}/> Use the bundled townsperson models for civilians</label>
+      <div class="footer"><button class="secondary" id="s-reset">Defaults</button><button id="s-back">Done</button></div>
+    </div>`);
+  const fmt = () => {
+    const h = +s.querySelector('#s-hour').value;
+    s.querySelector('#v-hour').textContent = `${Math.floor(h / 60)}m ${h % 60}s`;
+    s.querySelector('#v-shame').textContent = `×${(+s.querySelector('#s-shame').value).toFixed(2)}`;
+    s.querySelector('#v-expr').textContent = `${Math.round(+s.querySelector('#s-expr').value * 100)}%`;
+  };
+  fmt();
+  const save = async () => {
+    st.hourSeconds = +s.querySelector('#s-hour').value;
+    st.shameScale = +s.querySelector('#s-shame').value;
+    st.exprMax = +s.querySelector('#s-expr').value;
+    st.minimap = s.querySelector('#s-map').checked;
+    st.useBundledCivilians = s.querySelector('#s-civ').checked;
+    await putSettings(st);
+  };
+  s.querySelectorAll('input').forEach((el) => (el.oninput = el.onchange = () => (fmt(), save())));
+  s.querySelector('#s-reset').onclick = async () => {
+    Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, minimap: true, useBundledCivilians: true });
+    await putSettings(st);
+    showSettings();
+  };
+  s.querySelector('#s-back').onclick = showTitle;
 }
 
 function showHowTo() {
@@ -237,7 +335,9 @@ On Monday a wardrobe mishap at work leaves you without pants or a skirt, and tha
 • Oddball: thinks it's a game and joins in, sneaking around without bottoms too
 Reports, three customer complaints, the manager spotting you, or arriving more than 10 minutes late mean a very uncomfortable talk with the manager and a write-up. The third write-up gets you fired.
 
-<b>In town</b>, being seen raises your Shame. Buses follow fixed routes and stop at every stop; rush hour buses are packed and you may have to stand. Standing on the bus is far more humiliating than sitting. Fill up Shame and you lose.
+<b>Staying hidden:</b> pick up boxes, trays, bags, newspapers and umbrellas and hold them in front of you; sit at desks, tables and benches; duck into hiding spots; crouch behind low furniture. The minimap and compass point to your objective.
+
+<b>In town</b>, being seen raises your Shame (adjust how fast in Settings). You leave and come home through your building's lobby. Rain soaks your clothes unless you carry an umbrella. Buses follow fixed routes and stop at every stop; rush hour buses are packed and you may have to stand. Standing on the bus is far more humiliating than sitting. Fill up Shame and you lose.
 
 After your third shift, Celesti, messenger of Hiphtia the goddess of hips, pays you a visit. After that, the coworker you spend the most time near each workday gets "blessed" the next workday. Blessed coworkers can't report you, but can't help you either. You win when every coworker is blessed. Weekends are days off with errands... and chaos.</p>
       ${controlsTable()}
@@ -257,11 +357,20 @@ async function showCivilians() {
       <div class="cols">
         <div>
           <p class="note" style="margin-top:0">Pedestrians, customers and bus passengers are built from these .vrm templates. Every NPC gets random skin, hair, eye and clothing colors.
-          With no templates, simple built-in figures are used. Tip: lighter-colored textures recolor best.</p>
+          Tip: lighter-colored textures recolor best. Coworkers from your other save slots also appear in town, with their names.</p>
+          <label><input type="checkbox" id="civ-bundled" ${settings.useBundledCivilians ? 'checked' : ''}/> Use the bundled townsperson models</label>
+          <div>${BUNDLED.civilians.map((c, i) => `<div class="row" style="margin:6px 0"><span>${esc(c.title)}</span><button class="secondary" data-bprev="${i}">Preview</button></div>`).join('')}</div>
+          <h3>Your templates</h3>
           <div id="civ-list">${
             settings.civilians.length
-              ? settings.civilians.map((c, i) => `<div class="row" style="margin:6px 0"><span>${esc(c.title)}</span><button class="secondary" data-cprev="${i}">Preview</button><button class="danger" data-cdel="${i}">Remove</button></div>`).join('')
-              : '<p>No civilian templates yet.</p>'
+              ? settings.civilians
+                  .map(
+                    (c, i) => `<div class="row" style="margin:6px 0"><span>${esc(c.title)}</span>
+                    <select data-cgen="${i}"><option value="">Any gender</option><option value="female" ${c.gender === 'female' ? 'selected' : ''}>Female</option><option value="male" ${c.gender === 'male' ? 'selected' : ''}>Male</option></select>
+                    <button class="secondary" data-cprev="${i}">Preview</button><button class="danger" data-cdel="${i}">Remove</button></div>`
+                  )
+                  .join('')
+              : '<p>No custom templates yet.</p>'
           }</div>
           <div class="row" style="margin-top:12px"><button id="civ-add">Import .vrm template(s)...</button></div>
           <div class="note" id="civ-status"></div>
@@ -271,13 +380,25 @@ async function showCivilians() {
       <div class="footer"><button class="secondary" id="civ-back">Back</button><span></span></div>
     </div>`);
   previewer = new Previewer(s.querySelector('#pv'));
-  let cur = settings.civilians[0] || null;
+  let cur = settings.civilians[0] || { asset: BUNDLED.civilians[0].asset };
   const show = async () => {
     if (!cur) return previewer.show({ colors: randomColors() });
-    previewer.show({ vrm: await getBlob(cur.key), key: 'civ:' + cur.key, randomize: true, underwearOverlay: false });
+    previewer.show({ vrm: await getModel(cur), key: 'civ:' + modelKey(cur), randomize: true, underwearOverlay: false });
   };
   show();
   s.querySelector('#civ-roll').onclick = show;
+  s.querySelector('#civ-bundled').onchange = async (e) => {
+    settings.useBundledCivilians = e.target.checked;
+    await putSettings(settings);
+  };
+  s.querySelectorAll('[data-bprev]').forEach((b) => (b.onclick = () => ((cur = { asset: BUNDLED.civilians[+b.dataset.bprev].asset }), show())));
+  s.querySelectorAll('[data-cgen]').forEach(
+    (b) =>
+      (b.onchange = async () => {
+        settings.civilians[+b.dataset.cgen].gender = b.value || null;
+        await putSettings(settings);
+      })
+  );
   s.querySelectorAll('[data-cprev]').forEach((b) => (b.onclick = () => ((cur = settings.civilians[+b.dataset.cprev]), show())));
   s.querySelectorAll('[data-cdel]').forEach(
     (b) =>
@@ -295,7 +416,7 @@ async function showCivilians() {
       s.querySelector('#civ-status').textContent = 'Loading ' + f.name + '...';
       try {
         const m = await importVRM(f);
-        settings.civilians.push({ key: m.key, title: m.title });
+        settings.civilians.push({ key: m.key, title: m.title, gender: null });
       } catch (e) {
         s.querySelector('#civ-status').textContent = `Could not load ${f.name}: ${e.message}`;
         await new Promise((r) => setTimeout(r, 1500));
@@ -322,7 +443,7 @@ async function showCelesti() {
           <label>Name</label><input type="text" id="cel-name" maxlength="20" value="${esc(settings.celestiName || 'Celesti')}" />
           <label>Model</label>
           <div class="row"><button id="cel-imp">${m ? 'Replace .vrm...' : 'Import .vrm...'}</button>${m ? '<button class="secondary" id="cel-def">Use default</button>' : ''}</div>
-          <div class="note" id="cel-status">${m ? 'Loaded: ' + esc(m.title) : 'Using the built-in angel.'}</div>
+          <div class="note" id="cel-status">${m ? 'Loaded: ' + esc(m.title) : 'Using the bundled Celesti model.'}</div>
         </div>
         <div><canvas class="preview" id="pv"></canvas></div>
       </div>
@@ -331,7 +452,7 @@ async function showCelesti() {
   previewer = new Previewer(s.querySelector('#pv'));
   const show = async () =>
     previewer.show(
-      m ? { vrm: await getBlob(m.key), full: true, legwearMaterials: [], underwearOverlay: false } : { colors: { skin: '#fbe3d4', hair: '#fff3b0', top: '#ffffff', bottom: '#fdf2c4', eye: '#f1c40f' }, legwearType: 'skirt' },
+      { vrm: await getModel(m || { asset: BUNDLED.celesti }), full: true, legwearMaterials: [], underwearOverlay: false, gender: 'female' },
       (ch) => addAngelic(ch)
     );
   show();
@@ -373,16 +494,17 @@ let previewTarget = 'player'; // 'player' | 'mgr' | index
 
 function defaultDraft() {
   const names = [...DEFAULT_COWORKER_NAMES].sort(() => Math.random() - 0.5);
+  const cw = (i) => {
+    const g = randGender();
+    return { name: names[i], gender: g, personality: DEFAULT_PERSONALITIES[i], outfits: [newOutfit(g === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', randomColors(), g, Math.random() < 0.25)] };
+  };
   return {
     name: 'Alex',
     job: 'office',
-    player: { outfits: [newOutfit('pants', { skin: COLORS.skin[0], hair: COLORS.hair[1], top: COLORS.top[0], bottom: COLORS.bottom[0], under: COLORS.under[0], eye: '#1b1b2f' })] },
-    manager: { name: 'Ms. Harper', outfits: [newOutfit('skirt', { ...randomColors(), top: '#2d3436', bottom: '#2d3436' })] },
-    coworkers: Array.from({ length: 8 }, (_, i) => ({
-      name: names[i],
-      personality: DEFAULT_PERSONALITIES[i],
-      outfits: [newOutfit(Math.random() < 0.5 ? 'skirt' : 'pants')],
-    })),
+    layoutSeed: 1 + Math.floor(Math.random() * 99999),
+    player: { gender: 'female', outfits: [newOutfit('skirt', { skin: COLORS.skin[0], hair: COLORS.hair[1], top: COLORS.top[0], bottom: COLORS.bottom[0], under: COLORS.under[0], eye: '#1b1b2f' }, 'female')] },
+    manager: { name: 'Ms. Harper', gender: 'female', outfits: [newOutfit('skirt', { ...randomColors(), top: '#2d3436', bottom: '#2d3436' }, 'female', true)] },
+    coworkers: Array.from({ length: 8 }, (_, i) => cw(i)),
   };
 }
 
@@ -398,7 +520,7 @@ async function refreshPreview() {
   if (!def) return;
   const label = document.getElementById('pv-label');
   if (label) label.textContent = previewTarget === 'player' ? draft.name || 'You' : def.name + (previewTarget === 'mgr' ? ' (manager)' : '');
-  await previewer.show(await outfitOpts(def.outfits[0]));
+  await previewer.show(await outfitOpts(def.outfits[0], {}, def.gender));
 }
 
 function stepsBar() {
@@ -473,34 +595,81 @@ function renderCreator() {
 
 function outfitEditor(o, prefix, full) {
   const m = o.model;
+  const imported = m && m.key;
+  const tintable = !m || m.asset || m.tintable;
+  const bodyOpts = [
+    ...BUNDLED.bodies.map((b) => `<option value="asset:${b.asset}" ${m?.asset === b.asset ? 'selected' : ''}>${esc(b.title)}</option>`),
+    `<option value="simple" ${!m ? 'selected' : ''}>Simple figure</option>`,
+    imported ? `<option value="cur" selected>Imported: ${esc(m.title)}</option>` : '',
+  ].join('');
+  const clothesOpts = [
+    `<option value="">Its own clothes</option>`,
+    ...BUNDLED.bodies.map((b) => `<option value="${b.asset}" ${o.clothesFrom?.asset === b.asset ? 'selected' : ''}>Clothes from: ${esc(b.title)}</option>`),
+  ].join('');
   return `
     <label>Usual legwear</label>
     <select data-${prefix}lw><option value="pants" ${o.legwearType === 'pants' ? 'selected' : ''}>Pants</option><option value="skirt" ${o.legwearType === 'skirt' ? 'selected' : ''}>Skirt</option></select>
-    <div class="row" style="margin-top:10px">
-      <button data-${prefix}imp>${m ? 'Replace VRM' : 'Import .vrm'}</button>
-      ${m ? `<button class="secondary" data-${prefix}rm>Default model</button>` : `<button class="secondary" data-${prefix}rand>Randomize</button>`}
+    <label>Body / model</label>
+    <select data-${prefix}body>${bodyOpts}</select>
+    <div class="row" style="margin-top:8px">
+      <button data-${prefix}imp>Import .vrm...</button>
+      ${tintable ? `<button class="secondary" data-${prefix}rand>Randomize colors</button>` : ''}
       ${prefix === 'p' ? '' : `<button data-${prefix}pv>Preview</button>`}
     </div>
-    <div class="note" data-${prefix}status>${m ? `Model: <b>${esc(m.title)}</b>` : 'Built-in default figure'}</div>
+    <div class="note" data-${prefix}status></div>
     ${
       m
-        ? `<details ${full ? 'open' : ''}><summary class="note">Legwear parts (hidden after a mishap)</summary>${matList(m, prefix + 'mat')}
-        <label><input type="checkbox" data-${prefix}uw ${m.underwearOverlay !== false ? 'checked' : ''}/> Add simple underwear overlay</label></details>`
-        : full
+        ? `<details ${full ? 'open' : ''}><summary class="note">Model parts & options</summary>
+        ${m.materials ? '' : `<button class="secondary" data-${prefix}parts>Show parts list</button>`}
+        ${m.materials ? `<div class="note">Legwear parts (hidden after a mishap):</div>${matList(m, prefix + 'mat')}` : ''}
+        ${m.materials ? `<div class="note">Parts that turn see-through when wet:</div>${matList(m, prefix + 'wet', 'wetMaterials')}` : ''}
+        <label><input type="checkbox" data-${prefix}uw ${m.underwearOverlay ? 'checked' : ''}/> Add simple underwear overlay (only if the model has no underwear)</label>
+        <label>Clothes</label><select data-${prefix}clothes>${clothesOpts}</select>
+        <div class="note">Wear another model's clothes, fitted to this body.</div></details>`
+        : ''
+    }
+    ${
+      tintable && full
         ? `<label>Skin</label>${swatches('skin', o.colors.skin, prefix + 'skin')}<label>Hair</label>${swatches('hair', o.colors.hair, prefix + 'hair')}
            <label>Top</label>${swatches('top', o.colors.top, prefix + 'top')}<label>Pants / skirt</label>${swatches('bottom', o.colors.bottom, prefix + 'bottom')}`
         : ''
     }
-    ${full ? `<label>Underwear color</label>${swatches('under', o.colors.under, prefix + 'under')}` : ''}`;
+    ${full && !m ? `<label>Underwear color</label>${swatches('under', o.colors.under, prefix + 'under')}` : ''}`;
 }
 
-function bindOutfitEditor(s, o, prefix, target) {
+function genderSelect(def, attr) {
+  return `<label>Gender</label><select data-${attr}><option value="female" ${def.gender === 'female' ? 'selected' : ''}>Female</option><option value="male" ${def.gender === 'male' ? 'selected' : ''}>Male</option><option value="" ${!def.gender ? 'selected' : ''}>Unspecified (they/them)</option></select>`;
+}
+
+function bindGender(s, def, attr, target) {
+  const el = s.querySelector(`[data-${attr}]`);
+  if (!el) return;
+  el.onchange = () => {
+    def.gender = el.value || null;
+    // swap a bundled body to one of the matching gender
+    for (const o of def.outfits) if (o.model?.asset && def.gender) o.model = bundledBody(def.gender, /old/i.test(o.model.asset));
+    previewTarget = target;
+    renderCreator();
+  };
+}
+
+function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator) {
   const q = (a) => s.querySelector(`[data-${prefix}${a}]`);
   const refresh = () => {
     previewTarget = target;
     refreshPreview();
   };
   q('lw').onchange = (e) => ((o.legwearType = e.target.value), refresh());
+  q('body').onchange = (e) => {
+    const v = e.target.value;
+    if (v === 'simple') o.model = null;
+    else if (v.startsWith('asset:')) {
+      const b = BUNDLED.bodies.find((x) => x.asset === v.slice(6));
+      o.model = { asset: b.asset, title: b.title, tintable: true, legwearMaterials: null, underwearOverlay: false, wetMaterials: [] };
+    }
+    previewTarget = target;
+    rerender();
+  };
   q('imp').onclick = async () => {
     const [f] = await pickFiles();
     if (!f) return;
@@ -508,16 +677,31 @@ function bindOutfitEditor(s, o, prefix, target) {
     try {
       o.model = await importVRM(f);
       previewTarget = target;
-      renderCreator();
+      rerender();
     } catch (e) {
       q('status').textContent = 'Could not load that file: ' + e.message;
     }
   };
-  if (q('rm')) q('rm').onclick = () => ((o.model = null), (previewTarget = target), renderCreator());
-  if (q('rand')) q('rand').onclick = () => ((o.colors = randomColors()), refresh());
+  if (q('parts'))
+    q('parts').onclick = async () => {
+      q('status').textContent = 'Reading model...';
+      await ensureMaterials(o.model);
+      previewTarget = target;
+      rerender();
+    };
+  if (q('rand')) q('rand').onclick = () => ((o.colors = { ...randomColors(), under: o.colors.under }), refresh());
   if (q('pv')) q('pv').onclick = refresh;
   if (q('uw')) q('uw').onchange = (e) => ((o.model.underwearOverlay = e.target.checked), refresh());
-  if (o.model) bindMatList(s, o.model, prefix + 'mat', refresh);
+  if (q('clothes'))
+    q('clothes').onchange = (e) => {
+      const b = BUNDLED.bodies.find((x) => x.asset === e.target.value);
+      o.clothesFrom = b ? { asset: b.asset, title: b.title } : null;
+      refresh();
+    };
+  if (o.model) {
+    bindMatList(s, o.model, prefix + 'mat', refresh);
+    bindMatList(s, o.model, prefix + 'wet', refresh, 'wetMaterials');
+  }
   for (const k of ['skin', 'hair', 'top', 'bottom', 'under']) {
     s.querySelectorAll(`[data-${prefix}${k}]`).forEach((el) => {
       el.onclick = () => {
@@ -533,6 +717,7 @@ function creatorProfile() {
   return `
     <label>Character name</label>
     <input type="text" id="f-name" maxlength="20" value="${esc(draft.name)}" />
+    ${genderSelect(draft.player, 'pgender')}
     ${outfitEditor(draft.player.outfits[0], 'p', true)}
     <p class="note">Tip: export from VRoid Studio without "delete hidden body parts" so the legs are complete under the clothes. You can add more outfits each morning.</p>`;
 }
@@ -551,6 +736,7 @@ function creatorCoworkers() {
       <label>Personality</label>
       <select data-cwpers="${i}">${Object.entries(PERSONALITIES).map(([k, p]) => `<option value="${k}" ${c.personality === k ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select>
       <div class="note">${esc(PERSONALITIES[c.personality].desc)}</div>
+      ${genderSelect(c, 'cgender' + i)}
       ${outfitEditor(c.outfits[0], 'c' + i + 'x', false)}
     </div>`;
   return `<p class="note" style="margin-top:0">Coworkers' personalities decide how they react if they catch you. You need 4 to 12 coworkers (${draft.coworkers.length} now).</p>
@@ -558,6 +744,7 @@ function creatorCoworkers() {
     <h4><span>Manager</span></h4>
     <label>Name</label><input type="text" maxlength="20" id="mgr-name" value="${esc(draft.manager.name)}" />
     <div class="note">Hands out write-ups. Three and you're fired. Patrols the building and works in their office.</div>
+    ${genderSelect(draft.manager, 'mgender')}
     ${outfitEditor(draft.manager.outfits[0], 'm', false)}
   </div>
   <div class="cw-grid">${draft.coworkers.map(card).join('')}</div>
@@ -568,7 +755,7 @@ function creatorSummary() {
   const outfit = draft.player.outfits[0];
   return `<div class="textblock" style="font-size:16px">
 <b>${esc(draft.name)}</b> — ${esc(JOBS[draft.job].label)} at <b>${esc(JOBS[draft.job].workplaceName)}</b>
-Model: ${outfit.model ? esc(outfit.model.title) : 'Built-in default'} · Usual legwear: ${outfit.legwearType}
+Model: ${outfit.model ? esc(outfit.model.title) : 'Simple figure'} · Usual legwear: ${outfit.legwearType}
 Manager: ${esc(draft.manager.name)}
 
 Coworkers (${draft.coworkers.length}):
@@ -587,12 +774,17 @@ function bindCreator(s) {
       if (l) l.textContent = draft.name;
     };
     bindOutfitEditor(s, draft.player.outfits[0], 'p', 'player');
+    bindGender(s, draft.player, 'pgender', 'player');
   } else if (step === 1) {
     q('[data-job]').forEach((el) => (el.onclick = () => ((draft.job = el.dataset.job), renderCreator())));
   } else if (step === 2) {
     s.querySelector('#mgr-name').oninput = (e) => (draft.manager.name = e.target.value);
     bindOutfitEditor(s, draft.manager.outfits[0], 'm', 'mgr');
-    draft.coworkers.forEach((c, i) => bindOutfitEditor(s, c.outfits[0], 'c' + i + 'x', i));
+    bindGender(s, draft.manager, 'mgender', 'mgr');
+    draft.coworkers.forEach((c, i) => {
+      bindOutfitEditor(s, c.outfits[0], 'c' + i + 'x', i);
+      bindGender(s, c, 'cgender' + i, i);
+    });
     q('[data-cwname]').forEach((el) => (el.oninput = () => (draft.coworkers[+el.dataset.cwname].name = el.value)));
     q('[data-cwpers]').forEach((el) => (el.onchange = () => ((draft.coworkers[+el.dataset.cwpers].personality = el.value), renderCreator())));
     q('[data-cwdel]').forEach((el) => (el.onclick = () => (draft.coworkers.splice(+el.dataset.cwdel, 1), (previewTarget = 0), renderCreator())));
@@ -600,35 +792,20 @@ function bindCreator(s) {
     add.onclick = () => {
       const used = new Set(draft.coworkers.map((c) => c.name));
       const nm = DEFAULT_COWORKER_NAMES.find((n) => !used.has(n)) || 'Coworker ' + (draft.coworkers.length + 1);
-      draft.coworkers.push({ name: nm, personality: DEFAULT_PERSONALITIES[draft.coworkers.length % DEFAULT_PERSONALITIES.length], outfits: [newOutfit(Math.random() < 0.5 ? 'skirt' : 'pants')] });
+      const g = randGender();
+      draft.coworkers.push({ name: nm, gender: g, personality: DEFAULT_PERSONALITIES[draft.coworkers.length % DEFAULT_PERSONALITIES.length], outfits: [newOutfit(g === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', randomColors(), g, Math.random() < 0.25)] });
       previewTarget = draft.coworkers.length - 1;
       renderCreator();
     };
   }
 }
 
-function modelKeys(profile) {
-  const keys = [];
-  const defs = [profile.player, profile.manager, ...profile.coworkers];
-  for (const d of defs) for (const o of d?.outfits || []) if (o.model?.key) keys.push(o.model.key);
-  return keys;
-}
-
 async function beginNewGame() {
   killPreview();
-  const profile = JSON.parse(JSON.stringify({ name: draft.name.trim(), job: draft.job, player: draft.player, manager: draft.manager, coworkers: draft.coworkers }));
+  const profile = JSON.parse(JSON.stringify({ name: draft.name.trim(), job: draft.job, layoutSeed: draft.layoutSeed, player: draft.player, manager: draft.manager, coworkers: draft.coworkers }));
   profile.coworkers.forEach((c) => (c.name = c.name.trim()));
-  try {
-    const old = migrateProfile(await storage.get('profile'));
-    if (old) {
-      const keep = new Set(modelKeys(profile));
-      for (const k of modelKeys(old)) if (!keep.has(k)) await storage.deleteBlob(k);
-    }
-  } catch (_) {}
-  const save = { day: 1, shame: 0 };
-  await storage.set('profile', profile);
-  await storage.set('save', save);
-  startGame(profile, save);
+  const id = await createSlot(profile, { day: 1, shame: 0, seed: profile.layoutSeed });
+  startGame(id);
 }
 
 // ---------------------------------------------------------------------------
@@ -653,11 +830,23 @@ function chooseOutfits(g) {
           <h4><span>${esc(e.label)}${blessed ? ' ✦ blessed' : ''}</span><button class="secondary" style="padding:4px 10px" data-osel="${e.key}">Preview</button></h4>
           <label>Outfit</label>
           <select data-ooutfit="${e.key}">${e.def.outfits
-            .map((o, i) => `<option value="${i}" ${d.outfit === i ? 'selected' : ''}>Outfit ${i + 1}: ${o.model ? esc(o.model.title) : 'Default figure'} (${o.legwearType})</option>`)
+            .map((o, i) => `<option value="${i}" ${d.outfit === i ? 'selected' : ''}>Outfit ${i + 1}: ${o.model ? esc(o.model.title) : 'Simple figure'}</option>`)
             .join('')}</select>
+          <label>Today ${e.key === 'player' ? "you're" : "they're"} wearing</label>
+          <select data-olw="${e.key}"><option value="pants" ${(d.legwearType || (e.def.outfits[d.outfit] || e.def.outfits[0]).legwearType) === 'pants' ? 'selected' : ''}>Pants</option><option value="skirt" ${(d.legwearType || (e.def.outfits[d.outfit] || e.def.outfits[0]).legwearType) === 'skirt' ? 'selected' : ''}>A skirt</option></select>
           <label>Top color</label>${swatches('tint', d.top, 'otop-' + e.key, tintList)}
           <label>Bottom color</label>${swatches('tint', d.bottom, 'obot-' + e.key, tintList)}
-          <div class="row" style="margin-top:8px"><button class="secondary" data-oadd="${e.key}">+ Add outfit (.vrm)</button><button class="secondary" data-oaddd="${e.key}">+ Add default outfit</button></div>
+          ${
+            e.key === 'player'
+              ? `<label>At-home outfit</label>
+          <select data-ohome="player">${e.def.outfits
+            .map((o, i) => `<option value="${i}" ${(d.home ?? e.def.homeOutfit ?? d.outfit) === i ? 'selected' : ''}>Outfit ${i + 1}: ${o.model ? esc(o.model.title) : 'Simple figure'}</option>`)
+            .join('')}</select>
+          <label>At-home top color</label>${swatches('tint', d.homeTop, 'ohtop-' + e.key, tintList)}
+          <div class="row" style="margin-top:6px"><button class="secondary" data-ohprev="1">Preview at-home outfit</button></div>`
+              : ''
+          }
+          <div class="row" style="margin-top:8px"><button class="secondary" data-oadd="${e.key}">+ Add outfit (.vrm)</button><button class="secondary" data-oaddd="${e.key}">+ Add outfit (same body)</button></div>
         </div>`;
       };
       const s = ui.setScreen(`
@@ -674,15 +863,32 @@ function chooseOutfits(g) {
           <div class="footer"><span></span><button id="o-go">Start the day</button></div>
         </div>`);
       previewer = new Previewer(s.querySelector('#pv'));
+      let homePrev = false;
       const show = async () => {
         const e = entries.find((x) => x.key === sel);
         const d = daily[e.key];
+        if (homePrev && e.key === 'player') {
+          const o = e.def.outfits[d.home ?? e.def.homeOutfit ?? d.outfit] || e.def.outfits[0];
+          return previewer.show(await outfitOpts(o, { top: d.homeTop, bottom: null }, e.def.gender));
+        }
         const o = e.def.outfits[d.outfit] || e.def.outfits[0];
-        previewer.show(await outfitOpts(o, d));
+        previewer.show(await outfitOpts(o, d, e.def.gender));
       };
       show();
       s.querySelectorAll('[data-osel]').forEach((b) => (b.onclick = () => ((sel = b.dataset.osel), render())));
-      s.querySelectorAll('[data-ooutfit]').forEach((b) => (b.onchange = () => ((daily[b.dataset.ooutfit].outfit = +b.value), (sel = b.dataset.ooutfit), show())));
+      s.querySelectorAll('[data-ooutfit]').forEach((b) => (b.onchange = () => ((daily[b.dataset.ooutfit].outfit = +b.value), (daily[b.dataset.ooutfit].legwearType = null), (sel = b.dataset.ooutfit), (homePrev = false), render())));
+      s.querySelectorAll('[data-olw]').forEach((b) => (b.onchange = () => ((daily[b.dataset.olw].legwearType = b.value), (sel = b.dataset.olw), (homePrev = false), show())));
+      s.querySelectorAll('[data-ohome]').forEach((b) => (b.onchange = () => ((daily.player.home = +b.value), (g.profile.player.homeOutfit = +b.value), (sel = 'player'), (homePrev = true), show())));
+      s.querySelectorAll('[data-ohprev]').forEach((b) => (b.onclick = () => ((sel = 'player'), (homePrev = true), show())));
+      s.querySelectorAll('[data-ohtop-player]').forEach((el) => {
+        el.onclick = () => {
+          daily.player.homeTop = el.getAttribute('data-ohtop-player') || null;
+          s.querySelectorAll('[data-ohtop-player]').forEach((x) => x.classList.toggle('on', x === el));
+          sel = 'player';
+          homePrev = true;
+          show();
+        };
+      });
       for (const e of entries) {
         for (const [attr, field] of [['otop-' + e.key, 'top'], ['obot-' + e.key, 'bottom']]) {
           s.querySelectorAll(`[data-${attr}]`).forEach((el) => {
@@ -690,6 +896,7 @@ function chooseOutfits(g) {
               daily[e.key][field] = el.getAttribute('data-' + attr) || null;
               s.querySelectorAll(`[data-${attr}]`).forEach((x) => x.classList.toggle('on', x === el));
               sel = e.key;
+              homePrev = false;
               show();
             };
           });
@@ -698,7 +905,11 @@ function chooseOutfits(g) {
       const addOutfit = async (key, withVrm) => {
         const e = entries.find((x) => x.key === key);
         const base = e.def.outfits[0];
-        const o = { model: null, legwearType: base.legwearType, colors: { ...base.colors, ...randomColors(), skin: base.colors.skin, hair: base.colors.hair, under: base.colors.under } };
+        const o = {
+          model: base.model && base.model.asset ? { ...base.model } : null,
+          legwearType: base.legwearType,
+          colors: { ...base.colors, ...randomColors(), skin: base.colors.skin, hair: base.colors.hair, under: base.colors.under },
+        };
         if (withVrm) {
           const [f] = await pickFiles();
           if (!f) return;
@@ -712,7 +923,7 @@ function chooseOutfits(g) {
         }
         e.def.outfits.push(o);
         daily[key].outfit = e.def.outfits.length - 1;
-        await storage.set('profile', profile);
+        if (g.slotId) await writeProfile(g.slotId, profile);
         sel = key;
         render();
       };
@@ -729,7 +940,8 @@ function chooseOutfits(g) {
         for (const e of entries) daily[e.key].top = daily[e.key].bottom = null;
         render();
       };
-      s.querySelector('#o-go').onclick = () => {
+      s.querySelector('#o-go').onclick = async () => {
+        if (g.slotId) await writeProfile(g.slotId, profile);
         killPreview();
         ui.hideScreen();
         resolve();
@@ -741,7 +953,7 @@ function chooseOutfits(g) {
 
 // ---------------------------------------------------------------------------
 // Game
-async function startGame(profile, save) {
+async function startGame(slotId) {
   killPreview();
   if (game) {
     game.destroy();
@@ -754,8 +966,13 @@ async function startGame(profile, save) {
   ui.setScreen('<div class="loading">Loading...</div>');
   try {
     const settings = await getSettings();
-    await storage.set('profile', profile);
-    game = new Game(canvas, { profile, settings, hooks: { chooseOutfits } }, save, onGameEnd);
+    const { profile: raw, save } = await loadSlot(slotId);
+    const profile = migrateProfile(raw);
+    if (!profile) throw new Error('This save slot is empty.');
+    if (!profile.layoutSeed) profile.layoutSeed = save?.seed || 1;
+    await writeProfile(slotId, profile);
+    const extraCivs = await otherSlotPeople(slotId);
+    game = new Game(canvas, { profile, settings, hooks: { chooseOutfits }, slotId, extraCivs }, save, onGameEnd);
     await game.init();
     game.start();
   } catch (e) {
@@ -774,7 +991,6 @@ async function onGameEnd(r) {
   }, 0);
   if (r.type === 'quit') return showTitle();
   if (r.type === 'win') {
-    await storage.del('save');
     const s = ui.setScreen(`
       <div class="panel" style="max-width:720px;text-align:center">
         <h1 style="color:#55efc4;margin-top:0">Hiphtia Is Satisfied!</h1>
@@ -785,7 +1001,8 @@ async function onGameEnd(r) {
     s.querySelector('#e-title').onclick = showTitle;
     return;
   }
-  const save = await storage.get('save');
+  const slotId = g.slotId;
+  const { save } = slotId ? await loadSlot(slotId) : { save: null };
   const s = ui.setScreen(`
     <div class="panel" style="max-width:720px;text-align:center">
       <h1 style="color:#ff7675;margin-top:0">${esc(r.title)}</h1>
@@ -796,7 +1013,7 @@ async function onGameEnd(r) {
         <button id="e-title" class="secondary">Back to Title</button>
       </div>
     </div>`);
-  if (save) s.querySelector('#e-retry').onclick = () => startGame(profile, save);
+  if (save) s.querySelector('#e-retry').onclick = () => startGame(slotId);
   s.querySelector('#e-title').onclick = showTitle;
 }
 

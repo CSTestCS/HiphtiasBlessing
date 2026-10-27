@@ -70,6 +70,14 @@ export function buildShop(kind) {
     L.pois.customerSpots.push({ x: -11 + i * 0.8, z: 8.5, yaw: Math.PI, sit: true });
   }
   L.plant(11.5, 9);
+  for (const sp of L.pois.customerSpots) if (sp.sit) L.seats.push(sp);
+  // baskets by the door, an umbrella stand, a display stand (cover)
+  L.box(-3, 8.6, 0.8, 0.6, 0.6, '#636e72');
+  L.pickup(kind === 'supermarket' || kind === 'pharmacy' ? 'basket' : 'bag', -3, 8.6, 0.6);
+  L.box(3, 9.2, 0.6, 0.6, 0.9, '#576574');
+  L.pickup('umbrella', 3, 9.2, 0.2);
+  L.box(8, 5.5, 1.4, 1.4, 1.5, P.color);
+  L.hideSpot(-12.2, -6.5, 'corner');
   L.maxCustomers = 7;
   L.finalize();
   L.buildNav(0.7);

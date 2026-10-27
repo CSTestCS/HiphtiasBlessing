@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, Menu } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 // Allow software WebGL on PCs without working GPU drivers.
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
@@ -34,6 +35,11 @@ function createWindow() {
 }
 
 ipcMain.on('quit', () => app.quit());
+// Bundled .vrm models (default townsfolk and Celesti)
+ipcMain.handle('readAsset', async (_e, name) => {
+  const file = path.join(__dirname, '..', 'dist', 'models', path.basename(String(name)));
+  return fs.promises.readFile(file);
+});
 
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => app.quit());

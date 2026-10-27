@@ -271,6 +271,31 @@ export class Bus {
     return this.seats.filter((s) => !s.occ);
   }
 
+  /** Seats the player may take: empty, or only "reserved" by someone still walking to it. */
+  playerSeatOk(s) {
+    return !s.occ || (s.occ !== 'player' && s.occ.walk && s.occ.walk.length && !s.occ.leaving);
+  }
+
+  /** The player took a seat a passenger was heading for: send them elsewhere. */
+  bump(seat) {
+    const p = seat.occ;
+    if (!p || p === 'player' || !p.walk) return;
+    seat.occ = 'player';
+    p.seat = null;
+    const free = this.freeSeats();
+    const next = free[0] || null;
+    let tgt;
+    if (next) {
+      next.occ = p;
+      p.seat = next;
+      tgt = next;
+    } else {
+      p.stand = this.standSpot() || { x: 0, z: p.z };
+      tgt = p.stand;
+    }
+    p.walk = [{ x: 0, z: p.z }, { x: 0, z: tgt.z }, { x: tgt.x, z: tgt.z }];
+  }
+
   materialize() {
     this.materialized = true;
     const seats = this.freeSeats().sort(() => Math.random() - 0.5);

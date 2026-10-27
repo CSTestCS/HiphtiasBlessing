@@ -180,7 +180,7 @@ export const STORY = {
     `Payday isn't for a while. Until then, you'll have to get by just like this.`,
   morningNoClothes: `The wardrobe still holds nothing for your legs. Tops, yes. Pants or skirts? Not a single one.\n\nDeep breath. You can do this.`,
   celesti: (name, celestiName) => [
-    [`Something's wrong...`, `${name} wakes with a start. There's a soft golden glow in the living room... and the sound of someone humming.\n\nSomeone is in the apartment.`],
+    [`Something's wrong...`, `${name} wakes with a start. There's a rustle of feathers in the living room... and the sound of someone humming.\n\nSomeone is in the apartment.`],
     [`${celestiName}`, `"Oh! You're awake. Please don't scream! I come in peace."\n\nA figure with a shimmering halo and fluffy white wings bows politely.\n\n"My name is ${celestiName}. I am a messenger of Hiphtia, the goddess of hips."`],
     [`${celestiName}`, `"I'm afraid I have... news. You have been blessed by Hiphtia herself. That is why no pants or skirt will stay on you. Every one you own fell apart, didn't it? That was her doing."`],
     [`${celestiName}`, `"I know, I know. It feels much more like a curse than a blessing." She wrings her hands. "I'm so, so sorry. I tried to talk her out of it, truly. But Hiphtia is very... stubborn. I can't undo it."`],
@@ -188,7 +188,7 @@ export const STORY = {
     [`${celestiName}`, `"Be brave, ${name}. And... maybe stay close to the coworkers you'd like to share this with." With a flutter of feathers, ${celestiName} is gone.\n\n(From now on, the coworker you spend the most time near each workday gets blessed the next workday. Win when every coworker is blessed.)`],
   ],
   win: (name, celestiName) =>
-    `That night, ${celestiName} appears once more, glowing brighter than ever.\n\n"Hiphtia is delighted! Every single one of your coworkers now shares the blessing. She's finally satisfied, ${name}."\n\n` +
+    `That night, ${celestiName} appears once more, beaming from ear to ear.\n\n"Hiphtia is delighted! Every single one of your coworkers now shares the blessing. She's finally satisfied, ${name}."\n\n` +
     `The next morning, your wardrobe is full of pants and skirts again... and everyone at work quietly agrees never to speak of these weeks. You win!`,
   managerTalk: (mgr, name, lw, n, reason) => {
     const open = `${mgr} closes the office door and points at the chair. You stay standing, because sitting would be worse. ${mgr} keeps their eyes locked firmly on the ceiling.\n\n"${name}. ${reason}"\n\n`;
@@ -248,3 +248,207 @@ export const COLORS = {
   under: ['#ff9ff3', '#ffffff', '#74b9ff', '#ffeaa7', '#55efc4', '#fd79a8', '#2d3436', '#e17055'],
   tint: [null, '#ffffff', '#ff7675', '#74b9ff', '#55efc4', '#ffeaa7', '#a29bfe', '#fd79a8', '#636e72', '#e17055'],
 };
+
+// ---------------------------------------------------------------------------
+// What each coworker role does all day: a home station tag and the tasks they
+// prefer. Indices line up with ROLE_NAMES[job]. Coworkers beyond 12 reuse roles.
+const R = (home, ...tasks) => ({ home, tasks });
+export const ROLE_TASKS = {
+  office: [
+    R('desk', 'Answer emails', 'Print & deliver a report', 'File paperwork'),
+    R('meetingtable', 'Prepare a meeting', 'Make copies', 'Deliver paperwork to the manager'),
+    R('reception', 'Greet a client', 'Sort the mail', 'Water the plants'),
+    R('copier', 'Make copies', 'Brew coffee for the team', 'Restock the break room'),
+    R('cabinet', 'File paperwork', 'Retrieve old files', 'Deliver paperwork to the manager'),
+    R('server', 'Reboot the server', 'Print & deliver a report'),
+    R('desk', 'Print & deliver a report', 'Answer emails'),
+    R('desk', 'Answer emails', 'Make copies'),
+    R('desk', 'Greet a client', 'Print & deliver a report'),
+    R('officedesk', 'File paperwork', 'Check the staff schedule', 'Deliver paperwork to the manager'),
+    R('meetingtable', 'Prepare a meeting', 'Retrieve old files'),
+    R('desk', 'Answer emails', 'Sort the mail'),
+  ],
+  restaurant: [
+    R('table', 'Serve a table', 'Refill drinks', 'Bus a table'),
+    R('stove', 'Fetch ingredients', 'Grab ice cream'),
+    R('host', 'Roll silverware', 'Fold napkins'),
+    R('dish', 'Bus a table', 'Take out the trash', 'Mop up a spill'),
+    R('stove', 'Fetch ingredients'),
+    R('bar', 'Serve the bar', 'Refill drinks'),
+    R('prep', 'Fetch ingredients', 'Grab ice cream'),
+    R('dish', 'Bus a table', 'Clean the restroom', 'Take out the trash'),
+    R('table', 'Serve a table', 'Refill drinks'),
+    R('prep', 'Grab ice cream', 'Fetch ingredients'),
+    R('table', 'Serve a table', 'Bus a table'),
+    R('pass', 'Serve a table', 'Refill drinks'),
+  ],
+  retail: [
+    R('shelf', 'Restock an aisle', 'Price check'),
+    R('register', 'Work the register', 'Process returns', 'Deliver paperwork to the manager'),
+    R('register', 'Work the register', 'Price check'),
+    R('stockbox', 'Restock an aisle', 'Unload a delivery'),
+    R('display', 'Fold clothes'),
+    R('register', 'Work the register'),
+    R('fitting', 'Clear the fitting rooms', 'Fold clothes'),
+    R('dock', 'Unload a delivery', 'Take out the trash'),
+    R('shelf', 'Restock an aisle', 'Mop up a spill'),
+    R('shelf', 'Price check', 'Restock an aisle'),
+    R('display', 'Fold clothes', 'Clear the fitting rooms'),
+    R('returnbin', 'Process returns'),
+  ],
+  hotel: [
+    R('frontdesk', 'Check in a guest', 'Answer the concierge phone'),
+    R('concierge', 'Answer the concierge phone', 'Tidy the lounge'),
+    R('guestbed', 'Make up a room', 'Wash towels', 'Restock the minibar'),
+    R('luggage', 'Carry luggage'),
+    R('guestbed', 'Make up a room', 'Restock the minibar'),
+    R('washer', 'Wash towels', 'Fold laundry'),
+    R('frontdesk', 'Check in a guest', 'Deliver paperwork to the manager'),
+    R('luggage', 'Carry luggage', 'Tidy the lounge'),
+    R('guestbed', 'Make up a room', 'Wash towels'),
+    R('luggage', 'Carry luggage'),
+    R('frontdesk', 'Check in a guest'),
+    R('mop', 'Mop up a spill', 'Clean the restroom', 'Take out the trash'),
+  ],
+  library: [
+    R('circ', 'Check out books', 'Help a patron find a book'),
+    R('archivebox', 'Scan old documents'),
+    R('circ', 'Check out books', 'Shelve returned books'),
+    R('bookshelf', 'Shelve returned books', 'Tidy the reading tables'),
+    R('readtable', 'Help a patron find a book', 'Tidy the reading tables'),
+    R('computer', 'Help a patron find a book'),
+    R('circ', 'Help a patron find a book', 'Check out books'),
+    R('bookshelf', 'Shelve returned books', 'Clean a study room'),
+    R('bookshelf', 'Shelve returned books'),
+    R('repair', 'Repair damaged books', 'Scan old documents'),
+    R('studytable', 'Clean a study room', 'Tidy the reading tables'),
+    R('repair', 'Repair damaged books'),
+  ],
+  warehouse: [
+    R('rack', 'Pick an order', 'Scan inventory'),
+    R('rack', 'Receive a shipment', 'Pick an order'),
+    R('packing', 'Ship a package', 'Pick an order'),
+    R('terminal', 'Scan inventory', 'Label pallets', 'Deliver paperwork to the manager'),
+    R('dock', 'Ship a package', 'Receive a shipment'),
+    R('rack', 'Pick an order'),
+    R('terminal', 'Scan inventory', 'Label pallets'),
+    R('packing', 'Ship a package'),
+    R('dock', 'Receive a shipment', 'Take out the trash'),
+    R('dock', 'Receive a shipment'),
+    R('rack', 'Pick an order', 'Clear the conveyor'),
+    R('conveyor', 'Clear the conveyor', 'Mop up a spill'),
+  ],
+  cafe: [
+    R('espresso', 'Make a latte', 'Deliver an order'),
+    R('oven', 'Bake pastries', 'Restock the pastry case'),
+    R('counter', 'Make a latte', 'Deliver an order', 'Deliver paperwork to the manager'),
+    R('counter', 'Make a latte', 'Wipe tables'),
+    R('roaster', 'Roast beans', 'Grind coffee'),
+    R('espresso', 'Make a latte', 'Grind coffee'),
+    R('dish', 'Wipe tables', 'Take out the trash', 'Mop up a spill'),
+    R('espresso', 'Deliver an order', 'Make a latte'),
+    R('oven', 'Bake pastries'),
+    R('counter', 'Make a latte'),
+    R('espresso', 'Make a latte', 'Wipe tables'),
+    R('cafetable', 'Deliver an order', 'Wipe tables'),
+  ],
+};
+
+// Mishaps that fit what you were doing when it happened (by station tag).
+const M = (wet, fn) => ({ wet, fn });
+export const MISHAP_BY_TAG = {
+  printer: M(false, (n, lw) => `The printer jams, and when ${n} reaches in to clear it, the paper feed grabs the hem of their ${lw} and eats them, inch by inch, with a horrible grinding noise.`),
+  copier: M(false, (n, lw) => `${n} leans on the copier lid. The lid snaps shut on their ${lw}, and when they pull away... RRRIP. The copier now has a fabric souvenir.`),
+  scanner: M(false, (n, lw) => `${n} leans on the scanner lid. It snaps shut on their ${lw}, and when they pull away... RRRIP.`),
+  shredder: M(false, (n, lw) => `${n}'s ${lw} drift a little too close to the shredder. It does not hesitate.`),
+  cabinet: M(false, (n, lw) => `${n} slams the filing cabinet drawer shut with their ${lw} caught inside, then steps away. RRRRIP.`),
+  archivebox: M(false, (n, lw) => `A shelf of heavy archive boxes topples. ${n} leaps clear, but their ${lw} stay pinned under the boxes... and tear right off.`),
+  supply: M(false, (n, lw) => `${n} snags their ${lw} on a nail sticking out of the supply shelf. One step later there is a long, loud RRRRIP.`),
+  stockbox: M(false, (n, lw) => `${n}'s ${lw} hook on a loose pallet strap. The pallet jack rolls off with them, straight into the compactor.`),
+  shelf: M(false, (n, lw) => `${n} climbs the bottom shelf to reach the top. Their ${lw} catch on a price tag hook, and when they hop down, the ${lw} stay up there.`),
+  rack: M(false, (n, lw) => `${n}'s ${lw} catch on the edge of a steel rack. One step later, RRRRIP. There's not much left of them.`),
+  dock: M(false, (n, lw) => `A delivery truck pulls away from the dock with the hem of ${n}'s ${lw} caught in its door. ${n} stays. The ${lw} do not.`),
+  pallet: M(false, (n, lw) => `${n}'s ${lw} snag on a splintered pallet. One step later there is a long, loud RRRRIP.`),
+  conveyor: M(false, (n, lw) => `${n}'s ${lw} catch on the conveyor belt, which happily carries them off to the shipping area.`),
+  packing: M(false, (n, lw) => `${n} accidentally tapes their ${lw} into a shipping box. By the time they notice, the box has shipped.`),
+  coffee: M(true, (n, lw) => `The coffee pot slips. A full pot of coffee pours down ${n}'s ${lw}. They peel them off before they burn, and they're soaked and stained beyond saving.`),
+  espresso: M(true, (n, lw) => `The steam wand sputters and blasts ${n}'s ${lw} with scalding milk. They have to take them off right away, and they're ruined.`),
+  soda: M(true, (n, lw) => `The soda fountain nozzle breaks off and sprays ${n}'s ${lw} with sticky cola. Soaked, sticky and ruined.`),
+  bar: M(true, (n, lw) => `A bottle of syrup shatters and drenches ${n}'s ${lw}. They have to come off, and they're ruined.`),
+  table: M(true, (n, lw) => `A diner knocks over a bowl of tomato soup, right onto ${n}'s ${lw}. They peel them off before they stain, but they're soaked and unwearable.`),
+  cafetable: M(true, (n, lw) => `A customer's iced coffee tips over straight onto ${n}'s ${lw}. Soaked, sticky and ruined.`),
+  pass: M(true, (n, lw) => `A tray of soup bowls tips over at the pass, right onto ${n}'s ${lw}. They're soaked, scalding and unwearable.`),
+  stove: M(true, (n, lw) => `A pot of pasta water boils over onto ${n}'s ${lw}. They have to come off immediately, and they're soaked and ruined.`),
+  prep: M(false, (n, lw) => `${n}'s ${lw} catch on the meat slicer's handle. The slicer makes short work of them.`),
+  oven: M(false, (n, lw) => `${n} backs into the hot oven door, and their ${lw} scorch and melt right off.`),
+  roaster: M(false, (n, lw) => `${n} stands too close to the roaster vent. The ${lw} singe, smoke, and fall apart.`),
+  dish: M(true, (n, lw) => `The dish sprayer slips out of its holder and blasts ${n}'s ${lw} with soapy water. They're drenched and see-through, so off they come.`),
+  sink: M(true, (n, lw) => `The faucet handle snaps off and a geyser of water drenches ${n}'s ${lw}. Soaked through and ruined.`),
+  washer: M(true, (n, lw) => `A washing machine door pops open mid-cycle, flooding ${n}'s ${lw} with soapy water. They're soaked and ruined.`),
+  mop: M(true, (n, lw) => `${n} knocks over the mop bucket, dousing their ${lw} in dirty mop water. They have to come off right now.`),
+  spill: M(true, (n, lw) => `${n} slips in the spill and lands right in it. Their ${lw} are soaked through and ruined.`),
+  trash: M(false, (n, lw) => `The trash bag splits open over ${n}'s ${lw}. They're covered in something unspeakable, and there's no saving them.`),
+  dumpster: M(false, (n, lw) => `${n}'s ${lw} catch on the dumpster lid as it slams shut. One step later: RRRRIP.`),
+  fridge: M(false, (n, lw) => `${n}'s ${lw} get caught in the fridge door, and when they turn away... RRRIP.`),
+  freezer: M(false, (n, lw) => `${n}'s ${lw} freeze to the walk-in freezer shelf. When they pull free, the ${lw} stay behind.`),
+  guestbed: M(false, (n, lw) => `${n} trips over the bedsheets and their ${lw} tangle in the bed frame. RRRRIP.`),
+  luggage: M(false, (n, lw) => `${n}'s ${lw} catch in a suitcase zipper, and the luggage cart rolls away with them.`),
+  bookshelf: M(false, (n, lw) => `${n} climbs the library ladder; their ${lw} catch on a shelf bracket and stay behind on the way down.`),
+  returncart: M(false, (n, lw) => `${n}'s ${lw} tangle in the book cart wheel. The cart wins.`),
+  repair: M(false, (n, lw) => `${n} sits on the book repair bench, right on the fresh glue. The ${lw} are glued in place when they stand up. They stand up anyway.`),
+  plant: M(true, (n, lw) => `The watering can spout pops off and the whole can empties onto ${n}'s ${lw}. Soaked and muddy.`),
+};
+export const MISHAP_GENERIC = M(false, (n, lw) => `${n}'s zipper and button give out at the same moment. The ${lw} simply slide down to the floor... and refuse to stay up.`);
+export function mishapFor(tag) {
+  return MISHAP_BY_TAG[tag] || MISHAP_GENERIC;
+}
+
+// Shame amounts (multiplied by the Shame Intensity setting)
+export const SHAME = {
+  pedestrian: 3, pedestrianStare: 0.35, busDriver: 2, busPass: 1.5, busNeighbor: 2, busNeighborRate: 0.06, busStandRate: 0.04, busStandCap: 0.5,
+  friend: 2, sympathetic: 3, oddball: 1, neutralWarn: 6, report: 4, customer: 4, managerTalk: 5, clerk: 2, encounterFriendly: 2, encounterHostile: 4,
+  dog: 1, sleep: 25,
+};
+
+export const DEFAULT_SETTINGS = {
+  civilians: [],
+  useBundledCivilians: true,
+  celesti: null,
+  celestiName: 'Celesti',
+  hourSeconds: 240,
+  shameScale: 1,
+  exprMax: 0.7,
+  minimap: true,
+};
+
+export const BUNDLED = {
+  civilians: [
+    { asset: 'HBFemaleYoung1.vrm', title: 'Townsperson (young woman)', gender: 'female' },
+    { asset: 'HBFemaleOld1.vrm', title: 'Townsperson (older woman)', gender: 'female' },
+    { asset: 'HBMaleYoung1.vrm', title: 'Townsperson (young man)', gender: 'male' },
+    { asset: 'HBMaleOld1.vrm', title: 'Townsperson (older man)', gender: 'male' },
+  ],
+  celesti: 'CelestiAngelic.vrm',
+  bodies: [
+    { asset: 'HBFemaleYoung1.vrm', title: 'Built-in: young woman', gender: 'female' },
+    { asset: 'HBFemaleOld1.vrm', title: 'Built-in: older woman', gender: 'female' },
+    { asset: 'HBMaleYoung1.vrm', title: 'Built-in: young man', gender: 'male' },
+    { asset: 'HBMaleOld1.vrm', title: 'Built-in: older man', gender: 'male' },
+  ],
+};
+
+export const WEATHER = {
+  sunny: { label: 'Sunny', rain: 0 },
+  cloudy: { label: 'Cloudy', rain: 0 },
+  rain: { label: 'Rainy', rain: 1 },
+};
+export function weatherFor(day, seed = 0) {
+  const r = Math.abs(Math.sin(day * 12.9898 + seed * 78.233) * 43758.5453) % 1;
+  return r < 0.45 ? 'sunny' : r < 0.7 ? 'cloudy' : 'rain';
+}
+
+export function pronouns(gender) {
+  if (gender === 'male') return { they: 'he', them: 'him', their: 'his', theyre: "he's", They: 'He', Their: 'His' };
+  if (gender === 'female') return { they: 'she', them: 'her', their: 'her', theyre: "she's", They: 'She', Their: 'Her' };
+  return { they: 'they', them: 'them', their: 'their', theyre: "they're", They: 'They', Their: 'Their' };
+}

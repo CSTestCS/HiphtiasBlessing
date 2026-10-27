@@ -71,9 +71,9 @@ label { display: block; font-size: 13px; color: #b8bdd6; margin: 10px 0 4px; }
 #hud-prompt b { color: #ffd36e; }
 #hud-progress { position: absolute; left: 50%; bottom: 95px; width: 260px; height: 10px; transform: translateX(-50%); background: #222; border-radius: 6px; overflow: hidden; }
 #hud-progress-fill { height: 100%; background: #55efc4; width: 0; }
-#hud-borrow { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); background: rgba(108,92,231,.85); padding: 8px 18px; border-radius: 12px; font-weight: 700; }
+#hud-borrow { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); background: rgba(108,92,231,.85); padding: 8px 18px; border-radius: 12px; font-weight: 700; }
 #hud-hint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); font-size: 12px; color: #ccc; background: rgba(0,0,0,.35); padding: 4px 12px; border-radius: 8px; }
-#toasts { position: absolute; left: 50%; top: 70px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; }
+#toasts { position: absolute; left: 50%; top: 96px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .toast { background: rgba(20,20,35,.88); border-left: 4px solid #ff7eb6; padding: 8px 14px; border-radius: 8px; font-size: 15px; animation: tin .25s ease-out; max-width: 560px; }
 .toast.bad { border-color: #e74c3c; }
 .toast.good { border-color: #55efc4; }
@@ -98,3 +98,13 @@ label { display: block; font-size: 13px; color: #b8bdd6; margin: 10px 0 4px; }
 .bar.thin { height: 7px; }
 #hud-meters { top: 140px; width: 300px; }
 #hud-top { max-width: 560px; }
+
+/* minimap + compass */
+#minimap { position: absolute; right: 16px; bottom: 16px; width: 190px; height: 190px; border-radius: 50%; box-shadow: 0 2px 12px rgba(0,0,0,.5); }
+#compass { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); width: 420px; max-width: 46vw; height: 34px; overflow: hidden;
+  background: linear-gradient(90deg, rgba(0,0,0,0), rgba(0,0,0,.5) 15%, rgba(0,0,0,.5) 85%, rgba(0,0,0,0)); border-radius: 8px; pointer-events: none; }
+#compass::after { content: ''; position: absolute; left: 50%; top: 0; width: 2px; height: 8px; background: #ffd36e; transform: translateX(-50%); }
+#compass .cmark { position: absolute; top: 9px; transform: translateX(-50%); font-size: 12px; color: #c8c8d8; }
+#compass .cmark.major { font-size: 15px; font-weight: 800; color: #fff; top: 7px; }
+#compass .cobj { position: absolute; top: 4px; transform: translateX(-50%); color: #55efc4; font-size: 14px; font-weight: 800; text-align: center; line-height: 1; }
+#compass .cobj small { display: block; font-size: 10px; font-weight: 600; }

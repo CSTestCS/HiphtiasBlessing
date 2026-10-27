@@ -2,6 +2,8 @@
 // queue of activity steps (walk somewhere, work at a station, sit, hide...),
 // looks around, and has a cone of vision used for stealth detection.
 import * as THREE from 'three';
+import { propMesh } from './props.js';
+export { propMesh };
 
 const coneMatBase = new THREE.MeshBasicMaterial({ color: 0xfff3a0, transparent: true, opacity: 0.13, depthWrite: false, side: THREE.DoubleSide });
 const coneGeoCache = {};
@@ -14,50 +16,6 @@ export const angDiff = (a, b) => {
   return d;
 };
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
-
-export function propMesh(kind) {
-  let m;
-  const M = (c) => new THREE.MeshStandardMaterial({ color: c });
-  if (kind === 'tray' || kind === 'cup') {
-    m = new THREE.Group();
-    m.add(new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.03, 18), M('#b2bec3')));
-    const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.1, 0.04, 14), M('#ffffff'));
-    plate.position.set(0.08, 0.03, 0);
-    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.14, 10), M('#e17055'));
-    cup.position.set(-0.12, 0.08, 0.05);
-    m.add(plate, cup);
-    m.userData.up = 0.3;
-    m.userData.cover = 1.1;
-  } else if (kind === 'box' || kind === 'basket') {
-    m = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.38), M(kind === 'basket' ? '#e84118' : '#c8a27a'));
-    m.userData.up = 0.12;
-    m.userData.cover = 1.35;
-  } else if (kind === 'bag') {
-    m = new THREE.Mesh(new THREE.SphereGeometry(0.26, 12, 10), M('#2d3436'));
-    m.scale.y = 1.2;
-    m.userData.up = 0.05;
-    m.userData.cover = 1.2;
-  } else if (kind === 'books') {
-    m = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.3, 0.26), M('#8e44ad'));
-    m.userData.up = 0.12;
-    m.userData.cover = 0.95;
-  } else if (kind === 'bucket' || kind === 'can') {
-    m = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.14, 0.3, 12), M(kind === 'can' ? '#27ae60' : '#f1c40f'));
-    m.userData.up = 0.0;
-    m.userData.cover = 0.7;
-  } else if (kind === 'mop') {
-    m = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.4, 6), M('#a1887f'));
-    m.userData.up = 0.2;
-    m.userData.cover = 0.2;
-  } else {
-    m = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.42, 0.04), M('#0984e3'));
-    m.userData.up = 0.05;
-    m.userData.cover = 0.8;
-  }
-  m.traverse((o) => o.isMesh && (o.castShadow = true));
-  m.userData.kind = kind;
-  return m;
-}
 
 export class NPC {
   constructor(game, char, o) {
@@ -157,6 +115,9 @@ export class NPC {
       if (s.hide) this.vision = false;
     }
     if (s.carry) this.setCarry(s.carry);
+    this.lowCover = !!s.lowCover;
+    if (s.run) this.speedMul = 1.45;
+    else if (s.go && this.speedMul === 1.45) this.speedMul = 1;
     if (s.call) s.call();
   }
 
@@ -291,7 +252,8 @@ export class NPC {
       }
     }
 
-    this.crouch = this.sneaking && (this.watchedT > 0 || this.state === 'hiding');
+    // sneakers crouch only where it helps: behind low cover or while hiding
+    this.crouch = this.sneaking && ((this.lowCover && !moving) || this.state === 'hiding' || (this.lowCover && this.cur && this.cur.go && this.path.length <= 1));
     this.curSpeed += ((moving ? this.speed * (this.speedMul || 1) * (this.crouch ? 0.55 : 1) : 0) - this.curSpeed) * Math.min(1, dt * 10);
     this.char.root.position.set(this.x, 0, this.z);
     this.char.root.rotation.y = this.yaw;

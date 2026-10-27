@@ -17,9 +17,10 @@ function mulberry(seed) {
 export const STREETS = [-120, -60, 0, 60, 120];
 const AVES = ['1st Ave', '2nd Ave', '3rd Ave', '4th Ave', '5th Ave']; // streets along z (x fixed)
 const STS = ['Cedar St', 'Elm St', 'Maple St', 'Oak St', 'Pine St']; // streets along x (z fixed)
-const ROAD = 4; // half road width
-const WALK = 7.5; // sidewalk outer edge from street center
-const SW = 5.75; // sidewalk center line
+const ROAD = 5; // half road width (2 lanes + on-street parking)
+const WALK = 8.5; // sidewalk outer edge from street center
+const SW = 6.75; // sidewalk center line
+const PARK = 4.2; // parked car line
 const blockRange = (i) => [STREETS[i] + WALK, STREETS[i + 1] - WALK];
 
 export const LINES = [
@@ -87,6 +88,7 @@ export function buildCity({ workplaceName = 'Work', jobColor = '#273c75' } = {})
   };
   const parks = new Set(['1,2', '2,1']);
   L.places = {};
+  const blocks = [];
   L.pois.benches = [];
   for (let bx = 0; bx < 4; bx++) {
     for (let bz = 0; bz < 4; bz++) {
@@ -96,7 +98,7 @@ export function buildCity({ workplaceName = 'Work', jobColor = '#273c75' } = {})
       if (parks.has(key)) buildPark(L, x0, x1, z0, z1, rng);
       else buildBlock(L, x0, x1, z0, z1, rng, palette, special[key], { workplaceName, jobColor });
       // street furniture on the block's sidewalks
-      sidewalkProps(L, x0, x1, z0, z1, rng);
+      blocks.push([x0, x1, z0, z1]);
     }
   }
 
@@ -111,6 +113,8 @@ export function buildCity({ workplaceName = 'Work', jobColor = '#273c75' } = {})
 
   // ---- bus routes and stops
   L.lines = LINES.map((ln) => buildLine(L, ln));
+  L.nearStop = (x, z) => L.lines.some((ln) => ln.stops.some((st) => Math.hypot(st.x - x, st.z - z) < 10));
+  for (const b of blocks) sidewalkProps(L, ...b, rng);
 
   // ---- cars
   buildCars(L, rng);
@@ -242,6 +246,7 @@ function placeSpecial(L, kind, s, ca, ctx) {
 }
 
 function buildPark(L, x0, x1, z0, z1, rng) {
+  (L.parks ||= []).push({ x0, x1, z0, z1 });
   const cx = (x0 + x1) / 2;
   const cz = (z0 + z1) / 2;
   L.floor(cx, cz, x1 - x0, z1 - z0, '#6ab04c', 0.006);
@@ -266,27 +271,72 @@ function buildPark(L, x0, x1, z0, z1, rng) {
   }
   for (const [x, z, yaw] of [[cx - 2.3, cz - 8, Math.PI / 2], [cx + 2.3, cz + 8, -Math.PI / 2], [cx - 8, cz + 2.3, Math.PI], [cx + 8, cz - 2.3, 0]]) {
     L.box(x, z, Math.abs(Math.sin(yaw)) > 0.5 ? 0.6 : 1.8, Math.abs(Math.sin(yaw)) > 0.5 ? 1.8 : 0.6, 0.45, '#8d6e63');
-    L.pois.benches.push({ x, z, yaw, sit: true });
+    L.pois.benches.push(L.seat(x, z, yaw, 'park bench'));
   }
   // fountain
   L.box(cx, cz, 2.6, 2.6, 0.8, '#b2bec3');
 }
 
 function sidewalkProps(L, x0, x1, z0, z1, rng) {
-  // hedges and bins along each block edge, on the sidewalk
-  const edge = [
-    [(x) => ({ x, z: z0 - 1.2 }), x0, x1, 'x'],
-    [(x) => ({ x, z: z1 + 1.2 }), x0, x1, 'x'],
-    [(z) => ({ x: x0 - 1.2, z }), z0, z1, 'z'],
-    [(z) => ({ x: x1 + 1.2, z }), z0, z1, 'z'],
+  // street furniture along each block edge (on the sidewalk), plus parked cars at the curb
+  const edges = [
+    { f: (t) => ({ x: t, z: z0 - 1.3 }), a: x0, b: x1, axis: 'x', street: z0 - WALK, out: -1 },
+    { f: (t) => ({ x: t, z: z1 + 1.3 }), a: x0, b: x1, axis: 'x', street: z1 + WALK, out: 1 },
+    { f: (t) => ({ x: x0 - 1.3, z: t }), a: z0, b: z1, axis: 'z', street: x0 - WALK, out: -1 },
+    { f: (t) => ({ x: x1 + 1.3, z: t }), a: z0, b: z1, axis: 'z', street: x1 + WALK, out: 1 },
   ];
-  for (const [f, a, b, axis] of edge) {
-    for (let t = a + 6; t < b - 6; t += 9 + rng() * 10) {
-      const p = f(t);
+  const nearDoor = (x, z) => Object.values(L.places || {}).some((pl) => Math.hypot(pl.door.x - x, pl.door.z - z) < 5);
+  for (const e of edges) {
+    const ax = e.axis === 'x';
+    for (let t = e.a + 5; t < e.b - 5; t += 6 + rng() * 7) {
+      const p = e.f(t);
+      if (nearDoor(p.x, p.z)) continue;
       const r = rng();
-      if (r < 0.4) L.box(p.x, p.z, axis === 'x' ? 3 : 0.9, axis === 'x' ? 0.9 : 3, 1.1, '#2d6a4f');
-      else if (r < 0.6) L.box(p.x, p.z, 0.7, 0.7, 1.05, ['#2c3e50', '#2980b9', '#c0392b'][Math.floor(rng() * 3)]);
-      else if (r < 0.7) L.box(p.x, p.z, 0.8, 0.8, 1.2, '#7f8c8d');
+      const w = (a, b) => (ax ? a : b);
+      if (r < 0.22) L.box(p.x, p.z, w(3, 0.9), w(0.9, 3), 1.1, '#2d6a4f'); // hedge planter
+      else if (r < 0.32) {
+        L.box(p.x, p.z, 0.75, 0.75, 1.05, ['#2c3e50', '#2980b9', '#c0392b'][Math.floor(rng() * 3)]); // bin / mailbox
+      } else if (r < 0.42) {
+        L.box(p.x, p.z, w(0.9, 0.7), w(0.7, 0.9), 1.85, '#e17055'); // vending machine
+      } else if (r < 0.5) {
+        // phone booth: walk in and hide
+        L.box(p.x - w(0.55, 0), p.z - w(0, 0.55), w(0.06, 1.1), w(1.1, 0.06), 2.2, '#c0392b');
+        L.box(p.x + w(0.55, 0), p.z + w(0, 0.55), w(0.06, 1.1), w(1.1, 0.06), 2.2, '#c0392b');
+        L.box(p.x - e.out * w(0, 0.55), p.z - e.out * w(0.55, 0), w(1.1, 0.06), w(0.06, 1.1), 2.2, '#c0392b');
+        L.hideSpot(p.x, p.z, 'phone booth');
+      } else if (r < 0.6) {
+        L.box(p.x, p.z, 0.8, 0.6, 1.0, '#1e3799'); // newspaper stand
+        L.pickup('newspaper', p.x, p.z, 1.0);
+      } else if (r < 0.68) {
+        L.box(p.x, p.z, w(1.8, 0.6), w(0.6, 1.8), 0.45, '#8d6e63', { occlude: false });
+        L.pois.benches.push(L.seat(p.x, p.z, ax ? (e.out > 0 ? 0 : Math.PI) : e.out > 0 ? Math.PI / 2 : -Math.PI / 2, 'bench'));
+        if (rng() < 0.4) L.pickup('bag', p.x + w(0.6, 0), p.z + w(0, 0.6), 0.45);
+      } else if (r < 0.74) {
+        L.box(p.x, p.z, 0.9, 0.9, 2.6, '#f5cd79'); // advertising pillar
+      } else if (r < 0.8) {
+        L.box(p.x, p.z, w(2, 1.2), w(1.2, 2), 1.5, '#ffeaa7'); // food cart
+      } else if (r < 0.86) {
+        L.box(p.x, p.z, 0.6, 0.6, 1.0, '#576574'); // umbrella stand
+        L.pickup('umbrella', p.x, p.z, 0.2);
+      } else {
+        L.box(p.x, p.z, 0.35, 0.35, 2.4, '#6d4c41'); // street tree
+        const top = new THREE.Mesh(new THREE.IcosahedronGeometry(1.3, 1), mat('#27ae60'));
+        top.position.set(p.x, 3.4, p.z);
+        top.castShadow = true;
+        L.add(top);
+        L.staticMeshes.push(top);
+      }
+    }
+    // parked cars along the curb
+    for (let t = e.a + 8; t < e.b - 8; t += 5.5 + rng() * 5) {
+      if (rng() < 0.4) continue;
+      const lane = e.street - e.out * (WALK - PARK);
+      const x = ax ? t : lane;
+      const z = ax ? lane : t;
+      if (nearDoor(x, z) || L.nearStop?.(x, z)) continue;
+      const col = ['#e74c3c', '#3498db', '#f1c40f', '#ecf0f1', '#2c3e50', '#16a085', '#8e44ad', '#d35400'][Math.floor(rng() * 8)];
+      L.box(x, z, ax ? 4.2 : 1.8, ax ? 1.8 : 4.2, 0.95, col, { y: 0.15 });
+      L.box(x, z, ax ? 2.2 : 1.6, ax ? 1.6 : 2.2, 0.55, '#2c3e50', { y: 1.1 });
     }
   }
 }
@@ -349,8 +399,8 @@ function buildLine(L, ln) {
       stops.push({
         s: g.s0 + t,
         name: `${sname} & ${cname}`,
-        x: p.x + -g.dz * 3.6,
-        z: p.z + g.dx * 3.6,
+        x: p.x + -g.dz * 4.4,
+        z: p.z + g.dx * 4.4,
         yaw: Math.atan2(g.dx, g.dz),
         rx: -g.dz,
         rz: g.dx,
@@ -380,7 +430,9 @@ function buildLine(L, ln) {
     sign2.rotation.y = st.yaw - Math.PI / 2;
     L.add(sign2);
     L.interactable(`stop:${ln.id}:${i}`, st.x + st.rx * 0.6, st.z + st.rz * 0.6, `${ln.name} stop: ${st.name}`, { r: 3.2, stop: st, lineId: ln.id });
-    L.pois.benches.push({ x: bx + st.rx * 0.2, z: bz + st.rz * 0.2, yaw: Math.atan2(-st.rx, -st.rz), sit: true, busStop: st });
+    L.pois.benches.push(L.seat(bx + st.rx * 0.2, bz + st.rz * 0.2, Math.atan2(-st.rx, -st.rz), 'bus stop bench', { busStop: st }));
+    // opaque ad panel on one end of the shelter (cover)
+    L.box(bx - Math.sin(st.yaw) * 1.7, bz - Math.cos(st.yaw) * 1.7, along ? 0.12 : 1.0, along ? 1.0 : 0.12, 2.0, ln.color, { y: 0.1 });
   });
   return { ...ln, lane, lsegs, total, at, stops };
 }

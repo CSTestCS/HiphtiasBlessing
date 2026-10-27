@@ -3,6 +3,7 @@
 // and an automatic navigation grid with A* for NPC path finding.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { propMesh } from './props.js';
 
 const mats = {};
 export function mat(color, opts = {}) {
@@ -90,6 +91,31 @@ export class Level {
     this.updaters = [];
     this.staticMeshes = [];
     this.stamp = 0;
+    this.seats = []; // {x, z, yaw, taken, label}
+    this.pickups = []; // {x, z, kind, mesh, taken}
+    this.coverPoints = [];
+  }
+
+  /** A chair/bench spot anyone can sit on (player included). Returns the spot. */
+  seat(x, z, yaw, label = 'chair', extra = {}) {
+    const s = { x, z, yaw, sit: true, label, ...extra };
+    this.seats.push(s);
+    return s;
+  }
+
+  /** An item lying around that the player can pick up and carry in front of them. */
+  pickup(kind, x, z, y = 0.8, rotY = 0) {
+    const m = propMesh(kind);
+    m.position.set(x, y + (m.userData.up < 0 ? 0.3 : 0), z);
+    m.rotation.y = rotY;
+    this.group.add(m);
+    const p = { x, z, y, kind, mesh: m, taken: false, home: { x, z, y } };
+    this.pickups.push(p);
+    return p;
+  }
+
+  hideSpot(x, z, room, label = 'Hide') {
+    (this.pois.hideSpots ||= []).push({ x, z, room, label });
   }
 
   add(obj) {
@@ -237,6 +263,28 @@ export class Level {
     }
     this.staticMeshes = [];
     this.buildHashes();
+    this.buildCoverPoints();
+  }
+
+  /** Spots right next to sight blockers, used by sneaking NPCs to get out of view. */
+  buildCoverPoints() {
+    const pts = [];
+    for (const b of this.occ) {
+      if (b.maxY < 0.7 || b.minY > 0.4) continue;
+      const w = b.maxX - b.minX;
+      const d = b.maxZ - b.minZ;
+      if (w * d > 60) continue;
+      const tall = b.maxY >= 1.2;
+      const cx = (b.minX + b.maxX) / 2;
+      const cz = (b.minZ + b.maxZ) / 2;
+      const cand = [
+        [b.minX - 0.55, cz], [b.maxX + 0.55, cz], [cx, b.minZ - 0.55], [cx, b.maxZ + 0.55],
+      ];
+      if (w > 3) cand.push([b.minX + w * 0.25, b.minZ - 0.55], [b.maxX - w * 0.25, b.maxZ + 0.55], [b.minX + w * 0.25, b.maxZ + 0.55], [b.maxX - w * 0.25, b.minZ - 0.55]);
+      if (d > 3) cand.push([b.minX - 0.55, b.minZ + d * 0.25], [b.maxX + 0.55, b.maxZ - d * 0.25], [b.maxX + 0.55, b.minZ + d * 0.25], [b.minX - 0.55, b.maxZ - d * 0.25]);
+      for (const [x, z] of cand) if (!this.blockedPoint(x, z, 0.3)) pts.push({ x, z, tall });
+    }
+    this.coverPoints = pts;
   }
 
   buildHashes() {
@@ -506,5 +554,95 @@ export class Level {
 
   update(dt, game) {
     for (const u of this.updaters) u(dt, game);
+  }
+}
+
+/**
+ * Places content authored in a local frame into a level, rotated by a multiple
+ * of 90 degrees: world = origin + R(phi) * (x, z - zOff).
+ */
+export class Frame {
+  constructor(L, ox, oz, phi, zOff = 0) {
+    this.L = L;
+    this.ox = ox;
+    this.oz = oz;
+    this.phi = phi;
+    this.zOff = zOff;
+    this.c = Math.round(Math.cos(phi));
+    this.s = Math.round(Math.sin(phi));
+    this.odd = Math.abs(this.s) === 1;
+    const self = this;
+    const tp = (arr) => ({ push: (...os) => os.forEach((o) => arr.push(self.tpt(o))) });
+    this.pois = {
+      get customerSpots() {
+        return { push: (...os) => os.forEach((o) => { const t = self.tpt(o); L.pois.customerSpots.push(t); if (t.sit) L.seats.push(t); }) };
+      },
+      hideSpots: tp((L.pois.hideSpots ||= [])),
+      workstations: tp((L.pois.workstations ||= [])),
+      wander: tp((L.pois.wander ||= [])),
+    };
+  }
+  tx(x, z) {
+    const zz = z - this.zOff;
+    return { x: this.ox + x * this.c + zz * this.s, z: this.oz - x * this.s + zz * this.c };
+  }
+  tpt(o) {
+    const p = this.tx(o.x, o.z);
+    const r = { ...o, x: p.x, z: p.z };
+    if (o.yaw !== undefined) r.yaw = o.yaw + this.phi;
+    return r;
+  }
+  box(x, z, w, d, h, color, opts = {}) {
+    const p = this.tx(x, z);
+    return this.L.box(p.x, p.z, this.odd ? d : w, this.odd ? w : d, h, color, opts);
+  }
+  floor(x, z, w, d, color, y) {
+    const p = this.tx(x, z);
+    return this.L.floor(p.x, p.z, this.odd ? d : w, this.odd ? w : d, color, y);
+  }
+  label(text, x, y, z, rotY = 0, opts) {
+    const p = this.tx(x, z);
+    return this.L.label(text, p.x, y, p.z, rotY + this.phi, opts);
+  }
+  chair(x, z, rotY = 0, color, seat = false) {
+    const p = this.tx(x, z);
+    this.L.chair(p.x, p.z, rotY + this.phi, color);
+    if (seat) return this.L.seat(p.x, p.z, rotY + this.phi);
+  }
+  seat(x, z, yaw, label) {
+    const p = this.tx(x, z);
+    return this.L.seat(p.x, p.z, yaw + this.phi, label);
+  }
+  plant(x, z, s) {
+    const p = this.tx(x, z);
+    this.L.plant(p.x, p.z, s);
+  }
+  pickup(kind, x, z, y, rotY = 0) {
+    const p = this.tx(x, z);
+    return this.L.pickup(kind, p.x, p.z, y, rotY + this.phi);
+  }
+  hideSpot(x, z, room) {
+    const p = this.tx(x, z);
+    this.L.hideSpot(p.x, p.z, room);
+  }
+  interactable(id, x, z, label, opts) {
+    const p = this.tx(x, z);
+    return this.L.interactable(id, p.x, p.z, label, opts);
+  }
+  station(tag, x, z, yaw, label, room, opts) {
+    const p = this.tx(x, z);
+    return this.L.station(tag, p.x, p.z, yaw + this.phi, label, room, opts);
+  }
+  add(obj) {
+    const p = this.tx(obj.position.x, obj.position.z);
+    obj.position.x = p.x;
+    obj.position.z = p.z;
+    obj.rotation.y += this.phi;
+    return this.L.add(obj);
+  }
+  setPoi(name, val) {
+    const out = {};
+    for (const [k, v] of Object.entries(val)) out[k] = v && v.x !== undefined ? this.tpt(v) : v;
+    this.L.pois[name] = out;
   }
 }
