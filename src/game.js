@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { ui, esc } from './ui.js';
 import { NPC, angDiff, pick, propMesh } from './npc.js';
-import { createCharacter, createMannequin, randomColors, addAngelic, setExpressionMax, borrowLegwear } from './character.js';
+import { createCharacter, createMannequin, randomColors, addAngelic, setExpressionMax, borrowLegwear, workKindFor } from './character.js';
 import { buildLobby } from './levels/lobby.js';
 import { buildHallway, buildPool, buildLaundry } from './levels/building.js';
 import { Rain } from './weather.js';
@@ -1402,7 +1402,7 @@ export class Game {
     const exposed = this.playerExposed();
     const atHome = this.phase === 'morning' || this.phase === 'evening';
     const seated = !!p.seat || !!p.sitAt;
-    p.char.update(dt, { speed: p.speed, crouch: (p.crouching && !seated) || !!p.hidden, sit: seated, carry: !!p.carry || !!p.pushing, work: !!p.inter && !p.carry, overHead: !!p.overHead && !!p.carry });
+    p.char.update(dt, { speed: p.speed, crouch: (p.crouching && !seated) || !!p.hidden, sit: seated, carry: !!p.carry || !!p.pushing, work: !!p.inter && !p.carry, workKind: p.inter?.action.anim, cover: exposed || !p.char.legwearOn, push: !!p.pushing, overHead: !!p.overHead && !!p.carry });
     if (!p.bus) {
       p.char.root.position.set(p.x, 0, p.z);
       p.char.root.rotation.y = p.yaw;
@@ -2767,7 +2767,7 @@ export class Game {
       const g = this.level.blockedPoint(gx, gz, 0.3) ? { x: spot.x + Math.sin(a) * 0.9, z: spot.z + Math.cos(a) * 0.9 } : { x: gx, z: gz };
       const resume = o.steps.slice();
       // walk over, then stand there watching the commotion (eyes on it, the odd glance around)
-      o.plan([{ go: g }, { work: true, t: DISTRACT_TIME, yaw: Math.atan2(spot.x - g.x, spot.z - g.z) }, ...resume]);
+      o.plan([{ go: g }, { work: true, act: 'watch', t: DISTRACT_TIME, yaw: Math.atan2(spot.x - g.x, spot.z - g.z) }, ...resume]);
     }
     ui.toast(`Everyone's heading over to ${n.name}! Move now!`, 'good', 4000);
   }
@@ -3021,6 +3021,7 @@ export class Game {
       const d = Math.hypot(it.x - p.x, it.z - p.z);
       if (d > it.r + (p.sitAt ? 0.4 : 0)) continue;
       const a = this.actionFor(it);
+      if (a && !a.anim) a.anim = workKindFor(it.station?.tag || it.id) || 'press';
       if (a && (d < bd || (best && best.disabled && !a.disabled))) {
         bd = d;
         best = a;
@@ -3065,7 +3066,7 @@ export class Game {
           bp = k;
         }
       }
-      if (bp) return { label: `Pick up the ${PICKUP_LABELS[bp.kind] || bp.kind}${p.pickup ? ' (swap)' : ''}`, time: 0.4, run: () => this.pickUp(bp) };
+      if (bp) return { label: `Pick up the ${PICKUP_LABELS[bp.kind] || bp.kind}${p.pickup ? ' (swap)' : ''}`, time: 0.4, anim: 'low', run: () => this.pickUp(bp) };
     }
     return null;
   }
@@ -3448,6 +3449,25 @@ export class Game {
     else a.run();
   }
 
+  /** What kind of hand motion fits the station or fixture nearest to (x, z). */
+  workKindAt(x, z) {
+    const L = this.level;
+    if (!L) return null;
+    let best = null;
+    let bd = 1.8;
+    for (const it of L.interactables.values()) {
+      const d = Math.hypot(it.x - x, it.z - z);
+      if (d < bd) {
+        const k = workKindFor(it.station?.tag || it.id);
+        if (k) {
+          bd = d;
+          best = k;
+        }
+      }
+    }
+    return best;
+  }
+
   cancelInteract() {
     if (this.player && this.player.inter) {
       this.player.inter = null;
@@ -3631,7 +3651,7 @@ export class Game {
     if (c >= SHIFT.lunchEnd) once('lunchEnd', () => ui.toast('1:00 PM: back to work.', '', 4000));
     if (c >= SHIFT.end - 30) once('soon', () => ui.toast('Half an hour until the end of the shift.', '', 4000));
     if (c >= SHIFT.end) once('end', () => ui.toast("5:00 PM! Shift's over: clock out at the time clock.", 'good', 6000));
-    for (const n of this.npcs) if (n.delivering) n.delivering.t -= dt;
+    this.updateDeliverers(dt);
     // the schedule interrupts whatever people are doing: lunch at noon, home at their end time
     this.schedT = (this.schedT || 0) - dt;
     if (this.schedT <= 0) {
@@ -3659,35 +3679,144 @@ export class Game {
     else this.addRequest(tpl, null, 'phone');
   }
 
-  /** Someone walks over to ask you for something in person. */
+  /** Someone walks over to ask you for something in person. They look around for you before giving up. */
   sendRequester(n, tpl) {
-    n.delivering = { tpl, t: 30 };
-    const go = () => {
-      const p = this.player;
-      n.plan([{ go: { x: p.x, z: p.z } }, { t: 0.5, call: () => this.tryDeliver(n) }]);
-    };
-    n.deliverGo = go;
-    go();
+    n.delivering = { tpl, t: 0, tries: 0, maxTries: 2 + (Math.random() < 0.5 ? 1 : 0), called: false, target: null, lastSeen: { x: this.player.x, z: this.player.z }, search: 0 };
+    this.deliverBrain(n);
   }
 
-  tryDeliver(n) {
+  /** A reachable spot near (x, z) with a clear view of it, preferring ones close to the NPC. */
+  approachPoint(n, x, z) {
+    const L = this.level;
+    const cands = [];
+    for (const r of [1.3, 1.9, 2.5]) {
+      for (let k = 0; k < 10; k++) {
+        const a = (k / 10) * Math.PI * 2 + r;
+        const px = x + Math.sin(a) * r;
+        const pz = z + Math.cos(a) * r;
+        if (L.blockedPoint(px, pz, 0.3)) continue;
+        if (!L.lineOfSight(new THREE.Vector3(px, 1.4, pz), new THREE.Vector3(x, 1.2, z))) continue;
+        cands.push({ x: px, z: pz, d: Math.hypot(px - n.x, pz - n.z) + r * 0.5 });
+      }
+      if (cands.length >= 4) break;
+    }
+    cands.sort((a, b) => a.d - b.d);
+    for (const c of cands.slice(0, 5)) if (L.findPath(n.x, n.z, c.x, c.z)) return c;
+    return null;
+  }
+
+  /** The requester's next move: head for you, look around where they last saw you, or come back later. */
+  deliverBrain(n) {
     const d = n.delivering;
-    if (!d) return;
+    if (!d) return n.plan([{ t: 0.5 }]);
     const p = this.player;
-    const dist = Math.hypot(n.x - p.x, n.z - p.z);
-    const sees = this.level.lineOfSight(n.eye(), new THREE.Vector3(p.x, 1.4, p.z));
-    if (dist < 2.6 && sees && !p.hidden) {
-      n.delivering = null;
+    const where = p.hidden ? d.lastSeen : { x: p.x, z: p.z };
+    const pt = this.approachPoint(n, where.x, where.z);
+    d.target = { x: where.x, z: where.z };
+    if (pt) return n.plan([{ go: pt, deliver: true }, { t: 0.8 + Math.random(), deliver: true, yaw: Math.atan2(where.x - pt.x, where.z - pt.z) }]);
+    // no way to get close: wander toward the area anyway
+    n.plan([{ t: 1.5, deliver: true, yaw: Math.atan2(where.x - n.x, where.z - n.z) }]);
+  }
+
+  /** Runs every frame for anyone carrying a request to you. */
+  updateDeliverers(dt) {
+    const p = this.player;
+    for (const n of this.npcs) {
+      const d = n.delivering;
+      if (!d) continue;
+      if (d.waitT > 0) {
+        // went back to work for a bit; try again later
+        d.waitT -= dt;
+        if (d.waitT <= 0 && !['talk', 'hiding'].includes(n.state)) {
+          d.t = 0;
+          d.search = 0;
+          this.bubble(n, pick(["Let's try this again...", `Where's ${this.profile.name}?`, 'Okay, round two.', "I'll go find them."]), 2.5);
+          this.deliverBrain(n);
+        }
+        continue;
+      }
+      if (['talk', 'hiding'].includes(n.state) || n.checkingOn) continue;
+      d.t += dt;
+      const dist = Math.hypot(n.x - p.x, n.z - p.z);
+      const sees = !p.hidden && dist < 14 && this.level.lineOfSight(n.eye(), new THREE.Vector3(p.x, 1.3, p.z));
+      if (sees) {
+        d.lastSeen = { x: p.x, z: p.z };
+        d.search = 0;
+        if (dist < 3.2) {
+          this.deliverRequest(n);
+          continue;
+        }
+        if (!d.called && dist < 10) {
+          d.called = true;
+          this.bubble(n, pick([`${this.profile.name}! Got a sec?`, `Hey, ${this.profile.name}, wait up!`, `${this.profile.name}, there you are!`, 'Hey! Over here!', `Oh, ${this.profile.name}! Hang on.`]), 2.5);
+        }
+      }
+      if (d.t > 75) {
+        this.giveUpDelivery(n);
+        continue;
+      }
+      // you moved (or they got sidetracked while you're in view): head for where you are now
+      if (sees && (!n.cur || !n.cur.deliver || (d.target && Math.hypot(d.target.x - p.x, d.target.z - p.z) > 2))) this.deliverBrain(n);
+      else if (!n.cur || !n.cur.deliver) {
+        // finished the walk (or got sidetracked) without finding you
+        if (!sees) {
+          d.search++;
+          if (d.search === 1 && Math.hypot(n.x - d.lastSeen.x, n.z - d.lastSeen.z) < 4) {
+            this.bubble(n, pick([`${this.profile.name}? ...Huh. Thought I saw them here.`, 'Where did they go?', 'Hello? Anyone?', '...Weird. They were just here.']), 2.5);
+            n.plan([{ t: 1.2, deliver: true, yaw: n.yaw + 1.6 }, { t: 1.2, deliver: true, yaw: n.yaw - 1.6 }]);
+            continue;
+          }
+          // check a nearby place you might be: your desk, or a random spot nearby
+          if (d.search <= 3) {
+            const desk = this.level.stations.find((st) => st.tag === 'mydesk') || null;
+            const r = this.level.randomFreePoint(Math.random, { minX: d.lastSeen.x - 6, maxX: d.lastSeen.x + 6, minZ: d.lastSeen.z - 6, maxZ: d.lastSeen.z + 6 });
+            const g = d.search === 2 && desk ? desk : r;
+            if (g && this.level.findPath(n.x, n.z, g.x, g.z)) {
+              n.plan([{ go: { x: g.x, z: g.z }, deliver: true }, { t: 1.5, deliver: true }]);
+              continue;
+            }
+          }
+        }
+        this.giveUpDelivery(n);
+      }
+    }
+  }
+
+  /** Couldn't find you this time: try again later, or leave a note after a few tries. */
+  giveUpDelivery(n) {
+    const d = n.delivering;
+    d.tries++;
+    if (d.tries < d.maxTries) {
+      d.waitT = 25 + Math.random() * 35;
+      this.bubble(n, pick(["I'll catch them later.", "Guess I'll come back.", 'Hm. Later, then.', "They'll turn up."]), 2.5);
+      this.coworkerResume(n);
+      return;
+    }
+    n.delivering = null;
+    if (this.player.hidden && Math.hypot(n.x - this.player.x, n.z - this.player.z) < 2.5 && Math.random() < 0.6) {
+      // they know you're in there
       const lower = d.tpl.name.charAt(0).toLowerCase() + d.tpl.name.slice(1);
-      this.bubble(n, pick([`${this.profile.name}, could you ${lower}?`, `Hey, can you ${lower} for me?`, `When you get a sec: ${lower}?`, `Quick favor: ${lower}?`, `${this.profile.name}! ${d.tpl.name}, please.`]), 4);
+      this.bubble(n, pick([`${this.profile.name}? I know you're in there. Could you ${lower} when you're out?`, `Not gonna ask. Just... ${lower} when you can, please.`]), 4.5);
       this.addRequest(d.tpl, n.name, 'ask');
-      n.plan([{ t: 1.5, yaw: Math.atan2(p.x - n.x, p.z - n.z) }]);
-    } else if (d.t <= 0 || p.hidden) {
-      // can't find you: leave a note
-      n.delivering = null;
-      this.addRequest(d.tpl, n.name, 'left');
-      n.plan([{ t: 1 }]);
-    } else n.deliverGo();
+    } else this.addRequest(d.tpl, n.name, 'left');
+    this.coworkerResume(n);
+  }
+
+  coworkerResume(n) {
+    if (n.kind === 'manager') return this.managerBrain(n);
+    if (n.kind === 'coworker') return this.coworkerBrain(n);
+    n.plan([{ t: 1 }]);
+  }
+
+  deliverRequest(n) {
+    const d = n.delivering;
+    const p = this.player;
+    n.delivering = null;
+    const lower = d.tpl.name.charAt(0).toLowerCase() + d.tpl.name.slice(1);
+    const late = d.tries > 0 ? pick(['Finally found you! ', 'There you are. ', "I've been looking all over. "]) : '';
+    this.bubble(n, late + pick([`${this.profile.name}, could you ${lower}?`, `Hey, can you ${lower} for me?`, `When you get a sec: ${lower}?`, `Quick favor: ${lower}?`, `${this.profile.name}! ${d.tpl.name}, please.`]), 4);
+    this.addRequest(d.tpl, n.name, 'ask');
+    n.plan([{ t: 1.5, yaw: Math.atan2(p.x - n.x, p.z - n.z) }]);
   }
 
   currentStep() {

@@ -137,7 +137,10 @@ export class NPC {
       this.timer = s.t ?? 2;
       if (s.yaw !== undefined) this.baseYaw = s.yaw;
       if (s.sit) this.sitting = true;
-      if (s.work) this.working = true;
+      if (s.work) {
+        this.working = true;
+        this.workKind = s.act || this.game.workKindAt(this.x, this.z);
+      }
       if (s.hide) this.vision = false;
     }
     if (s.carry) this.setCarry(s.carry);
@@ -155,6 +158,8 @@ export class NPC {
   brain() {
     const g = this.game;
     const L = g.level;
+    // carrying a request to the player: the game's delivery logic decides the next move
+    if (this.delivering && !(this.delivering.waitT > 0)) return this.plan([{ t: 0.1 }]);
     if (this.kind === 'coworker') return g.coworkerBrain(this);
     if (this.kind === 'manager') return g.managerBrain(this);
     if (this.kind === 'customer') {
@@ -295,6 +300,8 @@ export class NPC {
       crouch: this.crouch,
       carry: !!this.carry || !!this.pushing,
       work: this.working && !moving && !this.carry,
+      workKind: this.workKind,
+      push: !!this.pushing,
       talk: this.bubbleT > 0 || this.state === 'talk',
       headYaw: Math.max(-1, Math.min(1, angDiffLocal(this.lookYaw, this.yaw))),
       cover: !this.char.legwearOn,

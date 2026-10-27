@@ -1,7 +1,7 @@
 {
   "name": "hiphtias-blessing",
   "productName": "Hiphtia's Blessing",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "A 3D workplace stealth comedy game with VRM character import",
   "main": "electron/main.js",
   "author": "HiphtiasBlessing",

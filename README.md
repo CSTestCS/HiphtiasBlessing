@@ -32,7 +32,9 @@ Office Worker, Restaurant Server, Retail Worker, Hotel Staff, Library Assistant,
 
 Each coworker has a role (host, line cook, cashier, housekeeper...) with a home station and the tasks that go with it, and they pick nearby stations instead of crossing the building.
 
-**The workday** runs 9:00 to 5:00 on the clock (speed set by the in-game hour length). Some coworkers come in late, some leave early, some stay late. At noon the break room fills up and some people head out for lunch. Work comes in as requests: coworkers and the manager walk over to ask you (or leave a note if they can't find you), the phone rings, orders print out. Tab switches between requests; clock out after 5:00. A security guard watches the front entrance.
+**The workday** runs 9:00 to 5:00 on the clock (speed set by the in-game hour length). Some coworkers come in late, some leave early, some stay late. At noon the break room fills up and some people head out for lunch. Work comes in as requests: coworkers and the manager walk over to ask you. If you're hiding they look around, come back later, and only leave a note after a few tries, the phone rings, orders print out. Tab switches between requests; clock out after 5:00. A security guard watches the front entrance.
+
+**Animation.** Each item has its own grip (boxes hugged, trays carried like a waiter, bags and buckets at your side, folders against your chest, newspapers held up to read), and covering items are held low in front of you instead. Each station has its own motion: typing, writing, sorting, pressing buttons, pouring, reaching up to shelves, bending down, lifting, wiping, washing, mopping, watering, feeding the shredder, fixing things. People also talk with different gestures.
 
 **Pushable cover**: whiteboards and carts can be pushed around (E). Keep one between you and anyone looking. Coworkers move carts around too.
 

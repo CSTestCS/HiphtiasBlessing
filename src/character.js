@@ -50,6 +50,70 @@ export async function inspectVRM(buffer) {
 
 const damp = (a, b, k, dt) => a + (b - a) * (1 - Math.exp(-k * dt));
 
+// ---- How things are held. Arm specs are [swingForward, twist, lift, elbowBend] for the left arm;
+// the right arm is mirrored. 'at' says which hand(s) the prop follows.
+const HOLDS = {
+  hugHigh: { both: [-0.7, -0.3, 0.15, 1.05], at: 'both', off: [0, -0.04, -0.06] },
+  hugLow: { both: [-0.5, -0.35, 0.2, 0.85], at: 'both', off: [0, 0.03, -0.04] },
+  waiter: { both: [-0.2, 0, 0.12, 1.55], at: 'both', off: [0, 0.06, 0.06] },
+  shield: { both: [-0.3, -0.45, 0.25, 0.35], at: 'both', off: [0, 0, 0.05], flat: true },
+  clutch: { both: [-0.3, -0.5, 0.25, 0.25], at: 'both', off: [0, 0, 0.05], hang: true },
+  read: { both: [-0.75, -0.25, 0.15, 1.1], at: 'both', off: [0, -0.12, 0.04], rot: [-0.55, 0, 0], head: 0.35 },
+  cradle: { l: [-0.2, -0.9, 0.2, 1.7], at: 'left', off: [-0.06, -0.12, -0.02], rot: [0.12, 0, 0] },
+  side: { r: [0.05, 0, 0.14, 0.08], at: 'right', off: [0, 0, 0], hang: true },
+  cup: { r: [-0.35, 0.2, 0.15, 1.55], at: 'right', off: [0, 0.05, 0.03] },
+  mop: { r: [-0.4, 0.1, 0.15, 0.9], at: 'right', off: [0, 0, 0.03], rot: [0.15, 0, 0] },
+  mopFront: { both: [-0.45, -0.3, 0.2, 0.8], at: 'both', off: [0, -0.1, 0.06] },
+  umbrella: { r: [-0.55, 0.15, 0.25, 1.6], at: 'right', off: [0, -0.15, 0] },
+  push: { both: [-1.2, -0.1, 0.1, 0.25] },
+};
+/** Pick a grip for an item. 'cover' = the item is hiding your lap, so it's held low in front. */
+export function holdFor(kind, cover, push) {
+  if (push) return 'push';
+  if (!kind) return 'hugHigh';
+  if (kind === 'umbrella') return 'umbrella';
+  if (kind === 'cup') return 'cup';
+  if (cover) {
+    if (['box', 'basket', 'laundry', 'pillow', 'towel'].includes(kind)) return 'hugLow';
+    if (['bag', 'bucket', 'can', 'sign'].includes(kind)) return 'clutch';
+    if (kind === 'mop') return 'mopFront';
+    return 'shield';
+  }
+  if (['box', 'basket', 'laundry'].includes(kind)) return 'hugHigh';
+  if (['bag', 'bucket', 'can', 'sign'].includes(kind)) return 'side';
+  if (kind === 'tray') return 'waiter';
+  if (kind === 'newspaper') return 'read';
+  if (kind === 'mop') return 'mop';
+  return 'cradle';
+}
+
+// ---- What your hands do at a work station or interactable (by station tag or interactable id).
+const WORK_KINDS = {
+  type: ['computer', 'mydesk', 'terminal', 'reception', 'frontdesk', 'concierge', 'host', 'circ', 'server', 'scanner', 'counter', 'checkout', 'timeclock', 'pass'],
+  write: ['schedule', 'readtable', 'fitting', 'queue'],
+  sort: ['inbox', 'mail', 'archivebox', 'returncart', 'linen', 'packing', 'luggage', 'wardrobe', 'mailbox', 'dryer', 'washer'],
+  press: ['copier', 'printer', 'microwave', 'soda', 'roaster', 'grinder', 'elevator', 'elevator2', 'door', 'aptdoor', 'lobbydoor', 'exit', 'poolgate'],
+  pour: ['coffee', 'bar', 'beans', 'kitchen'],
+  high: ['shelf', 'supply'],
+  low: ['trash', 'dumpster', 'returnbin', 'fridge', 'oven', 'pickup'],
+  lift: ['dock', 'pallet', 'conveyor'],
+  wipe: ['dish', 'cafetable', 'pastry', 'bench'],
+  wash: ['sink', 'shower'],
+  mop: ['spill', 'mop'],
+  water: ['plant'],
+  feed: ['shredder'],
+  tinker: ['repair'],
+};
+const WORK_BY_TAG = {};
+for (const [k, tags] of Object.entries(WORK_KINDS)) for (const t of tags) WORK_BY_TAG[t] = k;
+export function workKindFor(tagOrId) {
+  if (!tagOrId) return null;
+  const base = String(tagOrId).split('#')[0].replace(/[0-9]+$/, '');
+  return WORK_BY_TAG[base] || null;
+}
+const TALK_KINDS = ['one', 'one', 'both', 'point', 'shrug', 'hips', 'still'];
+
+
 // ---------------------------------------------------------------------------
 // Template cache: parse a VRM once, clone it many times.
 const templates = new Map();
@@ -312,9 +376,12 @@ class CharacterBase {
    */
   animate(dt, a) {
     const speed = a.speed || 0;
-    this.crouchS = damp(this.crouchS, a.crouch ? 1 : 0, 10, dt);
     this.sitS = damp(this.sitS, a.sit ? 1 : 0, 8, dt);
     this.carryS = damp(this.carryS, a.carry ? 1 : 0, 10, dt);
+    // some work is done bent over or squatting; lifting bobs up and down
+    const wk = a.work && !a.carry ? (a.sit ? 'type' : a.workKind || 'type') : null;
+    const lowWork = wk === 'low' ? 0.6 : wk === 'lift' ? 0.35 + 0.35 * Math.sin(performance.now() / 650) : wk === 'water' ? 0.25 : 0;
+    this.crouchS = damp(this.crouchS, a.crouch ? 1 : lowWork, a.crouch ? 10 : 4, dt);
     this.runS = damp(this.runS || 0, speed > 3 ? 1 : 0, 6, dt);
     this.moveS = damp(this.moveS || 0, speed > 0.15 ? 1 : 0, 8, dt);
     const amp = Math.min(speed / 1.8, 1.25);
@@ -394,31 +461,118 @@ class CharacterBase {
 
     // ---- arms
     const down = this.armDown;
-    const swing = (0.4 + 0.25 * run) * amp * (1 - carry) * (1 - sit);
+    const swing = (0.4 + 0.25 * run) * amp * (1 - sit);
     const runElbow = 0.25 + 0.15 * amp + 1.1 * run;
     let lua = [-s * swing, 0, -down + 0.15 * c];
     let rua = [s * swing, 0, down - 0.15 * c];
     let lla = [0, -(runElbow * move + 0.12), 0];
     let rla = [0, runElbow * move + 0.12, 0];
-    // carrying: both forearms out in front
-    if (carry > 0.01) {
+    // carrying: the grip depends on the item and on whether it's covering you
+    const holdName = carry > 0.01 && !a.overHead ? holdFor(this.prop?.userData.kind, a.cover, a.push) : null;
+    this.hold = a.carry && !a.overHead ? holdName : null;
+    if (holdName) {
+      const H = HOLDS[holdName];
       const k = carry;
-      lua = [lua[0] * (1 - k) - 0.75 * k, 0, lua[2] + 0.1 * k];
-      rua = [rua[0] * (1 - k) - 0.75 * k, 0, rua[2] - 0.1 * k];
-      lla[1] = lla[1] * (1 - k) - 1.1 * k;
-      rla[1] = rla[1] * (1 - k) + 1.1 * k;
+      const bob = s * 0.05 * amp;
+      const mixArm = (ua, la, spec, sign) => {
+        const tgU = [spec[0] + bob, sign * spec[1], sign * (-down + spec[2])];
+        for (let i = 0; i < 3; i++) ua[i] = ua[i] * (1 - k) + tgU[i] * k;
+        la[1] = la[1] * (1 - k) + sign * -spec[3] * k;
+      };
+      if (H.both || H.l) mixArm(lua, lla, H.both || H.l, 1);
+      if (H.both || H.r) mixArm(rua, rla, H.both || H.r, -1);
+      if (H.head) T.__head = H.head * k;
     }
-    // working: typing / reaching motions
-    if (a.work && !a.carry) {
-      const tk = Math.sin(t * 9 + seed);
-      lua = [-0.25, -0.3, -down + 0.25];
-      rua = [-0.25, 0.3, down - 0.25];
-      lla = [0, -1.25 - tk * 0.08, 0];
-      rla = [0, 1.25 + Math.sin(t * 8.3 + seed) * 0.08, 0];
-      if (Math.sin(t * 0.4 + seed) > 0.6) {
-        // reach out for something on the desk/shelf
-        rua = [-0.9 + Math.sin(t * 2.2) * 0.12, 0.1, down - 0.2];
-        rla = [0, 0.35, 0];
+    // working: what the hands do depends on the station
+    if (wk) {
+      const L = (x, y, lift, e) => { lua = [x, y, -down + lift]; lla = [0, -e, 0]; };
+      const R = (x, y, lift, e) => { rua = [x, -y, down - lift]; rla = [0, e, 0]; };
+      const cyc = (t * 0.25 + seed) % 1;
+      if (wk === 'type') {
+        const tk = Math.sin(t * 9 + seed);
+        L(-0.25, -0.3, 0.25, 1.25 + tk * 0.08);
+        R(-0.25, -0.3, 0.25, 1.25 + Math.sin(t * 8.3 + seed) * 0.08);
+        if (Math.sin(t * 0.4 + seed) > 0.6) R(-0.9 + Math.sin(t * 2.2) * 0.12, -0.1, 0.2, 0.35); // reach for the mouse/phone
+      } else if (wk === 'write') {
+        L(-0.6, -0.4, 0.2, 1.6);
+        R(-0.55 + Math.sin(t * 11) * 0.04, -0.3, 0.25, 1.5 + Math.sin(t * 13 + seed) * 0.1);
+        T.__head = 0.3;
+      } else if (wk === 'sort') {
+        const sw2 = Math.sin(t * 3 + seed);
+        L(-0.8 + 0.18 * sw2, -0.2, 0.2, 0.9 + 0.2 * Math.max(0, -sw2));
+        R(-0.8 - 0.18 * sw2, -0.2, 0.2, 0.9 + 0.2 * Math.max(0, sw2));
+        T.__twist = 0.18 * Math.sin(t * 1.5 + seed);
+        T.__head = 0.2;
+      } else if (wk === 'press') {
+        if (cyc < 0.35) {
+          R(-1.15 + 0.1 * Math.max(0, Math.sin(t * 7)), -0.1, 0.15, 0.3);
+          T.__head = 0.05;
+        } else if (cyc < 0.7) {
+          // waiting on the machine: hand on hip, tapping a foot
+          L(0.15, -0.9, 0.45, 1.6);
+          T.__tap = Math.max(0, Math.sin(t * 6)) * 0.25;
+        } else {
+          L(-0.35, -0.95, 0.2, 1.75);
+          R(-0.35, -0.95, 0.2, 1.75);
+        }
+      } else if (wk === 'pour') {
+        R(-1.0, -0.1, 0.2, 0.6);
+        L(-0.7, -0.3, 0.2, 1.25);
+        T.__wrist = -0.7 * Math.max(0, Math.sin(t * 0.8 + seed));
+        T.__head = 0.25;
+      } else if (wk === 'high') {
+        const alt = Math.sin(t * 0.6 + seed) > 0;
+        if (alt) R(-2.6 + Math.sin(t * 2) * 0.1, 0.1, 0.2, 0.25);
+        else L(-2.6 + Math.sin(t * 2) * 0.1, 0.1, 0.2, 0.25);
+        (alt ? L : R)(-0.3, -0.2, 0.1, 0.4);
+        T.__head = -0.35;
+        T.__tiptoe = 0.25;
+      } else if (wk === 'low') {
+        L(-0.9 + Math.sin(t * 2.5) * 0.1, 0, 0.1, 0.2);
+        R(-0.9 - Math.sin(t * 2.5) * 0.1, 0, 0.1, 0.2);
+        T.__bend = 0.45;
+        T.__head = 0.3;
+      } else if (wk === 'lift') {
+        const up = 0.5 + 0.5 * Math.sin(performance.now() / 650);
+        L(-0.6 - 0.5 * up, -0.3, 0.15, 0.6 + 0.4 * up);
+        R(-0.6 - 0.5 * up, -0.3, 0.15, 0.6 + 0.4 * up);
+        T.__bend = 0.35 * (1 - up);
+      } else if (wk === 'wipe') {
+        R(-0.95 + 0.15 * Math.sin(t * 5), -0.15 - 0.25 * Math.cos(t * 5), 0.1, 0.5);
+        L(-0.7, 0, 0.05, 0.3);
+        T.__bend = 0.3;
+        T.__head = 0.2;
+      } else if (wk === 'wash') {
+        L(-0.8, -0.3, 0.15, 0.7 + 0.18 * Math.sin(t * 8));
+        R(-0.8, -0.3, 0.15, 0.7 + 0.18 * Math.sin(t * 8 + Math.PI));
+        T.__bend = 0.2;
+        T.__head = 0.25;
+      } else if (wk === 'mop') {
+        L(-0.6, -0.2, 0.25, 0.6);
+        R(-0.9, -0.2, 0.25, 0.9);
+        T.__twist = 0.35 * Math.sin(t * 2.5);
+        T.__bend = 0.15;
+      } else if (wk === 'water') {
+        R(-0.85, -0.1, 0.2, 0.4);
+        L(-0.6, -0.2, 0.2, 0.9);
+        T.__wrist = -0.5 - 0.2 * Math.sin(t * 1.3);
+        T.__head = 0.35;
+      } else if (wk === 'feed') {
+        const push = Math.max(0, Math.sin(t * 2.5 + seed));
+        L(-0.9 + 0.25 * push, -0.15, 0.2, 0.7 - 0.3 * push);
+        R(-0.9 + 0.25 * push, -0.15, 0.2, 0.7 - 0.3 * push);
+        T.__head = 0.2;
+      } else if (wk === 'tinker') {
+        L(-0.7 + Math.sin(t * 11) * 0.05, -0.3, 0.15, 1.0 + Math.sin(t * 7) * 0.1);
+        R(-0.7 + Math.sin(t * 9 + 1) * 0.05, -0.3, 0.15, 1.0 + Math.sin(t * 12) * 0.12);
+        T.__bend = 0.3;
+        T.__head = 0.35;
+      } else if (wk === 'watch') {
+        // gawking at something: hand to mouth, arms crossed or hands on hips
+        const v = Math.floor(seed * 3) % 3;
+        if (v === 0) { L(-0.35, -0.95, 0.2, 1.75); R(-0.35, -0.95, 0.2, 1.75); }
+        else if (v === 1) { R(-1.5, -0.4, 0.3, 2.1); L(-0.35, -0.9, 0.2, 1.7); }
+        else { L(0.15, -0.9, 0.45, 1.6); R(0.15, -0.9, 0.45, 1.6); }
       }
     }
     // sitting: hands on the lap or knees
@@ -480,14 +634,39 @@ class CharacterBase {
         rua[0] += Math.sin(t * 0.8 + seed + 1) * 0.03;
       }
     }
-    // talking: one hand gestures along with the words
-    if (a.talk && !a.carry && sit < 0.5) {
+    // talking: each conversation gets its own gesture style
+    if (!a.talk) this.talkKind = null;
+    else if (!this.talkKind) this.talkKind = TALK_KINDS[Math.floor(Math.random() * TALK_KINDS.length)];
+    if (a.talk && !a.carry && sit < 0.5 && !wk) {
       const g = Math.sin(t * 3.1 + seed);
-      rua = [-0.5 + g * 0.15, -0.3, down - 0.35];
-      rla = [0, 1.3 + Math.sin(t * 4.3) * 0.25, 0];
-      if (Math.sin(t * 0.7 + seed) > 0.3) {
-        lua = [-0.4 - g * 0.1, 0.25, -down + 0.3];
-        lla = [0, -1.1, 0];
+      const tk = this.talkKind;
+      if (tk === 'one' || tk === 'both') {
+        rua = [-0.5 + g * 0.15, -0.3, down - 0.35];
+        rla = [0, 1.3 + Math.sin(t * 4.3) * 0.25, 0];
+        if (tk === 'both' || Math.sin(t * 0.7 + seed) > 0.3) {
+          lua = [-0.45 - g * 0.12, 0.3, -down + 0.35];
+          lla = [0, -1.2 - Math.sin(t * 3.7) * 0.2, 0];
+        }
+      } else if (tk === 'point') {
+        const on = Math.sin(t * 0.9 + seed) > -0.2;
+        if (on) {
+          rua = [-1.35, -0.1, down - 0.2];
+          rla = [0, 0.15 + 0.1 * Math.max(0, Math.sin(t * 6)), 0];
+        }
+        lua = [0.15, 0.9, -down + 0.45];
+        lla = [0, -1.6, 0];
+      } else if (tk === 'shrug') {
+        const sh = Math.max(0, Math.sin(t * 1.4 + seed));
+        lua = [-0.3, 0.4, -down + 0.35 + 0.25 * sh];
+        rua = [-0.3, -0.4, down - 0.35 - 0.25 * sh];
+        lla = [0, -1.3, 0];
+        rla = [0, 1.3, 0];
+        T.__shrug = 0.15 * sh;
+      } else if (tk === 'hips') {
+        lua = [0.15, -0.9, -down + 0.45];
+        lla = [0, -1.6, 0];
+        rua = [-0.5 + g * 0.2, -0.3, down - 0.35];
+        rla = [0, 1.2 + Math.sin(t * 4.3) * 0.3, 0];
       }
     }
     // startled: hands come up a little
@@ -508,7 +687,15 @@ class CharacterBase {
     put('leftLowerArm', ...lla);
     put('rightLowerArm', ...rla);
     put('leftHand', 0, 0, carry * 0.2);
-    put('rightHand', 0, 0, -carry * 0.2);
+    put('rightHand', T.__wrist || 0, 0, -carry * 0.2 + (T.__wrist || 0) * 0.5);
+    // per-action body tweaks: bending over, twisting, looking down at the work, tiptoes, shrugs, foot taps
+    if (T.__bend) T.spine[0] += T.__bend;
+    if (T.__twist) T.chest[1] += T.__twist;
+    if (T.__head) { T.head[0] += T.__head * 0.7; T.neck[0] += T.__head * 0.3; }
+    if (T.__tiptoe) { T.leftFoot[0] += T.__tiptoe; T.rightFoot[0] += T.__tiptoe; }
+    if (T.__shrug) { T.leftShoulder[2] += T.__shrug; T.rightShoulder[2] -= T.__shrug; }
+    if (T.__tap) T.rightFoot[0] -= T.__tap;
+    for (const k of ['__wrist', '__bend', '__twist', '__head', '__tiptoe', '__shrug', '__tap']) delete T[k];
 
     // ---- apply, blended
     const P = (this.poseS ||= {});
@@ -533,6 +720,7 @@ class CharacterBase {
     const h = this.upperLegLen * Math.cos(legBend) + this.lowerLegLen * Math.cos(kneeBend + legBend);
     let drop = this.upperLegLen + this.lowerLegLen - h;
     drop += Math.abs(cph) * (0.03 + 0.03 * run) * amp * (1 - sit) - 0.02 * amp + 0.015 * Math.abs(shift) * (1 - move);
+    if (wk === 'high') drop -= 0.04;
     if (sit > 0.01) drop = drop * (1 - sit) + (this.hipRestY / (this.root.scale.y || 1) - 0.5) * sit;
     const hips = this.bone('hips');
     if (hips) {
@@ -549,16 +737,44 @@ class CharacterBase {
   }
   updateProp() {
     if (!this.prop) return;
+    const s = this.root.scale.y || 1;
+    const u = this.prop.userData;
+    if (this.propOverHead) {
+      this.prop.position.set(0, (this.height + 0.08) / s, 0.02);
+      this.prop.rotation.set(0, 0, 0);
+      return;
+    }
+    // follow the hands, so the item moves with the arms
+    const H = this.hold && HOLDS[this.hold];
+    const lh = this.bone('leftHand');
+    const rh = this.bone('rightHand');
+    if (H && H.at && lh && rh) {
+      if (H.at === 'both') {
+        lh.updateWorldMatrix(true, false);
+        rh.updateWorldMatrix(true, false);
+        lh.getWorldPosition(_v);
+        rh.getWorldPosition(_v2);
+        _v.add(_v2).multiplyScalar(0.5);
+      } else {
+        const b = H.at === 'left' ? lh : rh;
+        b.updateWorldMatrix(true, false);
+        b.getWorldPosition(_v);
+      }
+      this.root.worldToLocal(_v);
+      const oy = H.hang ? -((u.h || 0.3) / 2 + 0.03) : H.off[1];
+      this.prop.position.set(_v.x + H.off[0] / s, _v.y + oy / s, _v.z + H.off[2] / s);
+      const r = H.flat && u.flatRot ? u.flatRot : H.rot || [0, 0, 0];
+      this.prop.rotation.set(r[0], r[1], r[2]);
+      return;
+    }
     const hips = this.bone('hips');
     let y = this.hipRestY;
     if (hips) {
       hips.getWorldPosition(_v);
       y = _v.y - this.root.getWorldPosition(_v2).y;
     }
-    const s = this.root.scale.y || 1;
-    const u = this.prop.userData;
-    if (this.propOverHead) this.prop.position.set(0, (this.height + 0.08) / s, 0.02);
-    else this.prop.position.set(0, (y + (u.up || 0)) / s, (u.fwd ?? 0.4) / s);
+    this.prop.rotation.set(0, 0, 0);
+    this.prop.position.set(0, (y + (u.up || 0)) / s, (u.fwd ?? 0.4) / s);
   }
 
   /** Wetness 0..1: adds a sheen, darkens fabric, and makes chosen parts see-through. */
@@ -1375,6 +1591,8 @@ export function createMannequin(opts = {}) {
   const lla = mk('leftLowerArm', lua, 0.27, 0, 0);
   const rua = mk('rightUpperArm', chest, -sw, 0.18, 0);
   const rla = mk('rightLowerArm', rua, -0.27, 0, 0);
+  mk('leftHand', lla, 0.25, 0, 0);
+  mk('rightHand', rla, -0.25, 0, 0);
   const lul = mk('leftUpperLeg', hips, 0.1, -0.04, 0);
   const lll = mk('leftLowerLeg', lul, 0, -0.43, 0);
   const lft = mk('leftFoot', lll, 0, -0.42, 0);
