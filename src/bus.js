@@ -5,10 +5,11 @@ import { mat } from './level.js';
 import { angDiff } from './npc.js';
 
 const ROWS = 9;
-const SEAT_X = [1.05, 0.55, -0.55, -1.05];
+// double seats along one side only; the other side is standing room (keeps buses light)
+const SEAT_X = [1.05, 0.55];
 const DOOR = { x: -1.05, z: 3.9 };
-const CAPACITY = ROWS * 4;
-const MAX_STANDING = 10;
+const CAPACITY = ROWS * SEAT_X.length;
+const MAX_STANDING = 7;
 
 export class BusSystem {
   constructor(game, city) {
@@ -51,7 +52,7 @@ export class Bus {
     this.seats = [];
     for (let r = 0; r < ROWS; r++) {
       const z = 2.4 - r * 0.95;
-      SEAT_X.forEach((x, i) => this.seats.push({ x, z, row: r, side: i < 2 ? 'L' : 'R', window: i === 0 || i === 3, occ: null }));
+      SEAT_X.forEach((x, i) => this.seats.push({ x, z, row: r, side: 'L', window: i === 0, occ: null }));
     }
     this.buildMesh();
     const p = line.at(s);
@@ -329,11 +330,12 @@ export class Bus {
   }
 
   standSpot() {
-    const used = new Set(this.passengers.filter((p) => p.stand).map((p) => p.stand.z.toFixed(1)));
+    const key = (s) => s.x.toFixed(1) + ':' + s.z.toFixed(1);
+    const used = new Set(this.passengers.filter((p) => p.stand).map((p) => key(p.stand)));
     const spots = [];
-    for (let z = 2.2; z > -4.8; z -= 0.8) spots.push({ x: 0, z });
+    for (let z = 2.2; z > -4.8; z -= 0.8) spots.push({ x: 0, z }, { x: -0.85, z: z - 0.4 });
     spots.push({ x: -0.6, z: 3.4 }, { x: 0.2, z: 3.4 });
-    const free = spots.filter((s) => !used.has(s.z.toFixed(1)));
+    const free = spots.filter((s) => !used.has(key(s)));
     return free.length ? free[Math.floor(Math.random() * free.length)] : null;
   }
 

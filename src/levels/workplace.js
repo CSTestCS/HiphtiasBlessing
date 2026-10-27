@@ -775,12 +775,17 @@ const PUBLIC = {
     }
     desks.sort((a, b) => Math.abs(a.x) + a.z * 0.1 - (Math.abs(b.x) + b.z * 0.1));
     const me = desks[0];
+    if (me.seat) me.seat.label = 'your chair';
     S('mydesk', me.x, me.z + 0.3, Math.PI, 'your desk', 'public');
     L.label('YOU', me.x, 1.45, me.z - 1.17, 0, { height: 0.22, bg: '#00b894' });
     coworkers.forEach((c, i) => {
       const d = desks[i + 1];
       if (!d) return;
       S('desk', d.x, d.z + 0.3, Math.PI, `${c.name}'s desk`, 'public', { owner: i });
+      if (d.seat) {
+        d.seat.owner = i;
+        d.seat.label = `${c.name}'s chair`;
+      }
       L.label(c.name.toUpperCase(), d.x, 1.45, d.z - 1.17, 0, { height: 0.22, bg: '#6c5ce7' });
     });
     desks.slice(1).forEach((d) => WS(d.x, d.z, d.yaw));

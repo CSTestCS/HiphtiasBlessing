@@ -6,7 +6,7 @@ import { propMesh } from './props.js';
 export { propMesh };
 
 const coneMatBase = new THREE.MeshBasicMaterial({ color: 0xfff3a0, transparent: true, opacity: 0.13, depthWrite: false, side: THREE.DoubleSide });
-const coneGeoCache = {};
+const CONE_RAYS = 28;
 
 let uid = 0;
 export const angDiff = (a, b) => {
@@ -25,6 +25,7 @@ export class NPC {
     this.kind = o.kind;
     this.name = o.name || '';
     this.personality = o.personality || null;
+    this.gender = o.gender || char.gender || null;
     this.index = o.index ?? -1;
     this.station = o.station || null;
     this.legwearType = o.legwearType || 'pants';
@@ -35,7 +36,7 @@ export class NPC {
     this.baseYaw = this.yaw;
     this.speed = o.speed || 1.25;
     this.range = o.range || 12;
-    this.fov = o.fov || (110 * Math.PI) / 180;
+    this.fov = o.fov || Math.PI; // 180 degrees
     this.eyeH = (char.eyeHeight || 1.5) * 0.98;
     this.suspicion = 0; // toward the player
     this.npcSusp = new Map(); // toward sneaking NPCs
@@ -59,14 +60,16 @@ export class NPC {
     char.root.position.set(this.x, 0, this.z);
     char.root.rotation.y = this.yaw;
     if (this.vision) {
-      const key = this.range + ':' + this.fov.toFixed(2);
-      if (!coneGeoCache[key]) {
-        const geo = new THREE.CircleGeometry(this.range, 24, -Math.PI / 2 - this.fov / 2, this.fov);
-        geo.rotateX(-Math.PI / 2);
-        coneGeoCache[key] = geo;
-      }
+      // fan of triangles whose edge is clipped by walls (rebuilt while visible)
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array((CONE_RAYS + 2) * 3), 3));
+      const idx = [];
+      for (let i = 0; i < CONE_RAYS; i++) idx.push(0, i + 1, i + 2);
+      geo.setIndex(idx);
       this.coneMat = coneMatBase.clone();
-      this.cone = new THREE.Mesh(coneGeoCache[key], this.coneMat);
+      this.cone = new THREE.Mesh(geo, this.coneMat);
+      this.cone.frustumCulled = false;
+      this.coneT = 0;
       this.cone.position.y = 0.03;
       this.cone.renderOrder = 2;
       this.cone.visible = false;
@@ -80,7 +83,10 @@ export class NPC {
 
   destroy() {
     this.removed = true;
-    if (this.cone) this.game.scene.remove(this.cone);
+    if (this.cone) {
+      this.game.scene.remove(this.cone);
+      this.cone.geometry.dispose();
+    }
     this.game.scene.remove(this.char.root);
     this.char.setProp(null);
     this.el.remove();
@@ -247,7 +253,7 @@ export class NPC {
       this.timer -= dt;
       if (this.timer <= 0) {
         if (s && s.hide) this.vision = true;
-        if (s && s.drop) this.setCarry(null);
+        if (s && s.drop) this.setCarry(this.keepCarry || null);
         this.next();
       }
     }
@@ -265,11 +271,37 @@ export class NPC {
       carry: !!this.carry || (this.working && !moving),
       cover: !this.char.legwearOn,
     });
-    if (this.cone) {
+    if (this.cone && this.cone.visible) {
       this.cone.position.x = this.x;
       this.cone.position.z = this.z;
-      this.cone.rotation.y = this.lookYaw;
+      this.coneT -= dt;
+      if (this.coneT <= 0) {
+        this.coneT = 0.12;
+        this.rebuildCone();
+      }
     }
+  }
+
+  /** Rays from the eyes (at about hip height) out to the view range, stopped by walls and tall furniture. */
+  rebuildCone() {
+    const L = this.game.level;
+    const pos = this.cone.geometry.attributes.position;
+    const a = pos.array;
+    a[0] = a[1] = a[2] = 0;
+    const range = this.range * (this.game.outdoors && this.game.isRaining ? 0.75 : 1);
+    for (let i = 0; i <= CONE_RAYS; i++) {
+      const ang = this.lookYaw - this.fov / 2 + (this.fov * i) / CONE_RAYS;
+      const dx = Math.sin(ang);
+      const dz = Math.cos(ang);
+      let d = L ? L.rayHit(this.x, 1.05, this.z, dx, 0, dz, range) : range;
+      if (!(d < range)) d = range;
+      const o = (i + 1) * 3;
+      a[o] = dx * d;
+      a[o + 1] = 0;
+      a[o + 2] = dz * d;
+    }
+    pos.needsUpdate = true;
+    this.cone.geometry.computeBoundingSphere();
   }
 
   eye() {

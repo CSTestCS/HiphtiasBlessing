@@ -5,7 +5,7 @@ A 3D workplace stealth comedy for Windows. Import your own VRoid / VRM character
 ## The story
 1. **Monday**: wake up, get ready and commute to work dressed normally. During your first task, a wardrobe mishap that fits the task (a printer jam, a spilled pot of coffee, a dish sprayer...) takes your pants or skirt.
 2. **Monday evening**: the rest of your wardrobe turns out to be ruined. From now on you go everywhere without legwear.
-3. **The morning after your third shift**: Celesti, the angelic messenger of **Hiphtia, goddess of hips**, appears in your apartment. You've been "blessed", and she's very sorry about it. From now on, the coworker you spend the most time near each workday gets blessed the next workday.
+3. **The morning after your third shift**: you wake with a start; Celesti, the angelic messenger of **Hiphtia, goddess of hips**, appears in your apartment. You've been "blessed", and she's very sorry about it. From now on, the coworker you spend the most time near each workday gets blessed the next workday.
 4. **Win** when every coworker shares the blessing.
 
 The week runs Monday to Friday at work. Saturdays and Sundays are **days off with errands** around town.
@@ -32,17 +32,22 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 
 ## Rules
 - **Shame** rises when people outside work see you and when you're caught at work. Fill it and you lose. Sleeping lowers it. The Settings screen scales how fast it builds.
+- **Makeshift skirts**: tie a carried box, newspaper, folder, tote bag, towel or tablecloth on with F. Each fails in its own way: boxes crack, paper blows away, bags tear, cloth snags on chairs. People find it odd, so it still drains Composure.
+- **Excuses**: when someone comes over because you're acting strange, pick an excuse ("Posture exercise.", "Workplace ergonomics."...). Whether it works depends on who's asking.
 - **Hiding**: carry a box, tray, bag, newspaper, umbrella... in front of you (E to pick up, G to put down), sit at desks, tables and benches (nobody can tell while you're seated), duck into hiding spots, or crouch behind low furniture.
 - **Composure** drains when you crouch or run in plain view at work. At zero, someone comes over to check on you.
 - **Stamina** limits running.
 - **Coworker personalities** when they catch you:
-  - *Best Friend*: becomes an ally. Lends you their legwear for 60 seconds (they hide while you wear it) or causes a distraction.
+  - *Best Friend*: becomes an ally. Takes turns lending you their legwear (90 seconds at a time, swapped somewhere private) while they sneak around in your place, or causes a distraction.
   - *Sympathetic*: becomes an ally and causes distractions.
   - *Neutral*: lets it slide once, then reports you.
   - *Strict* / *Distant*: report you.
-  - *Oddball*: thinks it's a game, takes off their own bottoms and starts sneaking around too.
+  - *Oddball*: thinks it's a game, slips off somewhere private to take off their own bottoms, then starts sneaking around too.
+  - Anyone of the opposite gender may just look away and let it slide (once a day).
 - **Manager write-ups**: a report, three customer complaints in a day, the manager seeing you, or arriving more than 10 minutes late means a very uncomfortable talk with the manager. The third write-up gets you fired. After a talk you're left standing in the office, and the manager gives you a couple of minutes' grace.
-- **Sneaking coworkers** (oddballs and blessed coworkers) face the same stakes. When someone looks their way they run for cover that actually blocks the view. Strict coworkers, customers and the manager can catch them, they get written up, and three write-ups gets them fired.
+- **Sneaking coworkers** (oddballs and blessed coworkers) face the same stakes. They use every trick you can: they grab something to hold, face onlookers with it, dash behind cover, and sit down at a desk when surrounded until it's safe to move.
+- **Coworkers sit at their own desks**, so those chairs are usually taken. Sitting in someone's chair when they come back is suspicious.
+- **Vision**: everyone sees 180°, but not through walls. The sight cones show exactly what they can see. Strict coworkers, customers and the manager can catch them, they get written up, and three write-ups gets them fired.
 - **Blessed coworkers** never report you, but blessed friends can't help you anymore either.
 
 ## Getting around town
@@ -65,6 +70,7 @@ The city is a 4×4 grid of blocks with named streets, parks and shops, full of h
 | C / Ctrl | Crouch (toggle / hold) |
 | E | Interact (hold for timed actions), pick up items, sit, hide, board or leave buses |
 | G | Put down the carried item |
+| F | Wear the carried item as a makeshift skirt (it will fail, sooner or later) |
 | M | Minimap and compass on/off |
 | Mouse wheel | Zoom |
 | Esc | Pause |

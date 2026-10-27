@@ -25,14 +25,27 @@ import {
 const WALK = 2.0;
 const RUN = 4.3;
 const CROUCH = 1.1;
-const LEND_TIME = 60;
+const LEND_TIME = 90; // seconds per turn in the borrowed legwear
 const DISTRACT_TIME = 14;
-const MGR_GRACE = 150; // seconds the manager leaves you alone after a talk
+const MGR_GRACE = 150;
+// Things you can tie on as an emergency skirt, and how they fail (like Mika's attempts in the manga)
+const MAKESHIFT = {
+  box: { name: 'Cardboard skirt', short: 'cardboard skirt', color: '#c8a27a', life: [6, 14], wear: 'Temporary solution. (F to take it off)', fail: 'CRACK. The box splits right down the middle. Back to the drawing board.' },
+  basket: { name: 'Basket skirt', short: 'basket', color: '#e84118', life: [8, 16], wear: 'Surprisingly stable... for now. (F to take it off)', fail: 'The basket handle snaps and the whole thing clatters to the floor.' },
+  newspaper: { name: 'Paper skirt', short: 'paper skirt', color: '#dfe6e9', life: [10, 22], wind: true, wear: 'Lightweight. Adjustable. Elegant. (F to take it off)', fail: 'FWIP! A gust catches the paper skirt and sends it flying. Why is the air against you?!' },
+  folder: { name: 'Folder skirt', short: 'folder skirt', color: '#0984e3', life: [8, 16], wind: true, wear: 'Very professional. (F to take it off)', fail: 'The folders slip out one by one and scatter across the floor.' },
+  menu: { name: 'Menu skirt', short: 'menu skirt', color: '#6d214f', life: [8, 16], wind: true, wear: "Today's special. (F to take it off)", fail: 'The menus slide apart. Today\'s special is embarrassment.' },
+  clipboard: { name: 'Clipboard skirt', short: 'clipboard', color: '#a1887f', life: [6, 12], wear: 'It covers... some of it. (F to take it off)', fail: 'The clipboard clip snaps open and everything drops.' },
+  bag: { name: 'Tote bag skirt', short: 'tote bag', color: '#2d3436', life: [10, 20], wear: 'Two tote bags. One front, one back. Genius. (F to take it off)', fail: 'RRRIP. The tote bag handles give out. You are being personally targeted by office supplies.' },
+  towel: { name: 'Towel wrap', short: 'towel', color: '#ffffff', life: [60, 120], snags: true, snagLine: 'The towel catches on a chair leg... THWACK. The chair keeps it.', wear: 'Snug and reliable. Watch out for chairs. (F to take it off)', fail: 'The towel slowly works itself loose and drops.' },
+  laundry: { name: 'Tablecloth wrap', short: 'tablecloth', color: '#74b9ff', life: [50, 100], snags: true, snagLine: 'The cloth hooks on a passing chair. THWACK. Plan C has been cancelled.', wear: 'Like a sarong. Mostly. (F to take it off)', fail: 'The knot gives out and the cloth slides to the floor.' },
+  pillow: { name: 'Pillowcase skirt', short: 'pillowcase', color: '#ffffff', life: [20, 40], snags: true, snagLine: 'The pillowcase snags on a chair and tears away.', wear: 'Soft. Questionable. (F to take it off)', fail: 'The pillowcase seam splits open.' },
+}; // seconds the manager leaves you alone after a talk
 const PED_REACTIONS = [
-  'Uh... did you forget something?', 'Wow. Bold fashion choice.', 'Did you lose a bet?!', '*stares in disbelief*',
-  'Excuse me... your pants?!', 'Is this some kind of prank show?', '*whispers to a friend and giggles*', 'Hey! Nice underwear!',
+  'Uh... excuse me? Are you okay?', 'Do you need help?', 'Is everything alright?', '*double take*', 'Interesting outfit...',
+  "Oh! Um... it's a little cold for that, isn't it?", '*politely pretends not to have noticed*', 'Did something happen? Do you need a jacket?', '*blinks twice and walks a little faster*',
 ];
-const BUS_REACTIONS = ['*chokes on their coffee*', "Oh my— I'm not looking. I'm NOT looking.", '*slowly lowers their phone*', 'Excuse me, is this... a costume?', '*scoots as far away as possible*', '...wow.'];
+const BUS_REACTIONS = ['Interesting outfits...', '*very carefully looks out the window*', "Um... are you okay? You look cold.", '*slowly lowers their phone*', 'Long day?', '...wow.'];
 const DISTRACT_LINES = [
   'Oh no! I dropped all my papers everywhere!', 'Whoa! Is that a spider?! Everyone look over here!', 'Ow! I think I sprained my ankle!',
   'Hey everyone, free donuts over here!', 'Oops! I spilled coffee all over the floor!',
@@ -376,6 +389,7 @@ export class Game {
       if (e.code === 'KeyC') this.player.crouch = !this.player.crouch;
       if (e.code === 'KeyE' && !e.repeat) this.tryInteract();
       if (e.code === 'KeyG' && !e.repeat) this.dropItem(true);
+      if (e.code === 'KeyF' && !e.repeat) this.toggleMakeshift();
       if (e.code === 'KeyM' && !e.repeat) {
         this.settings.minimap = !this.settings.minimap;
         this.showMinimap();
@@ -499,6 +513,10 @@ export class Game {
     this.standUp(true);
     this.stopHiding(true);
     this.dropItem(false, true);
+    if (this.player.makeshift) {
+      this.player.makeshift.mesh.removeFromParent();
+      this.player.makeshift = null;
+    }
     if (this.level) this.scene.remove(this.level.group);
     this.clearNPCs();
     const outdoor = ['commute_am', 'commute_pm', 'dayoff'].includes(phase);
@@ -533,6 +551,16 @@ export class Game {
     else L = this.levels.city;
     this.level = L;
     this.scene.add(L.group);
+    // items torn up or worn last time are back (someone tidied up)
+    for (const k of L.pickups || []) {
+      if (!k.broken && !k.taken) continue;
+      k.broken = false;
+      k.taken = false;
+      k.x = k.home.x;
+      k.z = k.home.z;
+      k.mesh.position.set(k.home.x, k.home.y + (k.mesh.userData.up < 0 ? 0.3 : 0), k.home.z);
+      k.mesh.visible = true;
+    }
     let spawn = L.spawn;
     if (phase === 'evening') spawn = L.doorSpawn;
     if (phase === 'lobby') spawn = this.lobbyDir === 'in' ? L.spawnFromStreet : L.spawnFromHome;
@@ -653,7 +681,10 @@ export class Game {
     const name = this.profile.name;
     const wd = WEEKDAYS[weekday(st.day)];
     if (phase === 'morning') {
-      if (st.day === CELESTI_DAY && !st.celestiMet) await this.celestiScene();
+      if (st.day === CELESTI_DAY && !st.celestiMet) {
+        await this.celestiAppear();
+        return;
+      }
       let text;
       if (st.day === 1) text = STORY.intro(name);
       else if (!this.isWorkday)
@@ -763,6 +794,12 @@ export class Game {
       }
       if (!st) st = ws[i % ws.length];
       used.add(st);
+      // their own chair: the one at their desk, or a free chair right by their station
+      let seat = L.seats.find((x) => x.owner === i);
+      if (!seat) {
+        seat = L.seats.filter((x) => x.owner === undefined && Math.hypot(x.x - st.x, x.z - st.z) < 1.3).sort((a, b) => Math.hypot(a.x - st.x, a.z - st.z) - Math.hypot(b.x - st.x, b.z - st.z))[0];
+        if (seat) seat.owner = i;
+      }
       cw.playing = cw.joined && !cw.blessed && Math.random() < 0.6;
       const n = new NPC(this, ch, {
         kind: 'coworker', name: c.name, personality: c.personality, index: i, station: st, legwearType: ch.legwearType,
@@ -770,8 +807,11 @@ export class Game {
       });
       n.gender = c.gender;
       n.role = role;
-      this.setSneaking(n, cw.blessed || cw.playing);
-      n.plan([{ work: true, t: 2 + Math.random() * 6, yaw: st.yaw }]);
+      n.seat = seat || null;
+      // a joined oddball changes in private first; blessed coworkers arrive already without legwear
+      this.setSneaking(n, cw.blessed);
+      if (cw.playing && !cw.blessed) this.stripPrivately(n, false);
+      else n.plan(seat ? this.sitSteps(n, seat, 4 + Math.random() * 8) : [{ work: true, t: 2 + Math.random() * 6, yaw: st.yaw }]);
       this.npcs.push(n);
     });
     const m = L.pois.manager;
@@ -788,6 +828,26 @@ export class Game {
   setSneaking(n, on) {
     n.sneaking = on;
     n.char.setLegwear(!on);
+    if (!on && n.heldPickup) {
+      // put the cover item back down
+      const k = n.heldPickup;
+      n.heldPickup = null;
+      n.keepCarry = null;
+      n.setCarry(null);
+      k.taken = false;
+      k.x = n.x + 0.4;
+      k.z = n.z;
+      k.mesh.position.set(k.x, 0.02, k.z);
+      k.mesh.visible = true;
+    }
+  }
+
+  /** Free chairs whose sitter got up or was re-planned. */
+  releaseSeats() {
+    for (const s of this.level.seats || []) {
+      const t = s.taken;
+      if (t && t !== 'player' && typeof t === 'object' && (t.removed || !t.sitting)) s.taken = false;
+    }
   }
 
   // ---- brains ----
@@ -801,10 +861,105 @@ export class Game {
     return steps;
   }
 
+  /** Walk to a chair, sit for a while (the chair counts as taken), then get up. */
+  sitSteps(n, seat, t) {
+    return [
+      { go: seat },
+      { sit: true, t, yaw: seat.yaw, call: () => (seat.taken = n), seatRef: seat },
+      { t: 0, call: () => seat.taken === n && (seat.taken = false) },
+    ];
+  }
+
+  /** Steps that end with the coworker back at their own station: seated if they have a chair. */
+  homeSteps(n, t) {
+    const seat = n.seat;
+    if (seat && !seat.taken) return this.sitSteps(n, seat, t);
+    if (seat && seat.taken === 'player') {
+      // somebody is in their chair...
+      return [
+        { go: { x: seat.x + Math.sin(seat.yaw) * 0.9, z: seat.z + Math.cos(seat.yaw) * 0.9 } },
+        { t: 5, yaw: seat.yaw + Math.PI, call: () => this.seatStolen(n) },
+      ];
+    }
+    return [{ go: n.station }, { work: true, t, yaw: n.station.yaw }];
+  }
+
+  /** They came back to their chair and you're in it: they wait, ask, then look closer. */
+  seatStolen(n) {
+    const p = this.player;
+    if (p.sitAt !== n.seat) {
+      n.seatComplaints = 0;
+      return;
+    }
+    n.seatComplaints = (n.seatComplaints || 0) + 1;
+    const c = n.seatComplaints;
+    this.talkMood(n, c > 1 ? { angry: 0.4, surprised: 0.4 } : { surprised: 0.7 }, 5);
+    if (c === 1) this.bubble(n, pick(["Um... that's my chair.", `${this.profile.name}? You're in my seat.`, 'Why are you sitting at my desk?']), 4);
+    else if (c === 2) this.bubble(n, pick(['Seriously. I need my chair.', 'Could you get up, please?', "I'm waiting..."]), 4);
+    else {
+      this.bubble(n, 'Okay, what is going on with you?', 4);
+      n.seatComplaints = 0;
+      if (this.playerExposed() && !this.complicit(n)) return this.caught(n);
+      return;
+    }
+    // keep waiting by the chair
+    n.plan(this.homeSteps(n, 4));
+  }
+
+  /** Oddballs (and anyone joining in) slip away somewhere private before taking their legwear off. */
+  stripPrivately(n, announce = true) {
+    const L = this.level;
+    const spot = this.privateSpot(n);
+    n.stripping = true;
+    n.plan([
+      { go: spot },
+      { hide: true, t: 3 },
+      {
+        t: 0.5,
+        call: () => {
+          n.stripping = false;
+          this.setSneaking(n, true);
+          if (announce) this.bubble(n, pick(['Okay. Game on.', 'Hehe... ready!', 'Stealth mode: activated.']), 3);
+        },
+      },
+    ]);
+    void L;
+  }
+
+  /** A hiding spot or quiet corner nobody can see right now (falls back to the nearest hiding spot). */
+  privateSpot(n) {
+    const L = this.level;
+    const spots = [...(L.pois.hideSpots || [])];
+    const watchers = this.npcs.filter((o) => o !== n && o.kind !== 'pedestrian');
+    const ok = spots.filter((h) => watchers.every((o) => !this.level.lineOfSight(o.eye(), new THREE.Vector3(h.x, 0.9, h.z))));
+    return this.nearest(ok.length ? ok : spots, n) || n.station;
+  }
+
   coworkerBrain(n) {
     const L = this.level;
     const r = Math.random();
     const home = n.station;
+    if (n.stripping) return this.stripPrivately(n);
+    // sneakers grab something to hold in front of them first
+    if (n.sneaking && !n.keepCarry && Math.random() < 0.8) {
+      const pk = (L.pickups || []).filter((k) => !k.taken && Math.hypot(k.x - n.x, k.z - n.z) < 18).sort((a, b) => Math.hypot(a.x - n.x, a.z - n.z) - Math.hypot(b.x - n.x, b.z - n.z))[0];
+      if (pk) {
+        pk.taken = true;
+        return n.plan([
+          { go: pk },
+          {
+            t: 0.6,
+            call: () => {
+              pk.mesh.visible = false;
+              n.keepCarry = pk.kind;
+              n.heldPickup = pk;
+              n.setCarry(pk.kind);
+            },
+          },
+          ...this.homeSteps(n, 4 + Math.random() * 6),
+        ]);
+      }
+    }
     // sneakers keep to cover and quiet spots more often
     if (n.sneaking && r < 0.22 && L.pois.hideSpots.length) {
       const h = this.nearest(L.pois.hideSpots, n);
@@ -814,11 +969,11 @@ export class Game {
     // short breaks: coffee, water, the restroom
     if (r < 0.1) {
       const s = this.nearest([...L.stationsByTag('coffee'), ...L.stationsByTag('fridge'), ...L.stationsByTag('microwave'), ...L.stationsByTag('cooler')], n);
-      if (s) return n.plan([{ go: s }, { work: true, t: 5 + Math.random() * 5, yaw: s.yaw }, { go: home }, { work: true, t: 6 + Math.random() * 6, yaw: home.yaw }]);
+      if (s) return n.plan([{ go: s }, { work: true, t: 5 + Math.random() * 5, yaw: s.yaw }, ...this.homeSteps(n, 6 + Math.random() * 6)]);
     }
     if (r < 0.14) {
       const s = this.nearest(L.stationsByTag('sink'), n);
-      if (s) return n.plan([{ go: s }, { work: true, t: 4, yaw: s.yaw }, { go: home }, { work: true, t: 6, yaw: home.yaw }]);
+      if (s) return n.plan([{ go: s }, { work: true, t: 4, yaw: s.yaw }, ...this.homeSteps(n, 6)]);
     }
     // role tasks most of the time, the odd general chore
     if (r < 0.72) {
@@ -827,10 +982,11 @@ export class Game {
       const own = pool.filter((t) => names.includes(t.name));
       const tpl = own.length && Math.random() < 0.85 ? pick(own) : pick(pool);
       const task = tpl && this.resolveTask(tpl, n);
-      if (task) return n.plan([...this.taskSteps(task, n.sneaking ? 1.2 : 1), { go: home }, { work: true, t: 4 + Math.random() * 8, yaw: home.yaw }]);
+      if (task) return n.plan([...this.taskSteps(task, n.sneaking ? 1.2 : 1), ...this.homeSteps(n, 4 + Math.random() * 8)]);
     }
     // back at their own station
-    n.plan([{ go: home }, { work: true, t: 12 + Math.random() * 14, yaw: home.yaw }]);
+    void home;
+    n.plan(this.homeSteps(n, 12 + Math.random() * 14));
   }
 
   nearest(list, from) {
@@ -1032,6 +1188,7 @@ export class Game {
       }
     }
     this.updateWetness(dt);
+    this.updateMakeshift(dt);
     const exposed = this.playerExposed();
     const atHome = this.phase === 'morning' || this.phase === 'evening';
     const seated = !!p.seat || !!p.sitAt;
@@ -1041,6 +1198,14 @@ export class Game {
       p.char.root.rotation.y = p.yaw;
     }
 
+    if (this.celestiChar) {
+      const c = this.celestiChar;
+      c.root.position.y = 0.15 + Math.sin(performance.now() / 600) * 0.06;
+      // she turns to face you
+      const cs = this.levels.apartment.pois.celesti;
+      c.root.rotation.y += angDiff(Math.atan2(p.x - cs.x, p.z - cs.z), c.root.rotation.y) * Math.min(1, dt * 3);
+      c.update(dt, { speed: 0 });
+    }
     L.update(dt, this);
     for (const n of [...this.npcs]) if (!n.removed) n.update(dt, t);
     if (this.buses) this.buses.update(dt);
@@ -1067,21 +1232,28 @@ export class Game {
       this.distraction.t -= dt;
       if (this.distraction.t <= 0) this.distraction = null;
     }
-    if (p.borrow) {
-      p.borrow.t -= dt;
-      if (p.borrow.t <= 10 && !p.borrow.warned) {
-        p.borrow.warned = true;
-        ui.toast(`${p.borrow.npc.name} needs ${pronouns(p.borrow.npc.gender).their} ${p.borrow.npc.legwearType} back soon!`, 'bad');
-      }
-      ui.borrow(`Wearing ${p.borrow.npc.name}'s ${p.borrow.npc.legwearType} — ${Math.ceil(p.borrow.t)}s`);
-      if (p.borrow.t <= 0) this.endBorrow();
-    } else if (p.bus) {
+    if (p.borrow) this.updateBorrow(dt); else if (p.bus) {
       const b = p.bus;
       const st = b.currentStop || b.stopAt(b.nextStop);
       ui.borrow(`${b.line.name} — ${b.state === 'dwell' ? 'Stopped at' : 'Next stop:'} ${st.name}`);
     } else ui.borrow(null);
 
     this.detect(dt);
+    this.seatT = (this.seatT || 0) - dt;
+    if (this.seatT <= 0) {
+      this.seatT = 0.5;
+      this.releaseSeats();
+    }
+    if (this.phase === 'work' && !ui.dialogOpen) {
+      for (const n of this.npcs) {
+        if (!n.checkingOn) continue;
+        if (n.checkingOn < performance.now()) n.checkingOn = 0;
+        else if (Math.hypot(n.x - p.x, n.z - p.z) < 2.3) {
+          this.excuseCheck(n);
+          break;
+        }
+      }
+    }
     if (this.phase === 'work') {
       this.detectSneakers(dt);
       this.updateSneakers(dt);
@@ -1096,10 +1268,67 @@ export class Game {
     this.updateHUD();
   }
 
-  /** Is the player's underwear showing? (borrowed legwear counts as covered) */
+  /** Is the player's underwear showing? (borrowed legwear and makeshift skirts count as covered) */
   playerExposed() {
     const p = this.player;
-    return !!p.char && !p.char.legwearOn && !p.borrow;
+    return !!p.char && !p.char.legwearOn && !p.borrow && !p.makeshift;
+  }
+
+  // ---- makeshift skirts (box, paper, towel, tote bag...) ----
+  toggleMakeshift() {
+    const p = this.player;
+    if (p.makeshift) return this.failMakeshift(null, true);
+    const k = p.pickup;
+    if (!k || p.char.legwearOn || p.borrow || p.bus) return;
+    const M = MAKESHIFT[k.kind];
+    if (!M) return ui.toast(`You can't really wear a ${PICKUP_LABELS[k.kind] || k.kind}.`, '', 2500);
+    p.pickup = null;
+    p.carry = null;
+    p.char.setProp(null);
+    k.taken = true;
+    k.broken = true;
+    const g = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.25, 0.3, 14, 1, true), new THREE.MeshStandardMaterial({ color: M.color, side: THREE.DoubleSide, roughness: 0.9 }));
+    const hip = p.char.hipHeight || 0.9;
+    g.position.y = hip - 0.12;
+    g.scale.set(1.0, 1, 0.82);
+    p.char.root.add(g);
+    p.makeshift = { kind: k.kind, M, mesh: g, life: M.life[0] + Math.random() * (M.life[1] - M.life[0]), pickup: k };
+    ui.toast(`${M.name}. ${M.wear}`, '', 4500);
+  }
+
+  updateMakeshift(dt) {
+    const p = this.player;
+    const m = p.makeshift;
+    if (!m) return;
+    const moving = p.speed > 0.3;
+    let wear = moving ? (p.running ? 2.5 : 1) : 0.15;
+    if (m.M.wind && this.outdoors) wear *= 2;
+    m.life -= wear * dt;
+    // fabric snags on chair legs
+    if (m.M.snags && moving && Math.random() < dt * 0.5) {
+      const near = (this.level.seats || []).some((s) => Math.hypot(s.x - p.x, s.z - p.z) < 0.9);
+      if (near) return this.failMakeshift(m.M.snagLine);
+    }
+    if (m.life <= 0) this.failMakeshift(m.M.fail);
+  }
+
+  failMakeshift(line, voluntary = false) {
+    const p = this.player;
+    const m = p.makeshift;
+    if (!m) return;
+    m.mesh.removeFromParent();
+    m.mesh.geometry.dispose();
+    p.makeshift = null;
+    if (voluntary) {
+      // take it off and hold it again
+      m.pickup.broken = false;
+      p.pickup = m.pickup;
+      this.holdProp(m.kind);
+      ui.toast(`You take off the ${m.M.short}.`, '', 2500);
+      return;
+    }
+    ui.toast(line, 'bad', 4500);
+    p.char.setMood({ surprised: 1, sad: 0.5 });
   }
 
   // ---- facial expressions from feelings ----
@@ -1159,7 +1388,11 @@ export class Game {
     let w = p.wet;
     const umbrella = p.carry === 'umbrella';
     if (this.outdoors && this.isRaining && !p.bus && !umbrella) w = Math.min(1, w + dt * 0.035);
-    else if (!this.outdoors || !this.isRaining) w = Math.max(0, w - dt * (this.phase === 'morning' || this.phase === 'evening' ? 0.02 : 0.004));
+    else if (!this.outdoors || !this.isRaining || p.bus) {
+      // drying off: a couple of minutes indoors, faster at home (towel)
+      const home = this.phase === 'morning' || this.phase === 'evening';
+      w = Math.max(0, w - dt * (home ? 1 / 40 : this.outdoors ? 1 / 240 : 1 / 150));
+    }
     // splashed by a passing car in the rain
     if (this.outdoors && this.isRaining && !p.bus && this.level.cars) {
       for (const c of this.level.cars) {
@@ -1172,8 +1405,10 @@ export class Game {
         }
       }
     }
-    if (Math.abs(w - p.wet) > 0.001) {
-      p.wet = w;
+    p.wet = w;
+    // only push to the materials when it changed visibly
+    if (Math.abs(w - (p.wetShown ?? -1)) > 0.02 || (w === 0 && p.wetShown !== 0)) {
+      p.wetShown = w;
       p.char.setWet(w);
     }
   }
@@ -1320,7 +1555,7 @@ export class Game {
       let nx = p.lx + dx * speed * dt;
       let nz = p.lz + dz * speed * dt;
       nz = Math.max(-5.1, Math.min(4.5, nz));
-      if (nz < 3.0) nx = Math.max(-0.28, Math.min(0.28, nx));
+      if (nz < 3.0) nx = Math.max(-1.1, Math.min(0.28, nx)); // seats on one side, standing room on the other
       else nx = Math.max(-1.15, Math.min(nz > 4.2 ? 0.3 : 0.9, nx));
       p.lx = nx;
       p.lz = nz;
@@ -1436,7 +1671,7 @@ export class Game {
   }
 
   stealthActive() {
-    if (!this.playerExposed()) return false;
+    if (!this.playerExposed() && !this.player.makeshift) return false;
     return ['work', 'commute_am', 'commute_pm', 'dayoff', 'shop', 'lobby'].includes(this.phase);
   }
 
@@ -1478,8 +1713,11 @@ export class Game {
         const toN = Math.atan2(n.x - p.x, n.z - p.z);
         if (Math.abs(angDiff(toN, p.yaw)) < (p.carryCover || 1)) covered = true;
       }
-      // sitting at a desk, table or bench hides you completely
-      if (seated) covered = true;
+      // sitting at a desk, table or bench hides you completely... unless it's their chair
+      if (p.makeshift) covered = true; // covered, just oddly
+      const ownChair = seated && n.kind === 'coworker' && p.sitAt.owner === n.index;
+      if (seated && !ownChair) covered = true;
+      if (ownChair && seesBody && !seesHip && dist < 4) seesHip = true; // they come right up to their chair
       const canNotice = seesHip && !covered && !this.complicit(n) && n.noticeCooldown <= 0;
       if (canNotice) {
         seenBy++;
@@ -1502,6 +1740,7 @@ export class Game {
     if (work && active) {
       const odd = watchers.filter((n) => n.kind !== 'pedestrian' && !this.complicit(n));
       let drain = 0;
+      if (odd.length && p.makeshift) drain = 4; // a cardboard skirt does look strange
       if (odd.length) {
         if (p.crouching && p.speed > 0.2) drain = 13;
         else if (p.crouching) drain = 6;
@@ -1514,6 +1753,7 @@ export class Game {
         const n = odd.sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z))[0];
         if (n) {
           n.startInvestigate(p.x, p.z);
+          n.checkingOn = performance.now() + 25000;
           this.bubble(n, n.kind === 'coworker' || n.kind === 'manager' ? `${this.profile.name}? You're acting really weird...` : 'What is that employee doing?');
           ui.toast(`You're acting strange! ${n.kind === 'customer' ? 'A ' + n.name : n.name} is coming to check on you.`, 'bad');
         }
@@ -1540,12 +1780,15 @@ export class Game {
         const d = Math.hypot(dx, dz);
         let sees = false;
         if (d < o.range && Math.abs(angDiff(Math.atan2(dx, dz), o.lookYaw)) < o.fov / 2) sees = L.lineOfSight(o.eye(), s.hip());
+        // the same tricks the player uses: sitting hides completely, a carried item covers the front
+        if (sees && s.sitting) sees = false;
+        if (sees && s.carry && Math.abs(angDiff(Math.atan2(o.x - s.x, o.z - s.z), s.yaw)) < 1.0) sees = false;
+        if ((s.graceT || 0) > performance.now()) sees = false;
         let v = o.npcSusp.get(s) || 0;
         if (sees) {
           s.watchedT = 1.2;
           let rate = 0.45 * (1.5 - d / o.range);
           if (s.crouch) rate *= 0.5;
-          if (s.carry) rate *= 0.6;
           v += rate * step;
         } else v = Math.max(0, v - 0.5 * step);
         if (v <= 0) o.npcSusp.delete(s);
@@ -1584,12 +1827,40 @@ export class Game {
         return (looking || approaching || d < 5) && L.lineOfSight(o.eye(), s.hip());
       });
       if (!threats.length) continue;
+      // already sitting: stay put until it's clear
+      if (s.sitting) {
+        s.timer = Math.max(s.timer || 0, 2.5);
+        continue;
+      }
+      s.coverUntil = performance.now() + 3500;
+      const faceOf = (o) => Math.atan2(o.x - s.x, o.z - s.z);
+      const angs = threats.map(faceOf);
+      let spread = 0;
+      for (const a of angs) for (const b of angs) spread = Math.max(spread, Math.abs(angDiff(a, b)));
+      const mean = Math.atan2(angs.reduce((v, a) => v + Math.sin(a), 0), angs.reduce((v, a) => v + Math.cos(a), 0));
+      const resume = s.steps.slice();
+      const carrying = !!s.carry;
+      // surrounded: sit down at the nearest free chair and wait for a better moment
+      if (threats.length >= 2 && spread > 1.6) {
+        const seat = (L.seats || []).filter((x) => !x.taken && Math.hypot(x.x - s.x, x.z - s.z) < 5).sort((a, b) => Math.hypot(a.x - s.x, a.z - s.z) - Math.hypot(b.x - s.x, b.z - s.z))[0];
+        if (seat) {
+          seat.taken = s;
+          s.plan([{ go: seat, run: true }, { sit: true, t: 4 + Math.random() * 4, yaw: seat.yaw, call: () => (seat.taken = s) }, { t: 0, call: () => seat.taken === s && (seat.taken = false) }, ...resume]);
+          continue;
+        }
+      }
       const c = this.findCover(s, threats);
-      s.coverUntil = performance.now() + 4000;
-      if (c) {
+      const cd = c ? Math.hypot(c.x - s.x, c.z - s.z) : Infinity;
+      if (carrying && spread < 1.2 && (!c || cd > 3.5 || Math.random() < 0.5)) {
+        // hold the item up and face them
+        s.plan([{ t: 2.5 + Math.random() * 2, yaw: mean }, ...resume]);
+      } else if (c) {
+        // dash behind cover; if holding something, face them from there too
         const away = Math.atan2(c.x - threats[0].x, c.z - threats[0].z);
-        const resume = s.steps.slice();
-        s.plan([{ go: c, run: true, lowCover: !c.tall }, { t: 4 + Math.random() * 4, yaw: away, lowCover: !c.tall }, ...resume]);
+        const fy = carrying ? Math.atan2(threats[0].x - c.x, threats[0].z - c.z) : away;
+        s.plan([{ go: c, run: true, lowCover: !c.tall }, { t: 4 + Math.random() * 4, yaw: fy, lowCover: !c.tall }, ...resume]);
+      } else if (carrying) {
+        s.plan([{ t: 2.5, yaw: mean }, ...resume]);
       } else {
         // nowhere to hide: back away from the closest threat
         const o = threats[0];
@@ -1637,9 +1908,31 @@ export class Game {
     return best;
   }
 
+  /** A man catching a woman (or the other way round) sometimes just looks away and lets it slide. */
+  letsItSlide(o, targetGender) {
+    if (!o.gender || !targetGender || o.gender === targetGender) return false;
+    if (o.slidOnce) return false; // once per day per person
+    if (Math.random() < 0.4) {
+      o.slidOnce = true;
+      return true;
+    }
+    return false;
+  }
+
+  slideLine(o, nm) {
+    this.bubble(o, pick([`...I didn't see anything.`, `*turns bright red and looks at the ceiling*`, `Uh. Carry on, ${nm}.`, '*clears throat and suddenly finds the floor very interesting*']), 4);
+    this.talkMood(o, { surprised: 0.6, happy: 0.2 }, 5);
+    o.noticeCooldown = 40;
+  }
+
   npcCaught(o, s) {
     const cw = this.state.cw[s.index];
     const rt = this.cwRuntime[s.index];
+    s.graceT = performance.now() + 20000; // a moment to get away before anyone else piles on
+    if (this.letsItSlide(o, s.gender)) {
+      this.slideLine(o, s.name);
+      return;
+    }
     if (o.kind === 'customer') {
       rt.complaints++;
       this.bubble(o, `Excuse me! That employee isn't wearing ${s.legwearType}!`);
@@ -1671,6 +1964,7 @@ export class Game {
   writeupNPC(s, msg) {
     const cw = this.state.cw[s.index];
     cw.writeups++;
+    s.graceT = performance.now() + 120000; // like the player, the manager leaves them alone for a while after
     ui.toast(`${msg} (${s.name}: write-up ${Math.min(3, cw.writeups)}/3)`, 'bad', 5000);
     const m = this.level.pois.manager;
     if (cw.writeups >= 3) {
@@ -1717,6 +2011,12 @@ export class Game {
   // Getting caught
   async caught(n) {
     const name = this.profile.name;
+    const pg = this.profile.player.gender;
+    if (!n.coworkerEncounter && this.letsItSlide(n, pg)) {
+      this.slideLine(n, name);
+      if (n.kind === 'pedestrian' || n.kind === 'clerk' || n.kind === 'customer') this.addShame(SHAME.pedestrian * 0.3);
+      return;
+    }
     if (n.kind === 'pedestrian' || n.kind === 'clerk' || (n.kind === 'customer' && this.phase !== 'work')) {
       if (n.coworkerEncounter) return this.weekendEncounter(n);
       n.noticeCooldown = 25;
@@ -1763,9 +2063,11 @@ export class Game {
       cw.playing = true;
       this.addShame(SHAME.oddball);
       this.talkMood(n, { happy: 1 }, 8);
-      await this.dialog(`${nm} saw you!`, `${nm} stares at you, then breaks into a huge grin.\n\n"${pick(ODDBALL_LINES)}"\n\nBefore you can stop ${pr.them}, ${nm} wriggles out of ${pr.their} ${n.legwearType}, stuffs them in a drawer and gets ready to sneak.\n\n(${nm} is now sneaking around too. If ${pr.they} get${pr.they === 'they' ? '' : 's'} caught, ${pr.theyre} the one in trouble.)`);
-      this.setSneaking(n, true);
-      after();
+      await this.dialog(`${nm} saw you!`, `${nm} stares at you, then breaks into a huge grin.\n\n"${pick(ODDBALL_LINES)}"\n\nBefore you can stop ${pr.them}, ${nm} winks and slips off to find somewhere private to "get ready".\n\n(${nm} will be sneaking around without ${pr.their} ${n.legwearType} too. If ${pr.they} get${pr.they === 'they' ? '' : 's'} caught, ${pr.theyre} the one in trouble.)`);
+      if (!n.removed) {
+        n.state = 'idle';
+        this.stripPrivately(n);
+      }
       return;
     }
     if (pers === 'friend') {
@@ -1877,10 +2179,29 @@ export class Game {
     ui.toast(`Write-up ${st.writeups}/3. ${this.profile.manager.name} will give you some space for a while.`, 'bad', 6000);
   }
 
+  /** Nobody (except allies) can see the player right now. */
+  isPrivate(except = null) {
+    const p = this.player;
+    const chest = this.hipPoint();
+    chest.y += 0.3;
+    return this.npcs.every((o) => {
+      if (o === except || o.removed || !o.canSee() || this.complicit(o)) return true;
+      if (o.kind === 'coworker' && ['friend', 'sympathetic'].includes(o.personality) && this.state.cw[o.index]?.ally) return true;
+      const d = Math.hypot(o.x - p.x, o.z - p.z);
+      if (d > o.range) return true;
+      return !this.level.lineOfSight(o.eye(), chest);
+    });
+  }
+
   startLend(n) {
     const p = this.player;
     if (p.borrow) return;
-    p.borrow = { npc: n, t: LEND_TIME, warned: false };
+    if (!this.isPrivate(n)) {
+      this.bubble(n, pick(['Not here! Somewhere private first.', "Everyone would see! Let's find an empty room.", 'Meeting room. Supply closet. Anywhere but here!']), 4);
+      ui.toast(`Find somewhere nobody can see you, then ask ${n.name} again to swap.`, '', 4500);
+      return;
+    }
+    p.borrow = { npc: n, t: LEND_TIME, warned: false, due: false, overdue: 0 };
     // the player actually wears the lender's pants/skirt, fitted to their body
     let undo = null;
     try {
@@ -1891,13 +2212,84 @@ export class Game {
     p.borrow.undo = undo;
     p.borrow.char = p.char;
     if (!undo) p.char.setLegwear(true);
-    n.char.setLegwear(false);
-    n.sneaking = true;
-    this.cwRuntime[n.index].lendCd = LEND_TIME + 60;
+    // the lender now sneaks around exposed, using the same tricks
+    this.setSneaking(n, true);
+    n.lending = true;
+    this.cwRuntime[n.index].lendCd = 30;
     this.cwRuntime[n.index].bond += 10;
-    n.hideAt(pick(this.level.pois.hideSpots) || this.level.pois.lockers);
-    this.bubble(n, "Quick, take them! I'll hide in the back.");
-    ui.toast(`You're wearing ${n.name}'s ${n.legwearType}. Move freely while it lasts!`, 'good', 5000);
+    n.plan([{ t: 1.5 }]);
+    this.bubble(n, pick(['Your turn. Then we switch back!', 'Go! I just have to survive a few minutes.', "Just remember I'll need them back."]), 4);
+    this.talkMood(n, { sad: 0.4, surprised: 0.4 }, 6);
+    ui.toast(`You're wearing ${n.name}'s ${n.legwearType}. ${n.name} is the one sneaking now. Swap back somewhere private when time's up.`, 'good', 6000);
+  }
+
+  /** Someone came over to see why you're acting strange: pick an excuse. */
+  async excuseCheck(n) {
+    n.checkingOn = 0;
+    if (this.ended || ui.dialogOpen) return;
+    const p = this.player;
+    n.plan([]);
+    n.state = 'talk';
+    const who = n.kind === 'customer' ? `A ${n.name}` : n.name;
+    const q = n.kind === 'customer' ? '"Excuse me, are you alright? You look... odd."' : pick([`"${this.profile.name}, what are you doing?"`, '"You look like you\'re playing hide-and-seek."', '"Why are you walking like that?"', '"You\'ve been acting weird all morning."']);
+    const all = ['Posture exercise.', 'Workplace ergonomics.', 'Inventory inspection.', 'Strategic positioning.', "I'm embracing efficiency.", 'Just appreciating modern climate control!'];
+    const opts = all.sort(() => Math.random() - 0.5).slice(0, 3).map((t) => ({ label: `"${t}"`, value: t }));
+    const v = await this.dialog(`${who} came to check on you`, q, opts);
+    const chance = { friend: 0.85, sympathetic: 0.8, oddball: 0.9, distant: 0.7, neutral: 0.6, strict: 0.4 }[n.personality] ?? (n.kind === 'manager' ? 0.4 : 0.6);
+    if (Math.random() < chance) {
+      this.bubble(n, pick(['...Right.', 'Okay then.', 'Sure. Carry on.', 'If you say so.']), 3);
+      n.noticeCooldown = 30;
+      n.suspicion = 0;
+      this.composure = 100;
+      ui.toast(`"${v}" ...it worked.`, 'good', 3000);
+    } else {
+      this.bubble(n, pick(['Hang on. Let me look at you...', 'That makes no sense.', 'Wait a second...']), 3);
+      n.suspicion = this.playerExposed() && !p.sitAt && !p.hidden ? 0.85 : 0.3;
+      ui.toast(`"${v}" ...they're not buying it!`, 'bad', 3000);
+    }
+    if (!n.removed) {
+      n.state = 'idle';
+      n.plan([{ t: 1.2, yaw: Math.atan2(p.x - n.x, p.z - n.z) }]);
+    }
+  }
+
+  /** Turn-taking: when time's up, the lender comes to find you and you swap back somewhere private. */
+  updateBorrow(dt) {
+    const p = this.player;
+    const b = p.borrow;
+    const n = b.npc;
+    const their = pronouns(n.gender).their;
+    if (n.removed) return this.endBorrow(true);
+    b.t -= dt;
+    if (b.t <= 10 && !b.warned) {
+      b.warned = true;
+      ui.toast(`${n.name} needs ${their} ${n.legwearType} back soon!`, 'bad');
+    }
+    if (b.t > 0) {
+      ui.borrow(`Wearing ${n.name}'s ${n.legwearType} — ${Math.ceil(b.t)}s`);
+      return;
+    }
+    if (!b.due) {
+      b.due = true;
+      ui.toast(`Time's up! Meet ${n.name} somewhere private to swap back.`, 'bad', 5000);
+    }
+    b.overdue += dt;
+    ui.borrow(`Swap back with ${n.name} somewhere private!${b.overdue > 25 ? ' (' + Math.ceil(45 - b.overdue) + 's)' : ''}`);
+    // the lender heads your way
+    b.followT = (b.followT || 0) - dt;
+    const d = Math.hypot(n.x - p.x, n.z - p.z);
+    if (b.followT <= 0 && d > 1.6 && !['talk', 'hiding'].includes(n.state)) {
+      b.followT = 1.5;
+      n.plan([{ go: { x: p.x, z: p.z }, run: d > 6 }, { t: 1, yaw: Math.atan2(p.x - n.x, p.z - n.z) }]);
+    }
+    if (d < 2.2 && this.isPrivate(n)) {
+      this.endBorrow(true);
+      this.bubble(n, pick(['Switch! Thanks.', 'My turn to be normal again.', 'Okay, hand them over!']), 3);
+      ui.toast(`You swapped back. ${n.name} can lend them again in a bit.`, '', 4000);
+    } else if (b.overdue > 45) {
+      this.endBorrow();
+      this.bubble(n, 'I need them back NOW!', 3);
+    }
   }
 
   endBorrow(silent = false) {
@@ -1908,6 +2300,7 @@ export class Game {
     ui.borrow(null);
     if (b.undo) b.undo();
     else b.char.setLegwear(false);
+    b.npc.lending = false;
     const cw = this.state.cw[b.npc.index];
     if (!b.npc.removed) {
       b.npc.char.setLegwear(!(cw.blessed || cw.playing));
@@ -1949,7 +2342,7 @@ export class Game {
     const opts = [];
     if (n.personality === 'friend') {
       opts.push({
-        label: rt.lendCd > 0 ? `Borrow ${n.legwearType} (${n.name} needs a break: ${Math.ceil(rt.lendCd)}s)` : `Borrow ${n.name}'s ${n.legwearType} (${LEND_TIME}s)`,
+        label: rt.lendCd > 0 ? `Swap legwear (${n.name} needs a break: ${Math.ceil(rt.lendCd)}s)` : `Take turns with ${n.name}'s ${n.legwearType} (${LEND_TIME}s, somewhere private)`,
         value: 'lend',
         disabled: rt.lendCd > 0 || !!p.borrow,
       });
@@ -2176,7 +2569,7 @@ export class Game {
     const p = this.player;
     this.cancelInteract();
     p.sitAt = s;
-    s.taken = true;
+    s.taken = 'player';
     p.standFrom = { x: p.x, z: p.z };
     p.x = s.x;
     p.z = s.z;
@@ -2311,6 +2704,8 @@ export class Game {
     const id = it.id;
     if (ph === 'morning') {
       const m = this.morning;
+      if (id === 'celesti') return { label: 'Talk to the winged stranger', time: 0, run: () => this.celestiTalk() };
+      if (this.celestiChar) return { label: 'Someone is in your living room!', disabled: true };
       if (id === 'sink' && !m.wash) return { label: 'Wash up', time: 2, run: () => ((m.wash = true), ui.toast('Fresh and clean!', 'good')) };
       if (id === 'kitchen' && !m.eat) return { label: 'Eat breakfast', time: 2.5, run: () => ((m.eat = true), ui.toast('Delicious toast.', 'good')) };
       if (id === 'wardrobe' && !m.dress) {
@@ -2626,7 +3021,8 @@ export class Game {
     return ch;
   }
 
-  async celestiScene() {
+  /** Day after the third shift: Celesti is waiting in the living room. Walk over and talk to her. */
+  async celestiAppear() {
     const L = this.levels.apartment;
     const ch = await this.makeCelesti();
     ch.setMood({ happy: 0.5 });
@@ -2634,32 +3030,31 @@ export class Game {
     ch.root.position.set(s.x, 0.15, s.z);
     ch.root.rotation.y = s.yaw;
     this.scene.add(ch.root);
-    const tick = () => {
-      if (!ch.root.parent) return;
-      ch.root.position.y = 0.15 + Math.sin(performance.now() / 600) * 0.06;
-      ch.update(1 / 60, { speed: 0 });
-      requestAnimationFrame(tick);
-    };
-    tick();
-    // stand the player in front of her so nothing blocks the view
+    this.celestiChar = ch;
+    L.interactable('celesti', s.x, s.z, this.celestiName(), { r: 2.2 });
+    const [title, text] = STORY.celesti(this.profile.name, this.celestiName())[0];
+    await this.dialog(title, text + `\n\n(Go and see who it is.)`);
+  }
+
+  async celestiTalk() {
+    const L = this.levels.apartment;
+    const ch = this.celestiChar;
+    const s = L.pois.celesti;
     const p = this.player;
-    p.x = s.x + Math.sin(s.yaw) * 2.2 + Math.cos(s.yaw) * 0.7;
-    p.z = s.z + Math.cos(s.yaw) * 2.2 - Math.sin(s.yaw) * 0.7;
-    const r = L.resolve(p.x, p.z, 0.3);
-    p.x = r.x;
-    p.z = r.z;
     p.yaw = Math.atan2(s.x - p.x, s.z - p.z);
-    p.char.root.position.set(p.x, 0, p.z);
-    p.char.root.rotation.y = p.yaw;
     this.cam.yaw = p.yaw;
-    this.cam.pitch = 0.2;
-    this.cam.dist = 2.6;
-    for (const [title, text] of STORY.celesti(this.profile.name, this.celestiName())) {
+    this.cam.pitch = 0.15;
+    p.char.setMood({ surprised: 1 });
+    for (const [title, text] of STORY.celesti(this.profile.name, this.celestiName()).slice(1)) {
       await this.dialog(title, text);
     }
     await ui.fade(true);
-    this.scene.remove(ch.root);
-    ch.dispose();
+    if (ch) {
+      this.scene.remove(ch.root);
+      ch.dispose();
+    }
+    this.celestiChar = null;
+    L.interactables.delete('celesti');
     await ui.fade(false);
     this.state.celestiMet = true;
   }
@@ -2729,6 +3124,7 @@ export class Game {
     const ph = this.phase;
     if (ph === 'morning') {
       const m = this.morning;
+      if (this.celestiChar) return get('celesti');
       return !m.wash ? get('sink') : !m.eat ? get('kitchen') : !m.dress ? get('wardrobe') : get('door');
     }
     if (ph === 'evening') return get('bed');
@@ -2800,7 +3196,7 @@ export class Game {
     const p = this.player;
     if (ph === 'morning') {
       const m = this.morning;
-      obj = !m.wash ? 'Wash up in the bathroom' : !m.eat ? 'Eat breakfast in the kitchen' : !m.dress ? 'Check the wardrobe' : this.isWorkday ? 'Leave for work' : 'Head out to run errands';
+      obj = this.celestiChar ? 'Someone is in the living room...' : !m.wash ? 'Wash up in the bathroom' : !m.eat ? 'Eat breakfast in the kitchen' : !m.dress ? 'Check the wardrobe' : this.isWorkday ? 'Leave for work' : 'Head out to run errands';
     } else if (p.bus) obj = 'Riding the bus. Get off near your destination (walk to the front door when it stops).';
     else if (ph === 'commute_am') obj = `Get to ${this.job.workplaceName}`;
     else if (ph === 'commute_pm') obj = 'Get home to Maple Court Apartments';
@@ -3011,6 +3407,7 @@ export function controlsTable() {
     <tr><td>C / Ctrl</td><td>Crouch toggle / hold — hide your hips behind furniture</td></tr>
     <tr><td>E</td><td>Interact (hold for timed actions): tasks, sit down, hide, pick things up, board/leave buses</td></tr>
     <tr><td>G</td><td>Put down the item you're carrying</td></tr>
+    <tr><td>F</td><td>Tie the item you're carrying on as a makeshift skirt (box, paper, tote bag, towel...). It won't last.</td></tr>
     <tr><td>M</td><td>Show/hide the minimap and compass</td></tr>
     <tr><td>Wheel</td><td>Zoom camera</td></tr>
     <tr><td>Esc</td><td>Pause</td></tr>

@@ -10,7 +10,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { VRMLoaderPlugin, VRMUtils, VRMHumanoid, VRMExpressionManager, VRMExpression, VRMExpressionMorphTargetBind } from '@pixiv/three-vrm';
 
-export const LEGWEAR_RE = /(bottom|pants|trouser|skirt|short|jean|slack|legging|tights|kneesock|stocking)/i;
+// socks, stockings and thigh-highs stay on after a mishap: only pants/skirts/shorts count
+export const LEGWEAR_RE = /(bottom|pants|trouser|skirt|short|jean|slack|legging)/i;
 const SKIN_RE = /(_skin|skin|body)/i;
 const HAIR_RE = /hair/i;
 const IRIS_RE = /iris/i;
@@ -414,7 +415,7 @@ class CharacterBase {
           m.depthWrite = want ? false : o.depthWrite;
           m.needsUpdate = true;
         }
-        m.opacity = (o.opacity ?? 1) * (1 - 0.6 * see);
+        m.opacity = (o.opacity ?? 1) * (1 - 0.8 * see); // never below 20% opacity
       }
     }
     if (this.mannequinWet) this.mannequinWet(w);
@@ -618,11 +619,18 @@ async function createClonedVRM(opts) {
   ch.root.add(scene);
   setupVRMChar(ch, scene, hum, opts);
   ch.expressions = em;
+  // MToon only uploads alphaTest/opacity uniforms in material.update(); copies must call it too,
+  // otherwise cut-out parts of clothes render as solid (black) polygons
+  const mtoons = [];
+  scene.traverse((o) => {
+    if (o.isMesh) for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m && m.isMToonMaterial && m.update) mtoons.push(m);
+  });
   ch.update = (dt, a) => {
     ch.animate(dt, a);
     ch.updateProp();
     hum.update();
     if (em) em.update();
+    for (const m of mtoons) m.update(dt);
   };
   ch.dispose = () => {
     scene.traverse((o) => {
