@@ -69,6 +69,7 @@ export class Bus {
       m.position.set(x, y, z);
       m.castShadow = opts.shadow !== false;
       m.receiveShadow = true;
+      if (m.material.transparent) m.renderOrder = 5;
       g.add(m);
       return m;
     };
@@ -80,7 +81,7 @@ export class Bus {
     add(0.1, 0.9, 0.9, -1.42, 0.65, 5.25, col);
     add(2.9, 2.5, 0.1, 0, 1.3, -5.7, col); // back
     // windows (transparent)
-    const glass = new THREE.MeshStandardMaterial({ color: '#aed6f1', transparent: true, opacity: 0.25, roughness: 0.1 });
+    const glass = new THREE.MeshStandardMaterial({ color: '#aed6f1', transparent: true, opacity: 0.25, roughness: 0.1, depthWrite: false });
     add(0.05, 1.3, 11.4, 1.42, 1.75, 0, null, { material: glass, shadow: false });
     add(0.05, 1.3, 7.8, -1.42, 1.75, -1.8, null, { material: glass, shadow: false });
     add(2.9, 1.6, 0.05, 0, 1.6, 5.7, null, { material: glass, shadow: false }); // windshield
@@ -214,8 +215,8 @@ export class Bus {
 
     // materialize passengers near the player
     const d = Math.hypot(player.x - this.x, player.z - this.z);
-    if (!this.materialized && (riding || d < 60)) this.materialize();
-    else if (this.materialized && !riding && d > 90) this.dematerialize();
+    if (!this.materialized && (riding || d < 38)) this.materialize();
+    else if (this.materialized && !riding && d > 55) this.dematerialize();
     if (this.materialized) this.updatePassengers(dt);
   }
 
@@ -337,6 +338,7 @@ export class Bus {
   }
 
   addPassenger(walkIn, delay = 0, seat) {
+    if (this.game.civAvailable && !this.game.civAvailable()) return;
     const char = this.game.acquireCivilian();
     if (seat === undefined) {
       const free = this.freeSeats();
@@ -429,7 +431,7 @@ export class Bus {
       } else if (!p.leaving) p.char.root.rotation.y = 0;
       p.walking = moving;
       p.char.root.position.set(p.x, 0.15, p.z);
-      p.char.update(dt, { speed: moving ? 1.1 : 0, sit: !!p.seat && !p.walk.length });
+      if (this.inView !== false) p.char.update(dt, { speed: moving ? 1.1 : 0, sit: !!p.seat && !p.walk.length });
     }
     if (this.driver) this.driver.update(dt, { speed: 0, sit: true, carry: true });
   }

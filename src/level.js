@@ -126,10 +126,14 @@ export class Level {
   /** Box centered at (x,z) with size w (x) by d (z) and height h. */
   box(x, z, w, d, h, color, opts = {}) {
     const y0 = opts.y || 0;
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), opts.material || mat(color, opts.matOpts));
+    const glass = !!opts.matOpts?.transparent;
+    // glass must not write depth, or eyes and see-through clothes behind it vanish
+    const mo = glass ? { ...opts.matOpts, depthWrite: false } : opts.matOpts;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), opts.material || mat(color, mo));
     m.position.set(x, y0 + h / 2, z);
     if (opts.rotY) m.rotation.y = opts.rotY;
-    m.castShadow = opts.shadow !== false;
+    if (glass) m.renderOrder = 5;
+    m.castShadow = opts.shadow !== false && !glass;
     m.receiveShadow = true;
     this.group.add(m);
     if (opts.static !== false && !opts.matOpts?.transparent) this.staticMeshes.push(m);

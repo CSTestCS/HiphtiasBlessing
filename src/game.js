@@ -164,10 +164,10 @@ export class Game {
         console.warn('extra civilian failed', err);
       }
     }
-    const N = 84;
+    const N = 60;
     for (let i = 0; i < N; i++) {
       let ch;
-      if (tpls.length && i % 6 < 5) {
+      if (tpls.length) {
         const t = tpls[i % tpls.length];
         ch = await createCharacter({ vrm: t.buf, key: 'civ:' + t.key, randomize: true, underwearOverlay: false, legwearMaterials: t.legwearMaterials || null, gender: t.gender });
         ch.gender = t.gender;
@@ -185,7 +185,38 @@ export class Game {
     return ch;
   }
 
+  /** Load more townsfolk copies in the background when the pool runs low. */
+  refillCivilians() {
+    if (this._refilling || !this.civTemplates?.length) return;
+    this._refilling = true;
+    (async () => {
+      try {
+        for (let i = 0; i < 10 && !this.ended; i++) {
+          const t = this.civTemplates[Math.floor(Math.random() * this.civTemplates.length)];
+          const ch = await createCharacter({ vrm: t.buf, key: 'civ:' + t.key, randomize: true, underwearOverlay: false, legwearMaterials: t.legwearMaterials || null, gender: t.gender });
+          ch.civilian = true;
+          ch.gender = t.gender;
+          this.civPool.push(ch);
+          this.civMade = (this.civMade || 0) + 1;
+        }
+      } finally {
+        this._refilling = false;
+      }
+    })();
+  }
+
+  /** False while waiting for more townsfolk copies to load (so no placeholder figures appear). */
+  civAvailable() {
+    if (this.civPool.length) return true;
+    if (this.civTemplates?.length) {
+      this.refillCivilians();
+      return false;
+    }
+    return true;
+  }
+
   acquireCivilian() {
+    if (this.civPool.length < 8) this.refillCivilians();
     const ch = this.civPool.length ? this.civPool.splice(Math.floor(Math.random() * this.civPool.length), 1)[0] : this.makeMannequinCiv();
     ch.root.visible = true;
     ch.root.rotation.set(0, 0, 0);
@@ -362,7 +393,11 @@ export class Game {
     };
     this._md = (e) => {
       if (ui.dialogOpen || this.paused) return;
-      if (e.button === 2) this.dragging = true;
+      if (e.button === 2) {
+        // hold right-click: aim mode (mouse turns the character, A/D strafe)
+        this.dragging = true;
+        this.aiming = true;
+      }
       else if (document.pointerLockElement !== this.canvas) {
         try {
           const pr = this.canvas.requestPointerLock();
@@ -370,12 +405,20 @@ export class Game {
         } catch (_) {}
       }
     };
-    this._mu = () => (this.dragging = false);
+    this._mu = (e) => {
+      if (e.button === 2) {
+        this.dragging = false;
+        this.aiming = false;
+      }
+    };
     this._wh = (e) => (this.cam.dist = Math.max(1.8, Math.min(9, this.cam.dist + Math.sign(e.deltaY) * 0.4)));
     this._plc = () => {
       if (!document.pointerLockElement && this.running && !ui.dialogOpen && !this.paused && !this.transitioning && !this.ended) this.pause();
     };
-    this._blur = () => this.keys.clear();
+    this._blur = () => {
+      this.keys.clear();
+      this.aiming = this.dragging = false;
+    };
     window.addEventListener('keydown', this._kd);
     window.addEventListener('keyup', this._ku);
     window.addEventListener('mousemove', this._mm);
@@ -865,7 +908,7 @@ export class Game {
   spawnCustomer(word) {
     const L = this.level;
     const count = this.npcs.filter((n) => n.kind === 'customer').length;
-    if (count >= (L.maxCustomers || 4)) return;
+    if (count >= (L.maxCustomers || 4) || !this.civAvailable()) return;
     const spot = this.freeSpot();
     if (!spot) return;
     const e = L.pois.entrance;
@@ -918,7 +961,7 @@ export class Game {
     let count = this.npcs.filter((n) => n.kind === 'pedestrian').length;
     const want = this.pedTarget();
     let guard = 0;
-    while (count < want && guard++ < 60) {
+    while (count < want && guard++ < 60 && this.civAvailable()) {
       // pick an edge near the player
       const a = Math.floor(Math.random() * G.length);
       const b = pick(G[a].n);
@@ -1161,11 +1204,14 @@ export class Game {
       dx /= len;
       dz /= len;
       speed = crouch ? CROUCH : running ? RUN : WALK;
+      if (this.aiming && mz < 0) speed = Math.min(speed, WALK * 0.8); // backing up
       const r = L.resolve(p.x + dx * speed * dt, p.z + dz * speed * dt, 0.3);
       p.x = r.x;
       p.z = r.z;
-      p.yaw += angDiff(Math.atan2(dx, dz), p.yaw) * Math.min(1, dt * 12);
+      if (!this.aiming) p.yaw += angDiff(Math.atan2(dx, dz), p.yaw) * Math.min(1, dt * 12);
     } else running = false;
+    // aim mode: the character faces where the camera looks
+    if (this.aiming && !p.sitAt && !p.hidden && !p.inter) p.yaw += angDiff(this.cam.yaw, p.yaw) * Math.min(1, dt * 20);
     this.stamina = running ? Math.max(0, this.stamina - 16 * dt) : Math.min(100, this.stamina + 10 * dt);
     for (const n of this.npcs) {
       const dx = p.x - n.x;
@@ -1432,11 +1478,8 @@ export class Game {
         const toN = Math.atan2(n.x - p.x, n.z - p.z);
         if (Math.abs(angDiff(toN, p.yaw)) < (p.carryCover || 1)) covered = true;
       }
-      // sitting at a desk/table: only someone right next to you or behind you can tell
-      if (seated && seesHip && dist > 2.2) {
-        const toN = Math.atan2(n.x - p.x, n.z - p.z);
-        if (Math.abs(angDiff(toN, p.sitAt.yaw)) < 1.9) covered = true;
-      }
+      // sitting at a desk, table or bench hides you completely
+      if (seated) covered = true;
       const canNotice = seesHip && !covered && !this.complicit(n) && n.noticeCooldown <= 0;
       if (canNotice) {
         seenBy++;
@@ -2139,7 +2182,7 @@ export class Game {
     p.z = s.z;
     p.yaw = s.yaw;
     p.speed = 0;
-    if (this.playerExposed()) ui.toast('Sitting down: people in front of you can hardly tell. Move to stand up.', '', 3500);
+    if (this.playerExposed()) ui.toast("Sitting down: nobody can tell while you're seated. Move to stand up.", '', 3500);
   }
 
   standUp(silent = false) {
@@ -2800,7 +2843,7 @@ export class Game {
       if (p.hidden) status = '<span style="color:#55efc4">Hidden — nobody can see you</span>';
       else if (this.seenBy) status = `<span style="color:#ff7675">⚠ ${p.bus ? 'PASSENGERS ARE STARING' : 'SOMEONE IS LOOKING'}! (${this.seenBy})</span>`;
       else if (p.bus) status = p.seat ? (p.seat.window ? 'Seated by the window' : 'Seated on the aisle') : 'Standing in the aisle — very exposed';
-      else if (p.sitAt) status = `Seated (${esc(p.sitAt.label || 'seat')}) — hard to notice from the front`;
+      else if (p.sitAt) status = `<span style="color:#55efc4">Seated (${esc(p.sitAt.label || 'seat')}) — nobody can tell</span>`;
       else if (p.carry) status = `Exposed — holding a ${esc(PICKUP_LABELS[p.carry] || p.carry)} in front${p.pickup ? ' [G: put down]' : ''}`;
       else status = 'Exposed — stay out of sight';
       if (this.distraction) status += `<br><span style="color:#55efc4">Distraction: ${Math.ceil(this.distraction.t)}s</span>`;
@@ -2888,6 +2931,38 @@ export class Game {
     }
   }
 
+  /** Hide people (and bus passengers) that are off-screen or far away; they also skip animation. */
+  cullCharacters() {
+    const cam = this.camera;
+    cam.updateMatrixWorld();
+    this._proj = this._proj || new THREE.Matrix4();
+    this._frustum = this._frustum || new THREE.Frustum();
+    this._sph = this._sph || new THREE.Sphere();
+    this._proj.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+    const fr = this._frustum.setFromProjectionMatrix(this._proj);
+    const sph = this._sph;
+    const cx = cam.position.x;
+    const cz = cam.position.z;
+    const maxD = this.outdoors ? 75 : 60;
+    for (const n of this.npcs) {
+      const d = Math.hypot(n.x - cx, n.z - cz);
+      sph.center.set(n.x, 0.9, n.z);
+      sph.radius = 1.3;
+      const vis = d < maxD && fr.intersectsSphere(sph);
+      n.inView = vis;
+      n.char.root.visible = vis;
+    }
+    for (const b of this.buses?.buses || []) {
+      sph.center.set(b.x, 1.5, b.z);
+      sph.radius = 7;
+      const d = Math.hypot(b.x - cx, b.z - cz);
+      const vis = this.player.bus === b || (d < 55 && fr.intersectsSphere(sph));
+      b.inView = vis;
+      for (const q of b.passengers) q.char.root.visible = vis && (q.delay <= 0 || q.char.root.visible);
+      if (b.driver) b.driver.root.visible = vis;
+    }
+  }
+
   render() {
     const p = this.player;
     if (!p.char) return;
@@ -2920,6 +2995,7 @@ export class Game {
       this.sun.position.set(p.x + this.sunOffset.x, this.sunOffset.y, p.z + this.sunOffset.z);
       this.sun.target.position.set(p.x, 0, p.z);
     }
+    this.cullCharacters();
     this.updateMarker();
     this.updateTags();
     this.renderer.render(this.scene, this.camera);
@@ -2929,6 +3005,7 @@ export class Game {
 export function controlsTable() {
   return `<table class="controls-table">
     <tr><td>Mouse</td><td>Look around, all the way up or down (click the game to capture the mouse, or hold right button)</td></tr>
+    <tr><td>Right-click (hold)</td><td>Aim mode: the character turns with the mouse and A/D strafe</td></tr>
     <tr><td>W A S D</td><td>Move (moving also stands you up / brings you out of hiding)</td></tr>
     <tr><td>Shift</td><td>Run (uses stamina; looks strange at work)</td></tr>
     <tr><td>C / Ctrl</td><td>Crouch toggle / hold — hide your hips behind furniture</td></tr>
@@ -2939,7 +3016,7 @@ export function controlsTable() {
     <tr><td>Esc</td><td>Pause</td></tr>
   </table>
   <p class="note">Yellow cones show where people are looking. Partitions, counters, shelves, hedges, kiosks and parked cars hide your underwear.
-  Pick up boxes, trays, bags, newspapers or umbrellas and hold them in front of you. Sitting at a desk, table or bench hides you from the front,
+  Pick up boxes, trays, bags, newspapers or umbrellas and hold them in front of you. Sitting at a desk, table or bench hides you completely,
   and hiding spots (booths, closets, corners) hide you completely. On the bus, standing is far more exposed than sitting.
   An umbrella keeps you dry in the rain.</p>`;
 }

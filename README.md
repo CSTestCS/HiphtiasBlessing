@@ -32,7 +32,7 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 
 ## Rules
 - **Shame** rises when people outside work see you and when you're caught at work. Fill it and you lose. Sleeping lowers it. The Settings screen scales how fast it builds.
-- **Hiding**: carry a box, tray, bag, newspaper, umbrella... in front of you (E to pick up, G to put down), sit at desks, tables and benches (people in front of you can hardly tell), duck into hiding spots, or crouch behind low furniture.
+- **Hiding**: carry a box, tray, bag, newspaper, umbrella... in front of you (E to pick up, G to put down), sit at desks, tables and benches (nobody can tell while you're seated), duck into hiding spots, or crouch behind low furniture.
 - **Composure** drains when you crouch or run in plain view at work. At zero, someone comes over to check on you.
 - **Stamina** limits running.
 - **Coworker personalities** when they catch you:
@@ -58,7 +58,8 @@ The city is a 4×4 grid of blocks with named streets, parks and shops, full of h
 ## Controls
 | Key | Action |
 | --- | --- |
-| Mouse | Look, all the way up or down (click the game to capture the mouse, or hold the right button) |
+| Mouse | Look, all the way up or down (click the game to capture the mouse) |
+| Right-click (hold) | Aim mode: the mouse turns the character, A/D strafe |
 | W A S D | Move |
 | Shift | Run |
 | C / Ctrl | Crouch (toggle / hold) |

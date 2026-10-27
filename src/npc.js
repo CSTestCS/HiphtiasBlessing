@@ -257,7 +257,8 @@ export class NPC {
     this.curSpeed += ((moving ? this.speed * (this.speedMul || 1) * (this.crouch ? 0.55 : 1) : 0) - this.curSpeed) * Math.min(1, dt * 10);
     this.char.root.position.set(this.x, 0, this.z);
     this.char.root.rotation.y = this.yaw;
-    this.char.update(dt, {
+    // off-screen characters keep thinking but skip skinning/animation work
+    if (this.inView !== false) this.char.update(dt, {
       speed: this.curSpeed,
       sit: this.sitting && !moving,
       crouch: this.crouch,

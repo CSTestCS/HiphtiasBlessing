@@ -68,7 +68,12 @@ export function getTemplate(key, buffer) {
           VRMUtils.removeUnnecessaryVertices(gltf.scene);
           VRMUtils.rotateVRM0(vrm);
           vrm.scene.updateMatrixWorld(true);
-          vrm.scene.traverse((o) => o.isMesh && fixTransparency(o.material));
+          vrm.scene.traverse((o) => {
+            if (!o.isMesh) return;
+            fixTransparency(o.material);
+            // copies are seen small and in crowds: keep their textures small to save memory
+            for (const m of Array.isArray(o.material) ? o.material : [o.material]) shrinkTextures(m, 1024);
+          });
           return vrm;
         })
     );
@@ -81,6 +86,64 @@ export function getTemplate(key, buffer) {
 // MASK alpha, which renders those pixels fully opaque. Switch such materials
 // to real blending; anything that can't blend falls back to fully hidden
 // pixels (alpha test) rather than opaque ones.
+const shrunk = new WeakMap();
+function shrinkTextures(m, max) {
+  if (!m) return;
+  for (const k of Object.keys(m)) {
+    const t = m[k];
+    if (!t || !t.isTexture || !t.image) continue;
+    const img = t.image;
+    const w = img.width || 0;
+    const h = img.height || 0;
+    if (Math.max(w, h) <= max) continue;
+    if (shrunk.has(img)) {
+      t.image = shrunk.get(img);
+      t.needsUpdate = true;
+      continue;
+    }
+    try {
+      const sc = max / Math.max(w, h);
+      const c = document.createElement('canvas');
+      c.width = Math.round(w * sc);
+      c.height = Math.round(h * sc);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      shrunk.set(img, c);
+      // analyse alpha on the shrunk copy too
+      if (alphaCache.has(img)) alphaCache.set(c, alphaCache.get(img));
+      if (hasAlphaCache.has(img)) hasAlphaCache.set(c, hasAlphaCache.get(img));
+      t.image = c;
+      t.needsUpdate = true;
+      if (img.close) img.close();
+    } catch (_) {}
+  }
+}
+
+const hasAlphaCache = new WeakMap();
+/** Does the texture have any see-through pixels at all? */
+function textureHasAlpha(tex) {
+  if (!tex || !tex.image) return false;
+  if (hasAlphaCache.has(tex.image)) return hasAlphaCache.get(tex.image);
+  let res = false;
+  try {
+    const c = document.createElement('canvas');
+    c.width = 128;
+    c.height = 128;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(tex.image, 0, 0, 128, 128);
+    const d = ctx.getImageData(0, 0, 128, 128).data;
+    let clear = 0;
+    let solid = 0;
+    for (let i = 3; i < d.length; i += 4) {
+      if (d[i] < 128) clear++;
+      else solid++;
+    }
+    // a little see-through area inside an otherwise solid texture (eyelash edges, lace...)
+    res = clear > 8 && solid > 8;
+  } catch (_) {}
+  hasAlphaCache.set(tex.image, res);
+  return res;
+}
+
 const alphaCache = new WeakMap();
 function textureHasSemiAlpha(tex) {
   if (!tex || !tex.image) return false;
@@ -145,6 +208,15 @@ function fixTransparency(mat) {
       m.transparent = true;
       m.depthWrite = false;
       m.alphaTest = 0.02;
+      m.needsUpdate = true;
+    } else if (!m.alphaTest && m.map && textureHasAlpha(m.map)) {
+      // marked opaque but the texture has see-through pixels: those would show as black.
+      // Blend them when they're soft, otherwise cut them out.
+      if (textureHasSemiAlpha(m.map)) {
+        m.transparent = true;
+        m.depthWrite = false;
+        m.alphaTest = 0.02;
+      } else m.alphaTest = 0.5;
       m.needsUpdate = true;
     }
   }
