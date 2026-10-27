@@ -1,0 +1,49 @@
+{
+  "name": "hiphtias-blessing",
+  "productName": "Hiphtia's Blessing",
+  "version": "0.1.0",
+  "description": "A 3D workplace stealth comedy game with VRM character import",
+  "main": "electron/main.js",
+  "author": "HiphtiasBlessing",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "build:web": "node scripts/build.mjs",
+    "start": "npm run build:web && electron .",
+    "dist:win": "npm run build:web && electron-builder --win portable --x64 --publish never",
+    "dist:dir": "npm run build:web && electron-builder --win dir --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.0",
+    "@pixiv/three-vrm": "^3.1.4",
+    "three": "^0.169.0"
+  },
+  "build": {
+    "appId": "com.hiphtiasblessing.game",
+    "productName": "HiphtiasBlessing",
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "portable": {
+      "artifactName": "HiphtiasBlessing-${version}-portable.exe"
+    }
+  }
+}

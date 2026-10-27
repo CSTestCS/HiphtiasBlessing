@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' blob: data:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' blob: data:" />
+  <title>Hiphtia's Blessing</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+  <div id="tag-layer"></div>
+
+  <div id="hud" class="hidden">
+    <div id="hud-top">
+      <div id="hud-day"></div>
+      <div id="hud-time"></div>
+      <div id="hud-objective"></div>
+    </div>
+    <div id="hud-meters">
+      <div class="meter"><span>Shame</span><div class="bar"><div id="m-shame" class="fill shame"></div></div></div>
+      <div class="meter" id="meter-composure"><span>Composure</span><div class="bar"><div id="m-comp" class="fill comp"></div></div></div>
+      <div id="hud-complaints"></div>
+      <div id="hud-status"></div>
+    </div>
+    <div id="hud-tasks"></div>
+    <div id="hud-prompt"></div>
+    <div id="hud-progress" class="hidden"><div id="hud-progress-fill"></div></div>
+    <div id="hud-borrow" class="hidden"></div>
+    <div id="hud-hint">Click to look around · WASD move · Shift run · C crouch · E interact · Esc pause</div>
+    <div id="toasts"></div>
+    <div id="vignette"></div>
+  </div>
+
+  <div id="screen" class="screen"></div>
+  <div id="dialog" class="hidden"><div class="dialog-box"><h2 id="dialog-title"></h2><div id="dialog-text"></div><div id="dialog-options"></div></div></div>
+  <div id="fade"></div>
+  <script src="bundle.js"></script>
+</body>
+</html>
