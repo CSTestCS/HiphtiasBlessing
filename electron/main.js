@@ -1,6 +1,9 @@
 const { app, BrowserWindow, ipcMain, Menu } = require('electron');
 const path = require('path');
 
+// Allow software WebGL on PCs without working GPU drivers.
+app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1600,

@@ -48,7 +48,7 @@ export class Game {
       day: save?.day || 1,
       shame: save?.shame || 0,
       cw: profile.coworkers.map((_, i) => ({ ally: false, warned: false, ...(save?.cw?.[i] || {}) })),
-      eveningShown: false,
+      eveningShown: !!save?.eveningShown,
     };
     this.ui = ui;
     this.running = false;
