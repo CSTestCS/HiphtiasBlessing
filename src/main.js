@@ -979,6 +979,7 @@ async function startGame(slotId) {
     if (!profile.layoutSeed) profile.layoutSeed = save?.seed || 1;
     await writeProfile(slotId, profile);
     const extraCivs = await otherSlotPeople(slotId);
+    ui.clearChat();
     game = new Game(canvas, { profile, settings, hooks: { chooseOutfits }, slotId, extraCivs }, save, onGameEnd);
     await game.init();
     game.start();

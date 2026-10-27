@@ -77,6 +77,11 @@ export const ui = {
     if ($('chatlog').classList.contains('open')) box.scrollTop = box.scrollHeight;
   },
 
+  clearChat() {
+    const box = $('chat-lines');
+    if (box) box.innerHTML = '';
+  },
+
   toggleChat() {
     const c = $('chatlog');
     c.classList.toggle('open');

@@ -231,7 +231,13 @@ export class Game {
 
   acquireCivilian() {
     if (this.civPool.length < 8) this.refillCivilians();
-    const ch = this.civPool.length ? this.civPool.splice(Math.floor(Math.random() * this.civPool.length), 1)[0] : this.makeMannequinCiv();
+    let ch;
+    if (this.civPool.length) ch = this.civPool.splice(Math.floor(Math.random() * this.civPool.length), 1)[0];
+    else {
+      // nobody loaded yet: a hidden stand-in that gets swapped for a real model as soon as one is ready
+      ch = this.makeMannequinCiv();
+      if (this.civTemplates?.length) ch.placeholder = true;
+    }
     ch.root.visible = true;
     ch.root.rotation.set(0, 0, 0);
     ch.setLegwear(true);
@@ -245,6 +251,7 @@ export class Game {
     if (!ch) return;
     ch.root.removeFromParent();
     ch.setProp(null);
+    if (ch.placeholder) return;
     if (!this.civPool.includes(ch)) this.civPool.push(ch);
   }
 
@@ -4234,6 +4241,18 @@ export class Game {
     const cz = cam.position.z;
     const maxD = this.outdoors ? 75 : 60;
     for (const n of this.npcs) {
+      if (n.char.placeholder) {
+        // swap stand-ins for real townsfolk models once they've loaded; keep them out of sight until then
+        if (this.civPool.length) {
+          n.swapChar(this.acquireCivilian());
+          if (n.kind === 'pedestrian') this.dressCivilian(n);
+        } else {
+          this.refillCivilians();
+          n.inView = false;
+          n.char.root.visible = false;
+          continue;
+        }
+      }
       const d = Math.hypot(n.x - cx, n.z - cz);
       sph.center.set(n.x, 0.9, n.z);
       sph.radius = 1.3;
@@ -4248,7 +4267,7 @@ export class Game {
       const vis = this.player.bus === b || (d < 55 && fr.intersectsSphere(sph));
       b.inView = vis;
       for (const q of b.passengers) q.char.root.visible = vis && (q.delay <= 0 || q.char.root.visible);
-      if (b.driver) b.driver.root.visible = vis;
+      if (b.driver) b.driver.root.visible = vis && !b.driver.placeholder;
     }
   }
 

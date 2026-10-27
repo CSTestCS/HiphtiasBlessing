@@ -87,6 +87,22 @@ export class NPC {
     game.ui.tagLayer.appendChild(this.el);
   }
 
+  /** Replace this person's body (used when a stand-in is swapped for a loaded model). */
+  swapChar(ch) {
+    const old = this.char;
+    old.root.removeFromParent();
+    old.setProp(null);
+    this.char = ch;
+    if (!this.gender || old.placeholder) this.gender = ch.gender || this.gender;
+    this.eyeH = (ch.eyeHeight || 1.5) * 0.98;
+    ch.root.position.set(this.x, 0, this.z);
+    ch.root.rotation.y = this.yaw;
+    if (this.carry) ch.setProp(propMesh(this.carry));
+    if (old.mood) ch.setMood(old.mood);
+    this.game.scene.add(ch.root);
+    old.dispose?.();
+  }
+
   destroy() {
     this.removed = true;
     if (this.cone) {

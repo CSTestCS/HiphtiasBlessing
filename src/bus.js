@@ -435,6 +435,17 @@ export class Bus {
       p.char.root.position.set(p.x, 0.15, p.z);
       if (this.inView !== false) p.char.update(dt, { speed: moving ? 1.1 : 0, sit: !!p.seat && !p.walk.length });
     }
+    if (this.driver?.placeholder) {
+      // the driver was a stand-in: swap for a real model once one is loaded
+      this.driver.root.visible = false;
+      if (this.game.civPool.length) {
+        const old = this.driver;
+        this.driver = this.game.acquireCivilian();
+        this.driver.root.position.copy(old.root.position);
+        this.group.remove(old.root);
+        this.group.add(this.driver.root);
+      }
+    }
     if (this.driver) this.driver.update(dt, { speed: 0, sit: true, carry: true });
   }
 }
