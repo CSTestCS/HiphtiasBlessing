@@ -1149,8 +1149,19 @@ export class Game {
       const dest = pick(L.pois.wander);
       if (cart && dest && L.findPath(cart.x, cart.z, dest.x, dest.z)) {
         return n.plan([
-          { go: { x: cart.x - Math.sin(cart.yaw - Math.PI / 2) * 0.9, z: cart.z - Math.cos(cart.yaw - Math.PI / 2) * 0.9 } },
-          { t: 0.5, call: () => !cart.holder && ((cart.holder = n), (n.pushing = cart)) },
+          { go: (() => { const gr = L.pushGrip(cart, cart.x - Math.cos(cart.yaw), cart.z + Math.sin(cart.yaw)); return { x: gr.x, z: gr.z }; })() },
+          {
+            t: 0.5,
+            call: () => {
+              if (cart.holder) return;
+              const gr = L.pushGrip(cart, n.x, n.z);
+              cart.holder = n;
+              cart.pushExt = gr.ext;
+              cart.pushOff = gr.off;
+              n.pushing = cart;
+              n.yaw = gr.yaw;
+            },
+          },
           { go: dest, keepPush: true },
           { t: 0.5, call: () => n.pushing && ((n.pushing.holder = null), (n.pushing = null)) },
           ...this.homeSteps(n, 6),
@@ -1804,16 +1815,13 @@ export class Game {
     if (p.pushing) {
       // the object rolls along in front of you; it can't go through walls (or you through it)
       const m = p.pushing;
-      const yaw = p.yaw;
-      const off = 0.4 + m.hd + 0.05;
-      const tx = p.x + Math.sin(yaw) * off;
-      const tz = p.z + Math.cos(yaw) * off;
+      const tg = L.pushTarget(m, p.x, p.z, p.yaw);
       const r2 = Math.min(m.hw, m.hd) * 0.9;
-      const blocked = L.blockedPoint(tx, tz, r2) || L.movables.some((o) => o !== m && Math.hypot(o.x - tx, o.z - tz) < 1.0);
+      const blocked = L.blockedPoint(tg.x, tg.z, r2) || L.movables.some((o) => o !== m && Math.hypot(o.x - tg.x, o.z - tg.z) < 1.0);
       if (blocked && (p.x !== prevX || p.z !== prevZ)) {
         p.x = prevX;
         p.z = prevZ;
-      } else if (!blocked) L.placeMovable(m, tx, tz, yaw + Math.PI / 2);
+      } else if (!blocked) L.placeMovable(m, tg.x, tg.z, tg.yaw);
     }
     // aim mode: the character faces where the camera looks
     if (this.aiming && !p.sitAt && !p.hidden && !p.inter) p.yaw += angDiff(this.cam.yaw, p.yaw) * Math.min(1, dt * 20);
@@ -3083,9 +3091,20 @@ export class Game {
   grabMovable(m) {
     const p = this.player;
     if (m.holder) return;
+    // step behind the right side of it (the board's face, the cart's end)
+    const L = this.level;
+    const gr = L.pushGrip(m, p.x, p.z);
+    if (L.blockedPoint(gr.x, gr.z, 0.28) || !L.segmentClear(p.x, p.z, gr.x, gr.z, 0.2)) {
+      ui.toast(`No room to get behind the ${m.kind} from this side.`, 'bad', 2500);
+      return;
+    }
     m.holder = 'player';
+    m.pushExt = gr.ext;
+    m.pushOff = gr.off;
     p.pushing = m;
-    p.yaw = Math.atan2(m.x - p.x, m.z - p.z);
+    p.x = gr.x;
+    p.z = gr.z;
+    p.yaw = gr.yaw;
     ui.toast(`Pushing the ${m.kind}. Keep it between you and anyone looking. E to let go.`, '', 4000);
   }
 
@@ -4247,8 +4266,33 @@ export class Game {
     const dir = new THREE.Vector3(-Math.sin(c.yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(c.yaw) * Math.cos(pitch));
     let dist = p.bus ? Math.min(c.dist, 4.5) : c.dist;
     if (this.level && !p.bus) {
-      const hit = this.level.rayHit(target.x, target.y, target.z, dir.x, dir.y, dir.z, dist);
+      const hit = this.level.rayHit(target.x, target.y, target.z, dir.x, dir.y, dir.z, dist, p.pushing);
       if (hit < dist) dist = Math.max(0.6, hit - 0.25);
+    }
+    // whatever you're pushing goes see-through when the camera swings around to its far side
+    for (const m of this.level?.movables || []) {
+      let fade = false;
+      if (m === p.pushing) {
+        const camX = target.x + dir.x * dist;
+        const camZ = target.z + dir.z * dist;
+        fade = (camX - p.x) * (m.x - p.x) + (camZ - p.z) * (m.z - p.z) > 0;
+      }
+      if (!!m.faded === fade) continue;
+      m.faded = fade;
+      m.mesh.traverse((o) => {
+        if (!o.isMesh) return;
+        if (fade && !o.userData.fadeMat) {
+          o.userData.fadeMat = o.material;
+          o.material = o.material.clone();
+          o.material.transparent = true;
+          o.material.opacity = 0.3;
+          o.material.depthWrite = false;
+        } else if (!fade && o.userData.fadeMat) {
+          o.material.dispose();
+          o.material = o.userData.fadeMat;
+          o.userData.fadeMat = null;
+        }
+      });
     }
     this.camera.position.copy(target).addScaledVector(dir, dist);
     if (this.camera.position.y < 0.25) this.camera.position.y = 0.25;

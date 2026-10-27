@@ -288,8 +288,8 @@ export class NPC {
     this.curSpeed += ((moving ? this.speed * (this.speedMul || 1) * (this.crouch ? 0.55 : 1) : 0) - this.curSpeed) * Math.min(1, dt * 10);
     if (this.pushing && moving) {
       const m = this.pushing;
-      const off = 0.4 + m.hd + 0.05;
-      g.level.placeMovable(m, this.x + Math.sin(this.yaw) * off, this.z + Math.cos(this.yaw) * off, this.yaw + Math.PI / 2);
+      const tg = g.level.pushTarget(m, this.x, this.z, this.yaw);
+      g.level.placeMovable(m, tg.x, tg.z, tg.yaw);
     }
     this.char.root.position.set(this.x, 0, this.z);
     this.char.root.rotation.y = this.yaw;

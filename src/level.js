@@ -165,6 +165,31 @@ export class Level {
     m.box = { minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez, minY: m.y0, maxY: m.h };
   }
 
+  /**
+   * Where someone at (fromX, fromZ) should stand to push m, and which way they face.
+   * Whiteboards are pushed flat side first; carts from either short end (the handle end is nicest).
+   * Also records on m how it stays oriented relative to the pusher.
+   */
+  pushGrip(m, fromX, fromZ) {
+    const board = m.kind === 'whiteboard';
+    // push axis in world space: the board's facing (local z) or the cart's length (local x)
+    const ax = board ? Math.sin(m.yaw) : Math.cos(m.yaw);
+    const az = board ? Math.cos(m.yaw) : -Math.sin(m.yaw);
+    const ext = board ? m.hd : m.hw;
+    const side = (fromX - m.x) * ax + (fromZ - m.z) * az >= 0 ? 1 : -1;
+    const fx = -side * ax;
+    const fz = -side * az;
+    const yaw = Math.atan2(fx, fz);
+    const gap = 0.42 + ext;
+    return { yaw, x: m.x - fx * gap, z: m.z - fz * gap, ext, off: m.yaw - yaw };
+  }
+
+  /** Put m in front of a pusher standing at (x, z) facing yaw, keeping the grip they took. */
+  pushTarget(m, x, z, yaw) {
+    const gap = 0.42 + (m.pushExt ?? m.hd);
+    return { x: x + Math.sin(yaw) * gap, z: z + Math.cos(yaw) * gap, yaw: yaw + (m.pushOff ?? Math.PI / 2) };
+  }
+
   /** A chair/bench spot anyone can sit on (player included). Returns the spot. */
   seat(x, z, yaw, label = 'chair', extra = {}) {
     const s = { x, z, yaw, sit: true, label, ...extra };
@@ -494,7 +519,7 @@ export class Level {
 
   // ---- sight -----------------------------------------------------------
   /** Distance along the ray (o + d*t) to the first sight blocker, or Infinity. d must be normalized. */
-  rayHit(ox, oy, oz, dx, dy, dz, maxT) {
+  rayHit(ox, oy, oz, dx, dy, dz, maxT, ignore = null) {
     if (!this.occHash) this.buildHashes();
     const ex = ox + dx * maxT;
     const ez = oz + dz * maxT;
@@ -524,6 +549,7 @@ export class Level {
       return false;
     });
     for (const m of this.movables) {
+      if (m === ignore) continue;
       const b = m.box;
       let t0 = 0;
       let t1 = maxT;
