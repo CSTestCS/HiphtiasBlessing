@@ -7,6 +7,7 @@ import { ui, esc } from './ui.js';
 import { NPC, angDiff, pick, propMesh } from './npc.js';
 import { createCharacter, createMannequin, randomColors, addAngelic, setExpressionMax, borrowLegwear } from './character.js';
 import { buildLobby } from './levels/lobby.js';
+import { buildHallway, buildPool, buildLaundry } from './levels/building.js';
 import { Rain } from './weather.js';
 import { Minimap } from './minimap.js';
 import { PICKUP_LABELS } from './props.js';
@@ -136,6 +137,9 @@ export class Game {
     await new Promise((r) => setTimeout(r, 30));
     this.levels.apartment = buildApartment();
     this.levels.lobby = buildLobby();
+    this.levels.hallway = buildHallway();
+    this.levels.pool = buildPool();
+    this.levels.laundry = buildLaundry();
     this.levels.city = buildCity({ workplaceName: this.job.workplaceName, jobColor: '#273c75' });
     ui.setScreen('<div class="loading">Building your workplace...</div>');
     await new Promise((r) => setTimeout(r, 30));
@@ -499,6 +503,11 @@ export class Game {
     return isWorkday(this.state.day);
   }
 
+  /** Out under the sky (city streets or the pool courtyard). */
+  get openAir() {
+    return this.outdoors || this.phase === 'pool';
+  }
+
   get outdoors() {
     return ['commute_am', 'commute_pm', 'dayoff'].includes(this.phase);
   }
@@ -541,11 +550,15 @@ export class Game {
     this.distraction = null;
     this.complaints = this.complaints || 0;
     if (phase === 'lobby') this.lobbyDir = opts.dir || 'out';
+    if (phase === 'hallway' || phase === 'pool') this.bldgDir = opts.dir || 'out';
     ui.set('hud-prompt', '');
 
     let L;
     if (phase === 'morning' || phase === 'evening') L = this.levels.apartment;
     else if (phase === 'lobby') L = this.levels.lobby;
+    else if (phase === 'hallway') L = this.levels.hallway;
+    else if (phase === 'pool') L = this.levels.pool;
+    else if (phase === 'laundry') L = this.levels.laundry;
     else if (phase === 'work') L = this.levels.work;
     else if (phase === 'shop') L = this.shops[opts.place] || (this.shops[opts.place] = buildShop(opts.place));
     else L = this.levels.city;
@@ -565,6 +578,10 @@ export class Game {
     if (phase === 'evening') spawn = L.doorSpawn;
     if (phase === 'lobby') spawn = this.lobbyDir === 'in' ? L.spawnFromStreet : L.spawnFromHome;
     if (outdoor && prev === 'lobby') spawn = L.spawnHome;
+    if (outdoor && prev === 'pool') spawn = L.places.poolgate.out;
+    if (phase === 'hallway') spawn = opts.from === 'stairs' ? L.spawnFromStairs : opts.from === 'elevator' ? L.spawnFromElevator : L.spawnFromApt;
+    if (phase === 'pool') spawn = opts.from === 'stairs' ? L.spawnFromStairs : L.spawnFromGate;
+    if (phase === 'lobby' && prev === 'hallway' && this.lobbyDir === 'out') spawn = L.spawnFromHome;
     if (phase === 'commute_pm' && prev === 'work') spawn = L.spawnWork;
     if (phase === 'dayoff' && prev === 'shop') spawn = L.places[this.shopPlace].out;
     p.x = spawn.x;
@@ -573,7 +590,7 @@ export class Game {
     this.cam.yaw = spawn.yaw;
     this.cam.pitch = 0.35;
     this.setLighting(phase);
-    this.rain.set(outdoor && this.isRaining);
+    this.rain.set((outdoor || phase === 'pool') && this.isRaining);
     ui.showComposure(phase === 'work');
     if (this.minimap) this.minimap.setLevel(L);
     this.showMinimap();
@@ -583,6 +600,12 @@ export class Game {
     if (phase === 'morning') this.wear('home', !exposedDay);
     else if (phase === 'evening') this.wear('home', false);
     else if (phase === 'lobby') this.wear('out', this.lobbyDir === 'out' && st.day === 1);
+    else if (phase === 'hallway' || phase === 'pool') {
+      const d = this.bldgDir;
+      if (d === 'out') this.wear('out', st.day === 1);
+      else if (d === 'down' || d === 'up') this.wear('home', false);
+      else this.wear('out', false);
+    } else if (phase === 'laundry') this.wear('home', false);
     else if (phase === 'commute_am') this.wear('out', st.day === 1);
     else if (phase === 'work') this.wear('out', st.day === 1);
     else this.wear('out', false);
@@ -595,6 +618,11 @@ export class Game {
       this.cam.dist = 3.2;
       this.clock = 450;
       p.wet = 0;
+    } else if (phase === 'hallway' || phase === 'pool' || phase === 'laundry') {
+      if (this.bldgDir === 'out' && phase !== 'laundry') this.clock = Math.max(this.clock, 460);
+      if (phase === 'laundry') this.clock = Math.max(this.clock, 1380);
+      this.cam.dist = phase === 'pool' ? 4.2 : 3.2;
+      this.spawnResidents(phase, prev);
     } else if (phase === 'lobby') {
       if (this.lobbyDir === 'out') this.clock = Math.max(this.clock, 465);
       this.spawnShopPeople();
@@ -636,7 +664,9 @@ export class Game {
       this.cam.dist = 3.5;
     } else if (phase === 'evening') {
       this.cam.dist = 3.2;
+      if (st.day === 1 && !st.eveningShown && !this.night) this.night = { stage: 'gather' };
     }
+    if (this.night && this.night.stage === 'carry' && ['evening', 'hallway', 'laundry'].includes(phase)) this.setTaskCarry('laundry');
     p.char.resetPhysics();
     this.updateHUD();
     await ui.fade(false);
@@ -710,11 +740,21 @@ export class Game {
     } else if (phase === 'shop') {
       if (this.errand) ui.toast(`Errand: ${this.errand.name}`, '', 4000);
       else ui.toast('Nothing to do here today.', '', 3000);
+    } else if (phase === 'hallway') {
+      const d = this.bldgDir;
+      if (d === 'down') ui.toast('Quietly now. Take the elevator down to the basement.', '', 4500);
+      else if (d === 'out') ui.toast('Elevator to the lobby, or the back stairs down to the pool and out the side gate.', '', 5000);
+      else ui.toast('Your door is 7F-05.', '', 3000);
+    } else if (phase === 'pool') {
+      if (prev !== 'pool') ui.toast(this.bldgDir === 'in' ? "Almost nobody uses the pool at this hour. The back stairs lead up to your floor." : 'Out through the gate to the street.', '', 5000);
+    } else if (phase === 'laundry') {
+      ui.toast('Nobody here. Load a washer.', '', 4000);
     } else if (phase === 'evening') {
-      if (st.day === 1 && !st.eveningShown) {
-        st.eveningShown = true;
-        await this.dialog('Wardrobe Disaster', STORY.day1Evening(this.lw));
+      if (this.night && this.night.stage === 'gather' && prev !== 'evening') {
+        await this.dialog('Home at last', STORY.day1Home(this.lw));
+        return;
       }
+      if (this.night && this.night.stage !== 'done') return;
       if (st.celestiMet && this.allBlessed()) {
         await this.win();
         return;
@@ -725,9 +765,9 @@ export class Game {
 
   setLighting(phase) {
     const s = this.scene;
-    const outdoor = ['commute_am', 'commute_pm', 'dayoff'].includes(phase);
+    const outdoor = ['commute_am', 'commute_pm', 'dayoff', 'pool'].includes(phase);
     if (outdoor) {
-      const evening = phase === 'commute_pm';
+      const evening = phase === 'commute_pm' || (phase === 'pool' && this.clock > 1000);
       const w = this.weather || 'sunny';
       let sky = evening ? '#f0a46a' : phase === 'dayoff' ? '#9fd3ff' : '#a9d6ff';
       if (w === 'cloudy') sky = evening ? '#b8968a' : '#b9c3cc';
@@ -1171,8 +1211,18 @@ export class Game {
     const p = this.player;
     const L = this.level;
     if (!L) return;
-    if (['commute_am', 'commute_pm', 'dayoff', 'shop', 'lobby'].includes(this.phase)) this.clock += dt * this.minPerSec;
+    if (['commute_am', 'commute_pm', 'dayoff', 'shop', 'lobby', 'hallway', 'pool', 'laundry'].includes(this.phase)) this.clock += dt * this.minPerSec;
+    if (this.phase === 'laundry') this.updateLaundry(dt);
     this.mgrGrace = Math.max(0, this.mgrGrace - dt);
+    if (this.timers && this.timers.length) {
+      for (const tm of [...this.timers]) {
+        tm.t -= dt;
+        if (tm.t <= 0) {
+          this.timers.splice(this.timers.indexOf(tm), 1);
+          tm.fn();
+        }
+      }
+    }
 
     if (p.bus) this.updateBusPlayer(dt);
     else this.updateWalking(dt);
@@ -1382,13 +1432,180 @@ export class Game {
     n.char.setMood(mood);
   }
 
+  // ---- residents: the neighbor in 7F-06, people at the pool ----
+  neighborChar() {
+    if (!this._neighbor || this._neighbor.root.parent) {
+      // reuse a male townsperson as the neighbor for the whole game
+      const i = this.civPool.findIndex((c) => c.gender === 'male');
+      this._neighbor = i >= 0 ? this.civPool.splice(i, 1)[0] : this.acquireCivilian();
+      this._neighbor.civilian = false;
+    }
+    const c = this._neighbor;
+    c.root.visible = true;
+    c.setLegwear(true);
+    c.setProp(null);
+    return c;
+  }
+
+  spawnResidents(phase, prev) {
+    const L = this.level;
+    const st = this.state;
+    st.neighbor = st.neighbor || {};
+    if (phase === 'hallway') {
+      // he has a habit of opening his door at exactly the wrong moment
+      const chance = prev === 'pool' ? 0.8 : this.bldgDir === 'out' ? 0.3 : 0.55;
+      if (Math.random() < chance) {
+        this.later(2 + Math.random() * 4, () => {
+          if (this.phase !== 'hallway') return;
+          const d = L.pois.neighborDoor;
+          const n = new NPC(this, this.neighborChar(), { kind: 'resident', name: 'Neighbor (7F-06)', x: d.x, z: d.z, yaw: d.yaw, range: 11, gender: 'male' });
+          n.isNeighbor = true;
+          n.plan([{ t: 5 + Math.random() * 3, yaw: d.yaw - Math.PI / 2 * (Math.random() < 0.5 ? 1 : -1) }, { t: 2, yaw: d.yaw }, { call: () => this.removeNPC(n) }]);
+          this.npcs.push(n);
+          ui.toast('*click* A door opens down the hall...', 'bad', 2500);
+        });
+      }
+    } else if (phase === 'pool' && !this.isRaining && this.clock < 1200) {
+      for (const sp of L.pois.customerSpots.slice(0, 1 + Math.floor(Math.random() * 2))) {
+        const n = new NPC(this, this.acquireCivilian(), { kind: 'resident', name: 'resident', x: sp.x, z: sp.z, yaw: sp.yaw, range: 10 });
+        n.sitting = !!sp.sit;
+        n.plan([{ sit: !!sp.sit, t: 9999, yaw: sp.yaw }]);
+        this.npcs.push(n);
+      }
+    }
+  }
+
+  /** Run something after a delay (game time; skipped if the game ended). */
+  later(sec, fn) {
+    (this.timers ||= []).push({ t: sec, fn });
+  }
+
+  /** Talking your way past a neighbor. */
+  async residentTalk(n) {
+    const st = this.state;
+    const p = this.player;
+    n.noticeCooldown = 9999;
+    n.plan([]);
+    n.state = 'talk';
+    const nb = (st.neighbor ||= {});
+    if (n.talked) return;
+    n.talked = true;
+    let opts;
+    let intro;
+    if (n.isNeighbor && this.phase === 'laundry') {
+      intro = nb.met ? `"Oh. Hi." The neighbor from 7F-06 again, with a basket of laundry. He looks at you, then at the blinking washer.\n\n(He definitely remembers.)` : `A young man steps out of the elevator with a basket of laundry, and stops dead. "Oh. ...Hi."`;
+      opts = [
+        { label: '"Laundry."', value: 'laundry' },
+        { label: '"The machine locked."', value: 'locked' },
+        { label: '"Perfectly fine." (you are shaking)', value: 'fine' },
+      ];
+    } else if (n.isNeighbor) {
+      intro = `The door of 7F-06 opens and your neighbor steps out. He stops. His eyes go down... and come back up very fast.\n\n"...Evening."`;
+      opts = [
+        { label: '"Swimming."', value: 'swim' },
+        { label: '"...Good evening."', value: 'evening' },
+        { label: '"Laundry."', value: 'laundry' },
+      ];
+    } else {
+      intro = `A resident lounging by the pool looks up from their phone. "Uh... are you okay?"`;
+      opts = [
+        { label: '"Swimming!"', value: 'swim' },
+        { label: '"Long story."', value: 'story' },
+      ];
+    }
+    p.char.setMood({ surprised: 1, sad: 0.4 });
+    this.talkMood(n, { surprised: 0.8 }, 6);
+    const v = await this.dialog(n.isNeighbor ? 'Your neighbor' : 'A resident', intro, opts);
+    let reply;
+    let shame = SHAME.pedestrian;
+    const wet = p.wet > 0.3 || this.sayswam;
+    if (v === 'swim') {
+      reply = wet ? `"Swimming?"\n\n"Yes."\n\nA long pause. He looks at the puddle forming at your feet. "...Right. Have a good evening."` : `"Swimming." He looks at your completely dry hair. "...In the hallway?"`;
+      shame *= wet ? 0.4 : 1.2;
+    } else if (v === 'laundry' && this.phase === 'laundry') {
+      reply = `"Laundry?" He nods slowly. "I figured." He starts loading a machine two down from yours, very carefully not looking over.`;
+      shame *= 0.6;
+    } else if (v === 'locked') {
+      reply = `"Ah. Happens sometimes." He glances at the error light. "Want me to get the building manager?"\n\n"NO! I mean... no, thank you."\n\n"Okay."`;
+      shame *= 0.7;
+    } else if (v === 'fine') {
+      reply = `"You're shaking."\n\n"I'm not."\n\nHe very politely pretends to believe you.`;
+    } else if (v === 'story') {
+      reply = `"Ah. Okay." They go back to their phone. Then look again. Then back to the phone.`;
+      shame *= 0.8;
+    } else {
+      reply = `"...Evening." He nods once, and very deliberately studies the ceiling until you've passed.`;
+      shame *= 0.8;
+    }
+    if (n.isNeighbor) nb.met = true;
+    this.addShame(shame);
+    await this.dialog(n.isNeighbor ? 'Your neighbor' : 'A resident', reply);
+    if (!n.removed) {
+      n.state = 'idle';
+      if (n.isNeighbor && this.phase === 'hallway') n.plan([{ t: 1.5 }, { call: () => this.removeNPC(n) }]);
+      else if (n.isNeighbor) n.plan([{ work: true, t: 10, yaw: Math.PI, drop: true }, { go: this.level.pois.entrance }, { call: () => this.removeNPC(n) }]);
+      else n.plan([{ t: 9999, yaw: n.yaw }]);
+    }
+  }
+
+  // ---- day 1 night: the laundry room ----
+  startWash(id) {
+    const nt = this.night;
+    nt.stage = 'washing';
+    nt.washer = id;
+    nt.t = 20;
+    this.clearTaskCarry();
+    ui.toast('Everything goes in tonight. Clean blouse, clean skirt, normal commute tomorrow...', '', 5000);
+  }
+
+  updateLaundry(dt) {
+    const nt = this.night;
+    if (!nt) return;
+    if (nt.stage === 'washing') {
+      nt.t -= dt;
+      if (nt.t <= 0) {
+        nt.stage = 'locked';
+        nt.t = 40;
+        ui.toast('BEEP. ERROR E03. The door is locked... with everything you own inside. And you are standing in the laundry room.', 'bad', 7000);
+        this.player.char.setMood({ surprised: 1, sad: 0.6 });
+        // and of course, someone else does laundry at midnight
+        this.later(6, () => {
+          if (this.phase !== 'laundry') return;
+          const L = this.level;
+          const e = L.pois.entrance;
+          const n = new NPC(this, this.neighborChar(), { kind: 'resident', name: 'Neighbor (7F-06)', x: e.x, z: e.z, yaw: Math.PI / 2, range: 12, gender: 'male' });
+          n.isNeighbor = true;
+          n.setCarry('laundry');
+          const w = L.interactables.get('washer4');
+          n.plan([
+            { go: { x: w.x, z: w.z } },
+            // unless you're hiding, there's no avoiding this conversation
+            { t: 0.5, call: () => !n.talked && !this.player.hidden && this.playerExposed() && this.residentTalk(n) },
+            { work: true, t: 12, yaw: Math.PI, drop: true },
+            { go: e },
+            { call: () => this.removeNPC(n) },
+          ]);
+          this.npcs.push(n);
+          ui.toast('*DING* ...the elevator. Someone is coming down.', 'bad', 4000);
+        });
+      }
+    } else if (nt.stage === 'locked') {
+      nt.t -= dt;
+      if (nt.t <= 0 && !ui.dialogOpen) {
+        nt.stage = 'done';
+        this.state.eveningShown = true;
+        this.dialog('Wardrobe Disaster', STORY.day1Laundry(this.lw));
+      }
+    }
+  }
+
   // ---- rain and wet clothes ----
   updateWetness(dt) {
     const p = this.player;
     let w = p.wet;
     const umbrella = p.carry === 'umbrella';
-    if (this.outdoors && this.isRaining && !p.bus && !umbrella) w = Math.min(1, w + dt * 0.035);
-    else if (!this.outdoors || !this.isRaining || p.bus) {
+    if (this.openAir && this.isRaining && !p.bus && !umbrella) w = Math.min(1, w + dt * 0.035);
+    else if (!this.openAir || !this.isRaining || p.bus) {
       // drying off: a couple of minutes indoors, faster at home (towel)
       const home = this.phase === 'morning' || this.phase === 'evening';
       w = Math.max(0, w - dt * (home ? 1 / 40 : this.outdoors ? 1 / 240 : 1 / 150));
@@ -1672,7 +1889,7 @@ export class Game {
 
   stealthActive() {
     if (!this.playerExposed() && !this.player.makeshift) return false;
-    return ['work', 'commute_am', 'commute_pm', 'dayoff', 'shop', 'lobby'].includes(this.phase);
+    return ['work', 'commute_am', 'commute_pm', 'dayoff', 'shop', 'lobby', 'hallway', 'pool', 'laundry'].includes(this.phase);
   }
 
   detect(dt) {
@@ -2012,11 +2229,12 @@ export class Game {
   async caught(n) {
     const name = this.profile.name;
     const pg = this.profile.player.gender;
-    if (!n.coworkerEncounter && this.letsItSlide(n, pg)) {
+    if (!n.coworkerEncounter && n.kind !== 'resident' && this.letsItSlide(n, pg)) {
       this.slideLine(n, name);
       if (n.kind === 'pedestrian' || n.kind === 'clerk' || n.kind === 'customer') this.addShame(SHAME.pedestrian * 0.3);
       return;
     }
+    if (n.kind === 'resident') return this.residentTalk(n);
     if (n.kind === 'pedestrian' || n.kind === 'clerk' || (n.kind === 'customer' && this.phase !== 'work')) {
       if (n.coworkerEncounter) return this.weekendEncounter(n);
       n.noticeCooldown = 25;
@@ -2723,13 +2941,70 @@ export class Game {
       if (id === 'door') {
         const ready = m.wash && m.eat && m.dress;
         if (!ready) return { label: 'Get ready first (wash, eat, get dressed)', disabled: true };
-        return { label: this.isWorkday ? 'Leave for work' : 'Head out to run errands', time: 0, run: () => this.enterPhase('lobby', { dir: 'out' }) };
+        return { label: this.isWorkday ? 'Leave for work' : 'Head out to run errands', time: 0, run: () => this.enterPhase('hallway', { dir: 'out', from: 'apt' }) };
       }
       if (id === 'bed') return { label: 'No time to sleep in!', disabled: true };
       return null;
     }
     if (ph === 'evening') {
+      const nt = this.night;
+      if (nt && nt.stage !== 'done') {
+        if (id === 'wardrobe' && nt.stage === 'gather') return { label: 'Gather everything for the wash', time: 1.5, run: () => ((nt.stage = 'carry'), this.setTaskCarry('laundry'), ui.toast('Laundry basket in hand. Down to the basement.', '', 3500)) };
+        if (id === 'door' && nt.stage === 'carry') return { label: 'Take the laundry down to the basement', time: 0, run: () => this.enterPhase('hallway', { dir: 'down', from: 'apt' }) };
+        if (id === 'bed') return { label: 'Do the laundry first', disabled: true };
+        return null;
+      }
       if (id === 'bed') return { label: 'Go to sleep', time: 0, run: () => this.sleep() };
+      return null;
+    }
+    if (ph === 'hallway') {
+      const d = this.bldgDir;
+      if (id === 'aptdoor') {
+        if (d === 'in' || d === 'up') return { label: 'Go inside your apartment', time: 0, run: () => this.enterPhase('evening') };
+        return { label: d === 'down' ? 'Laundry first' : 'No time to go back in!', disabled: true };
+      }
+      if (id === 'elevator') {
+        if (d === 'out') return { label: 'Take the elevator down to the lobby', time: 0, run: () => this.enterPhase('lobby', { dir: 'out' }) };
+        if (d === 'down') return { label: 'Take the elevator to the basement', time: 0, run: () => this.enterPhase('laundry') };
+        return { label: 'Your door is just down the hall', disabled: true };
+      }
+      if (id === 'stairs') {
+        if (d === 'out') return { label: "Take the back stairs down to the residents' pool", time: 0, run: () => this.enterPhase('pool', { dir: 'out', from: 'stairs' }) };
+        return { label: d === 'down' ? 'The laundry room is reached by elevator' : 'Your door is just down the hall', disabled: true };
+      }
+      return null;
+    }
+    if (ph === 'pool') {
+      const out = this.bldgDir === 'out';
+      if (id === 'backstairs') {
+        if (!out) return { label: 'Take the back stairs up to the 7th floor', time: 0, run: () => this.enterPhase('hallway', { dir: 'in', from: 'stairs' }) };
+        return { label: "You're on your way out", disabled: true };
+      }
+      if (id === 'poolgate') {
+        if (out) return { label: 'Out through the gate to the street', time: 0, run: () => this.enterPhase(this.isWorkday ? 'commute_am' : 'dayoff') };
+        return { label: 'Go back out to the street', time: 0, run: () => this.enterPhase(this.streetPhase || 'commute_pm') };
+      }
+      if (id.startsWith('shower')) {
+        return {
+          label: 'Rinse off under the shower', time: 1.5,
+          run: () => {
+            this.player.wet = 1;
+            this.player.wetShown = -1;
+            this.sayswam = true;
+            ui.toast("Soaked. If anyone asks: you were swimming. Convincing enough.", '', 4500);
+          },
+        };
+      }
+      return null;
+    }
+    if (ph === 'laundry') {
+      const nt = this.night || { stage: 'done' };
+      if (id.startsWith('washer') && nt.stage === 'carry') return { label: 'Load everything into the washer', time: 2, run: () => this.startWash(id) };
+      if (id === nt.washer && (nt.stage === 'washing' || nt.stage === 'locked')) return { label: nt.stage === 'locked' ? 'ERROR E03 — the door is locked' : 'Washing...', disabled: true };
+      if (id === 'elevator') {
+        if (nt.stage === 'done') return { label: 'Take the elevator back up', time: 0, run: () => this.enterPhase('hallway', { dir: 'up', from: 'elevator' }) };
+        return { label: "Your clothes are still in the machine", disabled: true };
+      }
       return null;
     }
     if (ph === 'lobby') {
@@ -2740,7 +3015,7 @@ export class Game {
       }
       if (id === 'elevator' || id === 'elevator2') {
         if (out) return { label: 'No time to go back up!', disabled: true };
-        return { label: 'Take the elevator up to your apartment', time: 0, run: () => this.enterPhase('evening') };
+        return { label: 'Take the elevator up to your floor', time: 0, run: () => this.enterPhase('hallway', { dir: 'in', from: 'elevator' }) };
       }
       if (id === 'mailbox') return { label: 'Check your mailbox', time: 1, run: () => ui.toast(pick(['Just bills.', 'A pizza coupon.', 'A catalog... full of pants. How cruel.', 'Nothing today.']), '', 3000) };
       return null;
@@ -2754,6 +3029,11 @@ export class Game {
         return { label: `${line.name} stop: ${it.stop.name} — next bus in ~${Math.max(1, Math.round(eta))}s`, disabled: true };
       }
       if (ph === 'commute_am' && id === 'workdoor') return { label: `Go inside ${this.job.workplaceName}`, time: 0, run: () => this.enterPhase('work') };
+      if (id === 'poolgate') {
+        if (ph === 'commute_am') return { label: "The residents' pool gate", disabled: true };
+        if (ph === 'dayoff' && this.errands.some((e) => !e.done)) return { label: 'Finish your errands first', disabled: true };
+        return { label: "Slip in through the residents' pool gate (back way)", time: 0, run: () => ((this.streetPhase = ph), this.enterPhase('pool', { dir: 'in', from: 'gate' })) };
+      }
       if (ph === 'commute_pm' && id === 'homedoor') return { label: 'Go into Maple Court Apartments', time: 0, run: () => ((this.streetPhase = 'commute_pm'), this.enterPhase('lobby', { dir: 'in' })) };
       if (ph === 'dayoff') {
         if (id === 'homedoor') {
@@ -3081,6 +3361,7 @@ export class Game {
     const st = this.state;
     st.day++;
     st.shame = Math.max(0, st.shame - SHAME.sleep);
+    this.night = null;
     for (const c of st.cw) c.playing = false;
     this.enterPhase('morning');
   }
@@ -3127,7 +3408,18 @@ export class Game {
       if (this.celestiChar) return get('celesti');
       return !m.wash ? get('sink') : !m.eat ? get('kitchen') : !m.dress ? get('wardrobe') : get('door');
     }
-    if (ph === 'evening') return get('bed');
+    if (ph === 'evening') {
+      const nt = this.night;
+      if (nt && nt.stage === 'gather') return get('wardrobe');
+      if (nt && nt.stage === 'carry') return get('door');
+      return get('bed');
+    }
+    if (ph === 'hallway') return this.bldgDir === 'out' || this.bldgDir === 'down' ? get('elevator') : get('aptdoor');
+    if (ph === 'pool') return this.bldgDir === 'out' ? get('poolgate') : get('backstairs');
+    if (ph === 'laundry') {
+      const nt = this.night || { stage: 'done' };
+      return nt.stage === 'carry' ? get('washer2') : nt.stage === 'done' ? get('elevator') : get(nt.washer);
+    }
     if (ph === 'lobby') return this.lobbyDir === 'out' ? get('lobbydoor') : get('elevator');
     if (this.player.bus) return null;
     if (ph === 'commute_am') return get('workdoor');
@@ -3176,7 +3468,7 @@ export class Game {
     const st = this.state;
     const ph = this.phase;
     const wd = WEEKDAYS[weekday(st.day)];
-    const titles = { lobby: 'Building lobby', morning: 'Morning', commute_am: 'Commute to work', work: 'At work', commute_pm: 'Commute home', evening: 'Evening', dayoff: 'Day off', shop: 'Errands' };
+    const titles = { hallway: '7th floor', pool: "Residents' pool", laundry: 'Basement laundry room', lobby: 'Building lobby', morning: 'Morning', commute_am: 'Commute to work', work: 'At work', commute_pm: 'Commute home', evening: 'Evening', dayoff: 'Day off', shop: 'Errands' };
     ui.set('hud-day', `Day ${st.day} · ${wd} · ${esc(titles[ph] || '')}`);
     let time = fmtClock(this.clock);
     if (ph === 'work') {
@@ -3200,7 +3492,13 @@ export class Game {
     } else if (p.bus) obj = 'Riding the bus. Get off near your destination (walk to the front door when it stops).';
     else if (ph === 'commute_am') obj = `Get to ${this.job.workplaceName}`;
     else if (ph === 'commute_pm') obj = 'Get home to Maple Court Apartments';
-    else if (ph === 'evening') obj = 'Go to bed';
+    else if (ph === 'evening') obj = this.night?.stage === 'gather' ? 'Gather your laundry from the wardrobe' : this.night?.stage === 'carry' ? 'Take the laundry down to the basement' : 'Go to bed';
+    else if (ph === 'hallway') obj = this.bldgDir === 'out' ? 'Head down: elevator to the lobby, or back stairs to the pool' : this.bldgDir === 'down' ? 'Take the elevator to the basement' : 'Get to your door (7F-05)';
+    else if (ph === 'pool') obj = this.bldgDir === 'out' ? 'Out through the gate' : 'Take the back stairs up';
+    else if (ph === 'laundry') {
+      const nt = this.night || { stage: 'done' };
+      obj = nt.stage === 'carry' ? 'Load a washer' : nt.stage === 'washing' ? `Wait for the wash (${Math.ceil(nt.t)}s)` : nt.stage === 'locked' ? 'ERROR E03... wait for the door to release' : 'Head back upstairs';
+    }
     else if (ph === 'lobby') obj = this.lobbyDir === 'out' ? 'Go out through the front door' : 'Take the elevator up to your apartment';
     else if (ph === 'dayoff') {
       if (this.dog) obj = 'Catch the dog that stole your bag!';

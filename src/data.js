@@ -178,6 +178,12 @@ export const STORY = {
     `You made it home! You head straight for the wardrobe to grab a fresh pair of ${lw}...\n\n` +
     `...and find a puddle. The washing machine leaked overnight and flooded the closet. Every last pair of pants and every skirt you own is soaked, mildewed and ruined.\n\n` +
     `Payday isn't for a while. Until then, you'll have to get by just like this.`,
+  day1Home: (lw) =>
+    `You made it home. Every scrap of clothing from today is going straight in the wash, along with the rest of the hamper.\n\n` +
+    `The laundry room is in the basement. It's late. Nobody will be down there at this hour... right?`,
+  day1Laundry: (lw) =>
+    `BEEP. The door finally releases.\n\nYou pull out the first shirt... and freeze. Something blue went in with everything else. Every blouse is blotched, and every last pair of ${lw} has shrunk to doll size, tangled into one hopeless knot.\n\n` +
+    `That was the whole wardrobe. Payday isn't for a while. Until then, you'll have to get by just like this.`,
   morningNoClothes: `The wardrobe still holds nothing for your legs. Tops, yes. Pants or skirts? Not a single one.\n\nDeep breath. You can do this.`,
   celesti: (name, celestiName) => [
     [`Something's wrong...`, `${name} wakes with a start. There's a rustle of feathers in the living room... and the sound of someone humming.\n\nSomeone is in the apartment.`],

@@ -4,7 +4,7 @@ A 3D workplace stealth comedy for Windows. Import your own VRoid / VRM character
 
 ## The story
 1. **Monday**: wake up, get ready and commute to work dressed normally. During your first task, a wardrobe mishap that fits the task (a printer jam, a spilled pot of coffee, a dish sprayer...) takes your pants or skirt.
-2. **Monday evening**: the rest of your wardrobe turns out to be ruined. From now on you go everywhere without legwear.
+2. **Monday night**: you take everything down to the basement laundry room. The machine locks with all your clothes inside, your neighbor comes down to do laundry, and when the door finally opens, your whole wardrobe is ruined. From now on you go everywhere without legwear.
 3. **The morning after your third shift**: you wake with a start; Celesti, the angelic messenger of **Hiphtia, goddess of hips**, appears in your apartment. You've been "blessed", and she's very sorry about it. From now on, the coworker you spend the most time near each workday gets blessed the next workday.
 4. **Win** when every coworker shares the blessing.
 
@@ -51,7 +51,7 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 - **Blessed coworkers** never report you, but blessed friends can't help you anymore either.
 
 ## Getting around town
-The city is a 4×4 grid of blocks with named streets, parks and shops, full of hedges, kiosks, phone booths, food carts, parked cars and benches. You leave and come home through your building's lobby. You need to be at work by 9:00 AM. A **minimap and compass** point to your objective.
+The city is a 4×4 grid of blocks with named streets, parks and shops, full of hedges, kiosks, phone booths, food carts, parked cars and benches. You leave and come home through your building: the elevator and the lobby (with a doorman), or the back stairs and the residents' pool, through a side gate on the street. The pool showers soak you, which makes "I was swimming" a much better excuse. Watch out for your neighbor in 7F-06, who has a habit of opening his door at exactly the wrong moment. You need to be at work by 9:00 AM. A **minimap and compass** point to your objective.
 - **Weather**: sunny, cloudy or rain. Rain (and splashing cars) soaks your clothes with a wet sheen; parts you marked turn see-through. An umbrella keeps you dry.
 - **Buses**: 3 lines (Red Ring, Blue Crosstown, Green Midtown). They loop on fixed routes and stop at every stop. None of them goes straight to your job.
 - **Rush hour** buses are packed, so you may have to stand.

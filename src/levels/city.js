@@ -105,6 +105,7 @@ export function buildCity({ workplaceName = 'Work', jobColor = '#273c75' } = {})
   // ---- doors
   const door = (id, s) => s && L.interactable(id, s.door.x, s.door.z, s.label, { r: 1.8 });
   door('homedoor', L.places.home);
+  door('poolgate', L.places.poolgate);
   door('workdoor', L.places.work);
   for (const k of Object.keys(PLACES)) door('place:' + k, L.places[k]);
   L.spawnHome = { ...L.places.home.out };
@@ -243,6 +244,23 @@ function placeSpecial(L, kind, s, ca, ctx) {
     door: { x: fx + nx * 1.0, z: fz + nz * 1.0 },
     out: { x: fx + nx * 2.2, z: fz + nz * 2.2, yaw },
   };
+  if (kind === 'home') {
+    // the residents' pool gate, a few meters along the same face: a back way in
+    const ax = s.axis === 'x' ? 1 : 0;
+    const az = s.axis === 'x' ? 0 : 1;
+    const gx = fx + ax * 5.5;
+    const gz = fz + az * 5.5;
+    L.box(gx + nx * 0.05, gz + nz * 0.05, s.axis === 'x' ? 1.8 : 0.1, s.axis === 'x' ? 0.1 : 1.8, 1.9, '#2c3e50', { collide: false });
+    const gsign = textPlane("Residents' Pool", { bg: '#1e3799', height: 0.35 });
+    gsign.position.set(gx + nx * 0.12, 2.3, gz + nz * 0.12);
+    gsign.rotation.y = yaw;
+    L.add(gsign);
+    L.places.poolgate = {
+      label: "Residents' pool gate (back way into Maple Court)",
+      door: { x: gx + nx * 1.0, z: gz + nz * 1.0 },
+      out: { x: gx + nx * 2.2, z: gz + nz * 2.2, yaw },
+    };
+  }
 }
 
 function buildPark(L, x0, x1, z0, z1, rng) {
