@@ -108,3 +108,19 @@ label { display: block; font-size: 13px; color: #b8bdd6; margin: 10px 0 4px; }
 #compass .cmark.major { font-size: 15px; font-weight: 800; color: #fff; top: 7px; }
 #compass .cobj { position: absolute; top: 4px; transform: translateX(-50%); color: #55efc4; font-size: 14px; font-weight: 800; text-align: center; line-height: 1; }
 #compass .cobj small { display: block; font-size: 10px; font-weight: 600; }
+
+/* chat log */
+#chatlog { position: absolute; left: 16px; bottom: 44px; width: 400px; max-width: 40vw; font-size: 13px; pointer-events: none; }
+#chat-lines { max-height: 150px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; }
+#chatlog .cl { background: rgba(10,10,20,.55); padding: 3px 8px; border-radius: 6px; line-height: 1.35; animation: tin .2s ease-out; }
+#chatlog .cl.old { opacity: .55; }
+#chatlog .cl b { color: #ffd36e; }
+#chatlog .cl.you b { color: #ff7eb6; }
+#chatlog .cl.narr { color: #c8c8d8; font-style: italic; }
+#chatlog .cl .t { color: #888; font-size: 11px; margin-right: 6px; }
+#chat-hint { font-size: 11px; color: #999; margin-top: 3px; }
+#chatlog.open { pointer-events: auto; width: 560px; }
+#chatlog.open #chat-lines { max-height: 60vh; overflow-y: auto; background: rgba(10,10,20,.7); padding: 6px; border-radius: 8px; justify-content: flex-start; }
+#chatlog.open .cl.old { opacity: 1; }
+/* full map */
+#fullmap { position: absolute; inset: 5vh 5vw; width: 90vw; height: 90vh; border-radius: 14px; box-shadow: 0 6px 40px rgba(0,0,0,.7); z-index: 5; }

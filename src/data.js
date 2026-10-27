@@ -52,6 +52,7 @@ export const JOBS = {
       { name: 'Reboot the server', steps: [{ tag: 'server', label: 'Reboot {label}', time: 4 }] },
       { name: 'Retrieve old files', steps: [{ tag: 'archivebox', label: 'Dig through {label}', time: 3, carry: 'box' }, { tag: 'officedesk', label: 'Bring the files to {label}', time: 1.5, drop: true }] },
       { name: 'Greet a client', steps: [{ tag: 'reception', label: 'Greet the client at {label}', time: 2.5 }] },
+      { name: 'Dispose of outdated documents', steps: [{ tag: 'cabinet', label: 'Pull the outdated files from {label}', time: 2, carry: 'box' }, { tag: 'shredder', label: 'Feed them into {label}', time: 3.5, drop: true }] },
     ],
   },
   restaurant: {
@@ -219,6 +220,7 @@ export const REPORT_REASONS = {
   complaints: () => `I've had THREE customer complaints today. All of them about the same thing.`,
   manager: () => `I saw you. With my own eyes. I can't unsee it.`,
   late: (mins) => `You were ${mins} minutes late this morning. And then you show up... like that.`,
+  slacking: (n) => `Yesterday you left ${n} requests unfinished. People noticed. And then there's... the other thing.`,
   weekend: (who) => `${who} told me they saw you around town over the weekend. Dressed like... that. People talk, you know.`,
 };
 
@@ -423,6 +425,8 @@ export const DEFAULT_SETTINGS = {
   celestiName: 'Celesti',
   hourSeconds: 240,
   shameScale: 1,
+  detectScale: 1,
+  sleepRecovery: true,
   exprMax: 0.7,
   minimap: true,
 };

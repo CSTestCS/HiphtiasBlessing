@@ -13,6 +13,8 @@ export const ui = {
   },
 
   setScreen(html, transparent = false) {
+    // menus need the mouse cursor back
+    if (html && document.pointerLockElement) document.exitPointerLock();
     this.screen.innerHTML = html;
     this.screen.classList.toggle('hidden', !html);
     this.screen.classList.toggle('transparent', transparent);
@@ -57,6 +59,30 @@ export const ui = {
       });
       $('dialog').classList.remove('hidden');
     });
+  },
+
+  /** Chat log: everything said in the game. who: speaker name (or null for narration). */
+  chat(who, text, opts = {}) {
+    const box = $('chat-lines');
+    if (!box || !text) return;
+    const el = document.createElement('div');
+    el.className = 'cl' + (who ? '' : ' narr') + (opts.you ? ' you' : '');
+    const t = opts.time ? `<span class="t">${esc(opts.time)}</span>` : '';
+    el.innerHTML = t + (who ? `<b>${esc(who)}:</b> ` : '') + esc(text).replace(/\n+/g, ' ');
+    box.appendChild(el);
+    while (box.children.length > 200) box.firstChild.remove();
+    // older lines fade a little
+    const n = box.children.length;
+    for (let i = Math.max(0, n - 12); i < n; i++) box.children[i].classList.toggle('old', i < n - 4);
+    if ($('chatlog').classList.contains('open')) box.scrollTop = box.scrollHeight;
+  },
+
+  toggleChat() {
+    const c = $('chatlog');
+    c.classList.toggle('open');
+    $('chat-hint').textContent = c.classList.contains('open') ? 'L: close chat log' : 'L: expand chat log';
+    const box = $('chat-lines');
+    box.scrollTop = box.scrollHeight;
   },
 
   fade(on) {

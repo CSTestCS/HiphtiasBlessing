@@ -31,6 +31,11 @@ export function buildHallway() {
     L.label(`7F-0${i * 2 + 1}`, x, 2.3, -1.38, 0, { height: 0.14, bg: '#3e2723' });
     L.label(`7F-0${i * 2 + 2}`, x, 2.3, 1.38, Math.PI, { height: 0.14, bg: '#3e2723' });
   });
+  L.pois.doors = [];
+  doors.forEach((x, i) => {
+    if (i !== 2) L.pois.doors.push({ x, z: -0.95, yaw: 0, apt: `7F-0${i * 2 + 1}` });
+    L.pois.doors.push({ x, z: 0.95, yaw: Math.PI, apt: `7F-0${i * 2 + 2}` });
+  });
   L.interactable('aptdoor', 2, -0.9, 'Your apartment (7F-05)', { r: 1.2 });
   L.label('HOME', 2, 2.55, -1.36, 0, { height: 0.16, bg: '#00b894' });
   L.pois.neighborDoor = { x: 2, z: 1.0, yaw: Math.PI };

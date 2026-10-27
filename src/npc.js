@@ -16,6 +16,12 @@ export const angDiff = (a, b) => {
   return d;
 };
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
+const angDiffLocal = (a, b) => {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+};
 
 export class NPC {
   constructor(game, char, o) {
@@ -34,7 +40,7 @@ export class NPC {
     this.yaw = o.yaw || 0;
     this.lookYaw = this.yaw;
     this.baseYaw = this.yaw;
-    this.speed = o.speed || 1.25;
+    this.speed = o.speed || 1.6;
     this.range = o.range || 12;
     this.fov = o.fov || Math.PI; // 180 degrees
     this.eyeH = (char.eyeHeight || 1.5) * 0.98;
@@ -94,6 +100,11 @@ export class NPC {
 
   // ---- activity queue ----------------------------------------------------
   plan(steps) {
+    // let go of a cart if the new plan doesn't involve pushing it
+    if (this.pushing && !(steps[0] && (steps[0].keepPush || steps[0].call))) {
+      this.pushing.holder = null;
+      this.pushing = null;
+    }
     this.steps = steps;
     this.cur = null;
     this.path = [];
@@ -110,7 +121,16 @@ export class NPC {
     }
     const s = this.cur;
     if (s.go) {
-      this.path = this.game.level.findPath(this.x, this.z, s.go.x, s.go.z);
+      const path = this.game.level.findPath(this.x, this.z, s.go.x, s.go.z);
+      if (!path) {
+        // can't get there from here: skip this step instead of walking through walls
+        this.path = [];
+        this.state = 'idle';
+        this.timer = 0.3;
+        this.cur = { t: 0.3 };
+        return;
+      }
+      this.path = path;
       this.state = 'walk';
     } else {
       this.state = s.sit ? 'sit' : s.hide ? 'hiding' : s.work ? 'work' : 'idle';
@@ -261,6 +281,11 @@ export class NPC {
     // sneakers crouch only where it helps: behind low cover or while hiding
     this.crouch = this.sneaking && ((this.lowCover && !moving) || this.state === 'hiding' || (this.lowCover && this.cur && this.cur.go && this.path.length <= 1));
     this.curSpeed += ((moving ? this.speed * (this.speedMul || 1) * (this.crouch ? 0.55 : 1) : 0) - this.curSpeed) * Math.min(1, dt * 10);
+    if (this.pushing && moving) {
+      const m = this.pushing;
+      const off = 0.4 + m.hd + 0.05;
+      g.level.placeMovable(m, this.x + Math.sin(this.yaw) * off, this.z + Math.cos(this.yaw) * off, this.yaw + Math.PI / 2);
+    }
     this.char.root.position.set(this.x, 0, this.z);
     this.char.root.rotation.y = this.yaw;
     // off-screen characters keep thinking but skip skinning/animation work
@@ -268,7 +293,10 @@ export class NPC {
       speed: this.curSpeed,
       sit: this.sitting && !moving,
       crouch: this.crouch,
-      carry: !!this.carry || (this.working && !moving),
+      carry: !!this.carry || !!this.pushing,
+      work: this.working && !moving && !this.carry,
+      talk: this.bubbleT > 0 || this.state === 'talk',
+      headYaw: Math.max(-1, Math.min(1, angDiffLocal(this.lookYaw, this.yaw))),
       cover: !this.char.legwearOn,
     });
     if (this.cone && this.cone.visible) {

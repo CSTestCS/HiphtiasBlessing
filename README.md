@@ -3,6 +3,8 @@
 A 3D workplace stealth comedy for Windows. Import your own VRoid / VRM characters for yourself, your coworkers, your manager, the townsfolk and the angel Celesti. Then survive work, commutes and weekends after a wardrobe mishap leaves you without pants or a skirt.
 
 ## The story
+Events play out differently every time: people's reactions (concern, flirting, confusion, stunned silence, laughter, disapproval), who you run into, and how the rest of your wardrobe gets ruined on the first night.
+
 1. **Monday**: wake up, get ready and commute to work dressed normally. During your first task, a wardrobe mishap that fits the task (a printer jam, a spilled pot of coffee, a dish sprayer...) takes your pants or skirt.
 2. **Monday night**: you take everything down to the basement laundry room. The machine locks with all your clothes inside, your neighbor comes down to do laundry, and when the door finally opens, your whole wardrobe is ruined. From now on you go everywhere without legwear.
 3. **The morning after your third shift**: you wake with a start; Celesti, the angelic messenger of **Hiphtia, goddess of hips**, appears in your apartment. You've been "blessed", and she's very sorry about it. From now on, the coworker you spend the most time near each workday gets blessed the next workday.
@@ -13,7 +15,7 @@ The week runs Monday to Friday at work. Saturdays and Sundays are **days off wit
 ## Main menu
 - **Continue / Load Game**: multiple save slots, each its own game. Coworkers from your other saves walk around town as named townsfolk.
 - **New Game**: create your character (name, gender, body, legwear, colors or your own .vrm), pick one of 7 jobs, and set up 4–12 coworkers plus a manager.
-- **Settings**: length of an in-game hour (default 4 real minutes), shame buildup intensity, facial expression strength, minimap on/off, bundled townsfolk on/off.
+- **Settings**: length of an in-game hour (default 4 real minutes), shame buildup intensity, how fast people notice you, whether sleep reduces shame, facial expression strength, minimap on/off, bundled townsfolk on/off.
 - **Civilian Models**: 4 bundled townsperson models are used by default. Import more .vrm templates (with a gender). Every NPC gets random skin, hair, eye and clothing colors.
 - **Celesti's Model**: the bundled Celesti model is used by default. Import your own .vrm (a halo and wings are added) and set her name.
 
@@ -30,6 +32,10 @@ Office Worker, Restaurant Server, Retail Worker, Hotel Staff, Library Assistant,
 
 Each coworker has a role (host, line cook, cashier, housekeeper...) with a home station and the tasks that go with it, and they pick nearby stations instead of crossing the building.
 
+**The workday** runs 9:00 to 5:00 on the clock (speed set by the in-game hour length). Some coworkers come in late, some leave early, some stay late. At noon the break room fills up and some people head out for lunch. Work comes in as requests: coworkers and the manager walk over to ask you (or leave a note if they can't find you), the phone rings, orders print out. Tab switches between requests; clock out after 5:00. A security guard watches the front entrance.
+
+**Pushable cover**: whiteboards and carts can be pushed around (E). Keep one between you and anyone looking. Coworkers move carts around too.
+
 ## Rules
 - **Shame** rises when people outside work see you and when you're caught at work. Fill it and you lose. Sleeping lowers it. The Settings screen scales how fast it builds.
 - **Makeshift skirts**: tie a carried box, newspaper, folder, tote bag, towel or tablecloth on with F. Each fails in its own way: boxes crack, paper blows away, bags tear, cloth snags on chairs. People find it odd, so it still drains Composure.
@@ -38,6 +44,7 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 - **Composure** drains when you crouch or run in plain view at work. At zero, someone comes over to check on you.
 - **Stamina** limits running.
 - **Coworker personalities** when they catch you:
+  - Allies run real distractions: they head somewhere away from you and make a scene, and everyone nearby walks over to look. If the manager is about to spot you, an ally may pull them away. A coworker who's playing along stays near you now and then and warns you when someone's coming.
   - *Best Friend*: becomes an ally. Takes turns lending you their legwear (90 seconds at a time, swapped somewhere private) while they sneak around in your place, or causes a distraction.
   - *Sympathetic*: becomes an ally and causes distractions.
   - *Neutral*: lets it slide once, then reports you.
@@ -52,7 +59,8 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 
 ## Getting around town
 The city is a 4×4 grid of blocks with named streets, parks and shops, full of hedges, kiosks, phone booths, food carts, parked cars and benches. You leave and come home through your building: the elevator and the lobby (with a doorman), or the back stairs and the residents' pool, through a side gate on the street. The pool showers soak you, which makes "I was swimming" a much better excuse. Watch out for your neighbor in 7F-06, who has a habit of opening his door at exactly the wrong moment. You need to be at work by 9:00 AM. A **minimap and compass** point to your objective.
-- **Weather**: sunny, cloudy or rain. Rain (and splashing cars) soaks your clothes with a wet sheen; parts you marked turn see-through. An umbrella keeps you dry.
+- **Weather**: sunny, cloudy or rain, and it can change during the day. Hold a carried item over your head with T to keep the rain off (it stops covering your front).
+  Rain (and splashing cars) soaks your clothes with a wet sheen; parts you marked (tops on the bundled models) turn see-through. An umbrella keeps you dry.
 - **Buses**: 3 lines (Red Ring, Blue Crosstown, Green Midtown). They loop on fixed routes and stop at every stop. None of them goes straight to your job.
 - **Rush hour** buses are packed, so you may have to stand.
 - **Boarding**: the driver always notices you, and so does everyone you pass in the aisle.
@@ -70,8 +78,11 @@ The city is a 4×4 grid of blocks with named streets, parks and shops, full of h
 | C / Ctrl | Crouch (toggle / hold) |
 | E | Interact (hold for timed actions), pick up items, sit, hide, board or leave buses |
 | G | Put down the carried item |
+| T | Hold the carried item over your head (rain) |
+| Tab | Switch work request |
 | F | Wear the carried item as a makeshift skirt (it will fail, sooner or later) |
-| M | Minimap and compass on/off |
+| M | Full map (minimap on/off is in Settings) |
+| L | Expand the chat log (everything that was said) |
 | Mouse wheel | Zoom |
 | Esc | Pause |
 | F11 | Fullscreen |

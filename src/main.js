@@ -35,7 +35,7 @@ async function putSettings(s) {
 function bundledBody(gender, older = false) {
   const list = BUNDLED.bodies.filter((b) => !gender || b.gender === gender);
   const b = list.find((x) => /old/i.test(x.asset) === older) || list[0] || BUNDLED.bodies[0];
-  return { asset: b.asset, title: b.title, tintable: true, legwearMaterials: null, underwearOverlay: false, wetMaterials: [] };
+  return { asset: b.asset, title: b.title, tintable: true, legwearMaterials: null, underwearOverlay: false, wetMaterials: null };
 }
 
 function newOutfit(legwearType = 'pants', colors = randomColors(), gender = null, older = false) {
@@ -288,6 +288,10 @@ async function showSettings() {
       <label>Shame buildup: <b id="v-shame"></b></label>
       <input type="range" id="s-shame" min="0.25" max="2" step="0.05" value="${st.shameScale}" />
       <p class="note">Multiplies all shame gained.</p>
+      <label>How fast people notice you: <b id="v-detect"></b></label>
+      <input type="range" id="s-detect" min="0.25" max="2" step="0.05" value="${st.detectScale ?? 1}" />
+      <p class="note">How quickly someone who can see your underwear realizes what they're looking at.</p>
+      <label><input type="checkbox" id="s-sleep" ${st.sleepRecovery !== false ? 'checked' : ''}/> A night's sleep reduces Shame</label>
       <label>Facial expression strength: <b id="v-expr"></b></label>
       <input type="range" id="s-expr" min="0" max="1" step="0.05" value="${st.exprMax}" />
       <p class="note">Maximum weight of VRoid facial expressions (blend shapes) used to show how characters feel.</p>
@@ -300,19 +304,22 @@ async function showSettings() {
     s.querySelector('#v-hour').textContent = `${Math.floor(h / 60)}m ${h % 60}s`;
     s.querySelector('#v-shame').textContent = `×${(+s.querySelector('#s-shame').value).toFixed(2)}`;
     s.querySelector('#v-expr').textContent = `${Math.round(+s.querySelector('#s-expr').value * 100)}%`;
+    s.querySelector('#v-detect').textContent = `×${(+s.querySelector('#s-detect').value).toFixed(2)}`;
   };
   fmt();
   const save = async () => {
     st.hourSeconds = +s.querySelector('#s-hour').value;
     st.shameScale = +s.querySelector('#s-shame').value;
     st.exprMax = +s.querySelector('#s-expr').value;
+    st.detectScale = +s.querySelector('#s-detect').value;
+    st.sleepRecovery = s.querySelector('#s-sleep').checked;
     st.minimap = s.querySelector('#s-map').checked;
     st.useBundledCivilians = s.querySelector('#s-civ').checked;
     await putSettings(st);
   };
   s.querySelectorAll('input').forEach((el) => (el.oninput = el.onchange = () => (fmt(), save())));
   s.querySelector('#s-reset').onclick = async () => {
-    Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, minimap: true, useBundledCivilians: true });
+    Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, detectScale: 1, sleepRecovery: true, minimap: true, useBundledCivilians: true });
     await putSettings(st);
     showSettings();
   };
@@ -665,7 +672,7 @@ function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator) {
     if (v === 'simple') o.model = null;
     else if (v.startsWith('asset:')) {
       const b = BUNDLED.bodies.find((x) => x.asset === v.slice(6));
-      o.model = { asset: b.asset, title: b.title, tintable: true, legwearMaterials: null, underwearOverlay: false, wetMaterials: [] };
+      o.model = { asset: b.asset, title: b.title, tintable: true, legwearMaterials: null, underwearOverlay: false, wetMaterials: null };
     }
     previewTarget = target;
     rerender();

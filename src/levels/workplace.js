@@ -380,6 +380,26 @@ function generate(jobId, job, { coworkers = [], seed = 1 } = {}) {
       }
     }
   }
+  // pushable whiteboards and carts in rooms and on the shop floor
+  const freeSpot = (x0, x1, z0, z1) => {
+    for (let t = 0; t < 25; t++) {
+      const x = x0 + 1 + rnd() * Math.max(0.1, x1 - x0 - 2);
+      const z = z0 + 1 + rnd() * Math.max(0.1, z1 - z0 - 2);
+      if (!L.blockedPoint(x, z, 0.95) && !L.movables.some((m) => Math.hypot(m.x - x, m.z - z) < 2)) return { x, z };
+    }
+    return null;
+  };
+  for (const rm of L.rooms) {
+    if (!['meeting', 'office', 'storage', 'break', 'mail', 'copy', 'archive', 'kitchen', 'laundry', 'stockroom', 'receiving', 'linen', 'study', 'workroom', 'packing', 'shipping', 'pantry', 'returns', 'guestroom', 'lockers'].includes(rm.type) || rnd() > 0.55) continue;
+    const pt = freeSpot(rm.x0, rm.x1, rm.z0, rm.z1);
+    if (pt) L.movable(['meeting', 'office'].includes(rm.type) || (jobId === 'office' && rnd() < 0.6) ? 'whiteboard' : 'cart', pt.x, pt.z, rnd() * Math.PI);
+  }
+  const floorPts = L.pois.customerSpots.concat(L.pois.wander);
+  for (let k = 0; k < 3 && floorPts.length; k++) {
+    const b = floorPts[Math.floor(rnd() * floorPts.length)];
+    const pt = freeSpot(b.x - 3, b.x + 3, b.z - 3, b.z + 3);
+    if (pt) L.movable(jobId === 'office' ? 'whiteboard' : 'cart', pt.x, pt.z, rnd() * Math.PI);
+  }
   L.finalize();
   L.buildNav(0.8);
   return L;
@@ -419,8 +439,7 @@ function corridorDecor(L, cr, doors, rnd) {
     else if (r < 0.52) {
       L.box(x, z, alongX ? 0.4 : 0.4, alongX ? 0.4 : 0.4, 1.2, '#74b9ff'); // water cooler
     } else if (r < 0.68) {
-      L.box(x, z, w, d, 0.85, '#7f8c8d'); // cart
-      L.pickup(rnd() < 0.5 ? 'box' : 'laundry', x, z, 0.85);
+      L.movable('cart', x, z, alongX ? 0 : Math.PI / 2); // a cart anyone can push around
     } else if (r < 0.8) {
       L.box(x, z, alongX ? 1.4 : 0.45, alongX ? 0.45 : 1.4, 0.45, '#8d6e63', { occlude: false });
       L.seat(x, z, alongX ? (flip ? 0 : Math.PI) : flip ? Math.PI / 2 : -Math.PI / 2, 'hallway bench');

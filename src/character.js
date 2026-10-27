@@ -305,60 +305,239 @@ class CharacterBase {
     }
   }
 
-  /** a: {speed, crouch, sit, carry, lookDown} */
+  /**
+   * Procedural animation. a: {speed, crouch, sit, carry, lookDown, headYaw, talk, work, busy}
+   * Layers: locomotion (walk/run/crouch-walk), idle behaviors, work and talk gestures, sitting variants,
+   * and mood posture. Bone rotations are blended so switching between them looks smooth.
+   */
   animate(dt, a) {
     const speed = a.speed || 0;
     this.crouchS = damp(this.crouchS, a.crouch ? 1 : 0, 10, dt);
     this.sitS = damp(this.sitS, a.sit ? 1 : 0, 8, dt);
     this.carryS = damp(this.carryS, a.carry ? 1 : 0, 10, dt);
-    const amp = Math.min(speed / 1.6, 1.4);
-    this.phase += dt * speed * 3.4;
+    this.runS = damp(this.runS || 0, speed > 3 ? 1 : 0, 6, dt);
+    this.moveS = damp(this.moveS || 0, speed > 0.15 ? 1 : 0, 8, dt);
+    const amp = Math.min(speed / 1.8, 1.25);
+    this.phase += dt * (speed * 3.1 + (speed > 0.1 ? 1.2 : 0));
     const s = Math.sin(this.phase);
+    const cph = Math.cos(this.phase);
     const c = this.crouchS * (1 - this.sitS);
     const sit = this.sitS;
     const carry = this.carryS;
-    const set = (n, x = 0, y = 0, z = 0) => {
-      const b = this.bone(n);
-      if (b) b.rotation.set(x, y, z);
-    };
+    const run = this.runS;
+    const move = this.moveS;
+    const t = performance.now() / 1000;
+    const seed = this.root.id * 1.37;
+    const sad = Math.min(1, (this.moodS.sad || 0) + (this.moodS.surprised || 0) * 0.4);
+    const happy = this.moodS.happy || 0;
+    const surprised = this.moodS.surprised || 0;
+    const T = {};
+    const put = (n, x = 0, y = 0, z = 0) => (T[n] = [x, y, z]);
+
+    // ---- pick an idle behavior now and then (only standing still with free hands)
+    const idleOK = speed < 0.15 && sit < 0.5 && !a.work && !a.talk && !a.carry && c < 0.5;
+    if (!this.idle || (this.idle.t -= dt) <= 0) {
+      const kinds = ['breathe', 'breathe', 'shift', 'look', 'phone', 'armsCross', 'clasp', 'scratch', 'stretch', 'fidget', 'look', 'shift'];
+      const k = idleOK ? kinds[Math.floor(Math.random() * kinds.length)] : 'breathe';
+      this.idle = { kind: k, t: k === 'breathe' ? 2 + Math.random() * 4 : 3 + Math.random() * 5, side: Math.random() < 0.5 ? 1 : -1 };
+      this.sitKind = Math.random() < 0.5 ? 'lap' : Math.random() < 0.5 ? 'lean' : 'crossed';
+    }
+    const idle = idleOK ? this.idle.kind : 'breathe';
+    const side = this.idle.side;
+
+    // ---- legs
     const crouchThigh = -1.15 * c;
     const crouchKnee = 1.9 * c;
     const sitThigh = -1.5 * sit;
     const sitKnee = 1.5 * sit;
-    const swing = 0.55 * amp * (1 - sit);
-    const lKnee = Math.max(0, -Math.cos(this.phase)) * 0.9 * amp;
-    const rKnee = Math.max(0, Math.cos(this.phase)) * 0.9 * amp;
-    set('leftUpperLeg', crouchThigh + sitThigh + s * swing, 0, 0);
-    set('rightUpperLeg', crouchThigh + sitThigh - s * swing, 0, 0);
-    set('leftLowerLeg', crouchKnee + sitKnee + lKnee * (1 - sit), 0, 0);
-    set('rightLowerLeg', crouchKnee + sitKnee + rKnee * (1 - sit), 0, 0);
-    set('leftFoot', -0.4 * c, 0, 0);
-    set('rightFoot', -0.4 * c, 0, 0);
-    const t = performance.now() / 1000;
-    const shy = Math.min(1, (this.moodS.sad || 0) + (this.moodS.surprised || 0) * 0.5);
-    set('spine', 0.35 * c + 0.05 * amp + 0.05 * shy, Math.sin(this.phase) * 0.06 * amp, 0);
-    set('chest', Math.sin(t * 1.8 + this.root.id) * 0.02, 0, 0);
-    set('neck', -0.15 * c, 0, 0);
-    set('head', -0.1 * c + 0.12 * shy + (a.lookDown ? 0.3 : 0), a.headYaw || 0, 0);
-    // arms: relaxed at the sides, swing while walking, forward when carrying/working
+    const stride = (0.5 + 0.25 * run) * amp * (1 - sit);
+    const lift = 0.9 + 0.6 * run;
+    const lKnee = Math.max(0, -cph) * lift * amp + 0.08 * amp;
+    const rKnee = Math.max(0, cph) * lift * amp + 0.08 * amp;
+    // idle weight shift: one hip drops, that knee bends a little
+    const shift = idle === 'shift' || idle === 'fidget' ? side * (0.5 + 0.5 * Math.sin(t * 0.7 + seed)) : side * 0.25 * (1 - move);
+    const fidget = idle === 'fidget' ? Math.max(0, Math.sin(t * 4 + seed)) * 0.25 : 0;
+    const sitCross = sit * (this.sitKind === 'crossed' ? 1 : 0);
+    put('leftUpperLeg', crouchThigh + sitThigh + s * stride - fidget * (side > 0 ? 1 : 0), -0.1 * sitCross, (shift > 0 ? 0.04 : 0) * (1 - move) - 0.25 * sitCross);
+    put('rightUpperLeg', crouchThigh + sitThigh - s * stride - fidget * (side < 0 ? 1 : 0), 0, (shift < 0 ? -0.04 : 0) * (1 - move));
+    put('leftLowerLeg', crouchKnee + sitKnee + lKnee * (1 - sit) + (shift > 0 ? 0.12 : 0) * (1 - move) * (1 - sit) + fidget * 1.5 * (side > 0 ? 1 : 0));
+    put('rightLowerLeg', crouchKnee + sitKnee + rKnee * (1 - sit) + (shift < 0 ? 0.12 : 0) * (1 - move) * (1 - sit) + fidget * 1.5 * (side < 0 ? 1 : 0));
+    // feet roll heel-to-toe while walking
+    put('leftFoot', -0.4 * c + Math.max(0, s) * 0.35 * amp * (1 - sit) - 0.15 * Math.max(0, -s) * amp);
+    put('rightFoot', -0.4 * c + Math.max(0, -s) * 0.35 * amp * (1 - sit) - 0.15 * Math.max(0, s) * amp);
+
+    // ---- torso: lean into runs, sway with steps, slump when sad, bounce when happy
+    const breath = Math.sin(t * 1.6 + seed) * 0.025;
+    const lean = 0.06 * amp + 0.22 * run + 0.35 * c + 0.08 * sad - 0.05 * happy;
+    const sitLean = sit * (this.sitKind === 'lean' ? -0.15 : 0.05);
+    put('spine', lean + sitLean + (idle === 'stretch' ? -0.12 : 0), s * 0.07 * amp * (1 - sit), -shift * 0.05);
+    put('chest', breath + (a.work ? 0.08 : 0), -s * 0.1 * amp * (1 - sit), 0);
+    put('upperChest', breath * 0.5, -s * 0.05 * amp, 0);
+    // shoulders: hunched when sad, a small shrug on surprise
+    const hunch = 0.12 * sad + 0.15 * surprised * (1 - move);
+    put('leftShoulder', 0, 0, hunch);
+    put('rightShoulder', 0, 0, -hunch);
+
+    // ---- head: looks where they look, bobs a little, glances around when idle
+    let headYaw = a.headYaw || 0;
+    let headPitch = -0.1 * c + 0.12 * sad + (a.lookDown ? 0.3 : 0) - 0.05 * run;
+    if (idle === 'look') headYaw += Math.sin(t * 0.9 + seed) * 0.7;
+    if (idle === 'phone') headPitch += 0.45;
+    if (a.work) headPitch += 0.15 + Math.sin(t * 0.8 + seed) * 0.05;
+    if (a.talk) {
+      headPitch += Math.sin(t * 5 + seed) * 0.04;
+      headYaw += Math.sin(t * 1.3 + seed) * 0.08;
+    }
+    if (sit && this.sitKind === 'lean') headPitch -= 0.08;
+    put('neck', -0.15 * c + headPitch * 0.3, headYaw * 0.4, 0);
+    put('head', headPitch * 0.7 + Math.abs(s) * 0.02 * amp, headYaw * 0.6, -shift * 0.03);
+
+    // ---- arms
     const down = this.armDown;
-    const armSwing = s * 0.45 * amp * (1 - carry);
-    const carryFwd = -0.75 * carry;
-    set('leftUpperArm', -armSwing + carryFwd, 0, -down + 0.15 * c + 0.1 * carry);
-    set('rightUpperArm', armSwing + carryFwd, 0, down - 0.15 * c - 0.1 * carry);
-    const elbow = 0.2 + 0.9 * carry;
-    set('leftLowerArm', 0, -elbow, 0);
-    set('rightLowerArm', 0, elbow, 0);
-    const a1 = crouchThigh + sitThigh;
-    const a2 = crouchKnee + sitKnee;
-    const h = this.upperLegLen * Math.cos(a1) + this.lowerLegLen * Math.cos(a2 + a1);
+    const swing = (0.4 + 0.25 * run) * amp * (1 - carry) * (1 - sit);
+    const runElbow = 0.25 + 0.15 * amp + 1.1 * run;
+    let lua = [-s * swing, 0, -down + 0.15 * c];
+    let rua = [s * swing, 0, down - 0.15 * c];
+    let lla = [0, -(runElbow * move + 0.12), 0];
+    let rla = [0, runElbow * move + 0.12, 0];
+    // carrying: both forearms out in front
+    if (carry > 0.01) {
+      const k = carry;
+      lua = [lua[0] * (1 - k) - 0.75 * k, 0, lua[2] + 0.1 * k];
+      rua = [rua[0] * (1 - k) - 0.75 * k, 0, rua[2] - 0.1 * k];
+      lla[1] = lla[1] * (1 - k) - 1.1 * k;
+      rla[1] = rla[1] * (1 - k) + 1.1 * k;
+    }
+    // working: typing / reaching motions
+    if (a.work && !a.carry) {
+      const tk = Math.sin(t * 9 + seed);
+      lua = [-0.25, -0.3, -down + 0.25];
+      rua = [-0.25, 0.3, down - 0.25];
+      lla = [0, -1.25 - tk * 0.08, 0];
+      rla = [0, 1.25 + Math.sin(t * 8.3 + seed) * 0.08, 0];
+      if (Math.sin(t * 0.4 + seed) > 0.6) {
+        // reach out for something on the desk/shelf
+        rua = [-0.9 + Math.sin(t * 2.2) * 0.12, 0.1, down - 0.2];
+        rla = [0, 0.35, 0];
+      }
+    }
+    // sitting: hands on the lap or knees
+    if (sit > 0.5 && !a.work && !a.carry) {
+      if (this.sitKind === 'lean') {
+        lua = [0.2, 0, -down + 0.05];
+        rua = [0.2, 0, down - 0.05];
+        lla = [0, -0.3, 0];
+        rla = [0, 0.3, 0];
+      } else {
+        lua = [-0.45, -0.3, -down + 0.15];
+        rua = [-0.45, 0.3, down - 0.15];
+        lla = [0, -0.85, 0];
+        rla = [0, 0.85, 0];
+      }
+    }
+    // idle behaviors (hands free, standing)
+    if (idleOK && carry < 0.1) {
+      if (idle === 'armsCross') {
+        lua = [-0.35, -0.95, -down + 0.2];
+        rua = [-0.35, 0.95, down - 0.2];
+        lla = [0, -1.75, 0];
+        rla = [0, 1.75, 0];
+      } else if (idle === 'clasp') {
+        lua = [0.1, -1.4, -down + 0.6];
+        rua = [0.1, 1.4, down - 0.6];
+        lla = [0, -1.6, 0];
+        rla = [0, 1.6, 0];
+      } else if (idle === 'handsBack') {
+        lua = [0.4, 1.4, -down + 0.15];
+        rua = [0.4, -1.4, down - 0.15];
+        lla = [0, -1.1, 0];
+        rla = [0, 1.1, 0];
+      } else if (idle === 'phone') {
+        rua = [-0.6, 0.5, down - 0.2];
+        rla = [0, 2.0, 0];
+        lua = [-0.35, -0.5, -down + 0.15];
+        lla = [0, -1.3, 0];
+      } else if (idle === 'scratch') {
+        const arm = side > 0 ? 'r' : 'l';
+        const wig = Math.sin(t * 10) * 0.08;
+        if (arm === 'r') {
+          rua = [-2.2, -0.3, down - 1.0];
+          rla = [0, 2.2 + wig, 0];
+        } else {
+          lua = [-2.2, 0.3, -down + 1.0];
+          lla = [0, -2.2 - wig, 0];
+        }
+      } else if (idle === 'stretch') {
+        const up = 0.5 + 0.5 * Math.sin(Math.min(1, (5 - this.idle.t) / 2) * Math.PI - Math.PI / 2);
+        // arms swing up overhead (up = z, since the arms rotate out of the T-pose)
+        lua = [0, 0, -down + (down + 1.25) * up];
+        rua = [0, 0, down - (down + 1.25) * up];
+        lla = [0, -0.2, 0];
+        rla = [0, 0.2, 0];
+      } else {
+        // relaxed arms with a slight sway
+        lua[0] += Math.sin(t * 0.8 + seed) * 0.03;
+        rua[0] += Math.sin(t * 0.8 + seed + 1) * 0.03;
+      }
+    }
+    // talking: one hand gestures along with the words
+    if (a.talk && !a.carry && sit < 0.5) {
+      const g = Math.sin(t * 3.1 + seed);
+      rua = [-0.5 + g * 0.15, -0.3, down - 0.35];
+      rla = [0, 1.3 + Math.sin(t * 4.3) * 0.25, 0];
+      if (Math.sin(t * 0.7 + seed) > 0.3) {
+        lua = [-0.4 - g * 0.1, 0.25, -down + 0.3];
+        lla = [0, -1.1, 0];
+      }
+    }
+    // startled: hands come up a little
+    if (surprised > 0.6 && !a.carry && sit < 0.5) {
+      const k = (surprised - 0.6) * 2;
+      lua = [lua[0] - 0.4 * k, lua[1], lua[2] + 0.2 * k];
+      rua = [rua[0] - 0.4 * k, rua[1], rua[2] - 0.2 * k];
+    }
+    // holding something over your head against the rain
+    if (a.overHead) {
+      lua = [-0.3, 0, -down + (down + 0.9)];
+      rua = [-0.3, 0, down - (down + 0.9)];
+      lla = [0, -1.0, 0];
+      rla = [0, 1.0, 0];
+    }
+    put('leftUpperArm', ...lua);
+    put('rightUpperArm', ...rua);
+    put('leftLowerArm', ...lla);
+    put('rightLowerArm', ...rla);
+    put('leftHand', 0, 0, carry * 0.2);
+    put('rightHand', 0, 0, -carry * 0.2);
+
+    // ---- apply, blended
+    const P = (this.poseS ||= {});
+    const k = 1 - Math.exp(-14 * dt);
+    for (const n in T) {
+      const b = this.bone(n);
+      if (!b) continue;
+      const cur = P[n] || (P[n] = [0, 0, 0]);
+      const tg = T[n];
+      cur[0] += (tg[0] - cur[0]) * k;
+      cur[1] += (tg[1] - cur[1]) * k;
+      cur[2] += (tg[2] - cur[2]) * k;
+      b.rotation.set(cur[0], cur[1], cur[2]);
+    }
+    // hips: drop for crouching/sitting, bob and sway with the steps
+    const a1 = (P.leftUpperLeg ? (P.leftUpperLeg[0] + P.rightUpperLeg[0]) / 2 : 0) - s * 0;
+    const a2 = P.leftLowerLeg ? (P.leftLowerLeg[0] + P.rightLowerLeg[0]) / 2 : 0;
+    const legBend = crouchThigh + sitThigh;
+    const kneeBend = crouchKnee + sitKnee;
+    void a1;
+    void a2;
+    const h = this.upperLegLen * Math.cos(legBend) + this.lowerLegLen * Math.cos(kneeBend + legBend);
     let drop = this.upperLegLen + this.lowerLegLen - h;
-    drop += Math.abs(Math.cos(this.phase)) * 0.025 * amp * (1 - sit) - 0.02 * amp;
+    drop += Math.abs(cph) * (0.03 + 0.03 * run) * amp * (1 - sit) - 0.02 * amp + 0.015 * Math.abs(shift) * (1 - move);
     if (sit > 0.01) drop = drop * (1 - sit) + (this.hipRestY / (this.root.scale.y || 1) - 0.5) * sit;
     const hips = this.bone('hips');
     if (hips) {
       hips.position.y = this.hipBaseY - drop;
-      hips.rotation.set(0, 0, 0);
+      hips.rotation.set(0, s * 0.12 * amp * (1 - sit), cph * 0.05 * amp * (1 - sit) + shift * 0.05 * (1 - move));
     }
     this.applyExpressions(dt);
   }
@@ -378,7 +557,8 @@ class CharacterBase {
     }
     const s = this.root.scale.y || 1;
     const u = this.prop.userData;
-    this.prop.position.set(0, (y + (u.up || 0)) / s, (u.fwd ?? 0.4) / s);
+    if (this.propOverHead) this.prop.position.set(0, (this.height + 0.08) / s, 0.02);
+    else this.prop.position.set(0, (y + (u.up || 0)) / s, (u.fwd ?? 0.4) / s);
   }
 
   /** Wetness 0..1: adds a sheen, darkens fabric, and makes chosen parts see-through. */
@@ -396,6 +576,7 @@ class CharacterBase {
           rimPow: m.parametricRimFresnelPowerFactor,
           transparent: m.transparent,
           opacity: m.opacity,
+          alphaTest: m.alphaTest,
           depthWrite: m.depthWrite,
         };
       }
@@ -404,7 +585,7 @@ class CharacterBase {
       const isHair = HAIR_RE.test(e.name);
       if (o.color && m.color) m.color.copy(o.color).multiplyScalar(1 - (isSkin ? 0.03 : isHair ? 0.25 : 0.18) * w);
       if (o.rim && m.parametricRimColorFactor) {
-        m.parametricRimColorFactor.copy(o.rim).lerp(new THREE.Color(0.55, 0.6, 0.65), w * (isSkin ? 0.55 : 0.8));
+        m.parametricRimColorFactor.copy(o.rim).lerp(new THREE.Color(0.55, 0.6, 0.65), w * (isSkin ? 0.3 : isHair ? 0.22 : 0.6));
         if (o.rimPow !== undefined) m.parametricRimFresnelPowerFactor = o.rimPow + (2.5 - o.rimPow) * w;
       }
       if (this.wetSet && this.wetSet.has(e.name)) {
@@ -416,6 +597,8 @@ class CharacterBase {
           m.needsUpdate = true;
         }
         m.opacity = (o.opacity ?? 1) * (1 - 0.8 * see); // never below 20% opacity
+        // cut-out (MASK) materials would discard everything below the cutoff, making the part vanish
+        m.alphaTest = want ? Math.min(o.alphaTest || 0, 0.04) : o.alphaTest;
       }
     }
     if (this.mannequinWet) this.mannequinWet(w);
@@ -432,6 +615,8 @@ function setupVRMChar(ch, scene, hum, opts) {
   ch.mats = [];
   ch.scene = scene;
   ch.humanoid = hum;
+  // wet see-through parts; null means "pick sensible defaults" (blouses, shirts, tops)
+  ch.wetAuto = opts.wetMaterials == null;
   ch.wetSet = new Set(opts.wetMaterials || []);
   scene.traverse((o) => {
     if (!o.isMesh) return;
@@ -447,6 +632,7 @@ function setupVRMChar(ch, scene, hum, opts) {
     o.userData.isLegwear = isLeg;
     mats.forEach((m) => m && ch.mats.push({ m, leg: isLeg, name: cleanName(m.name) }));
   });
+  if (ch.wetAuto) for (const e of ch.mats) if (/(tops|shirt|blouse|onepiece|dress)/i.test(e.name) && !e.leg) ch.wetSet.add(e.name);
   ch.bone = (n) => hum.getNormalizedBoneNode(n);
   scene.updateMatrixWorld(true);
   const wp = (n) => {

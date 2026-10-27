@@ -94,6 +94,75 @@ export class Level {
     this.seats = []; // {x, z, yaw, taken, label}
     this.pickups = []; // {x, z, kind, mesh, taken}
     this.coverPoints = [];
+    this.movables = []; // whiteboards and carts that can be pushed around
+  }
+
+  /** A whiteboard or cart you (or NPCs) can push around and hide behind. */
+  movable(kind, x, z, yaw = 0) {
+    const g = new THREE.Group();
+    const M = (c) => mat(c);
+    let hw;
+    let hd;
+    let y0;
+    let h;
+    if (kind === 'whiteboard') {
+      hw = 0.75;
+      hd = 0.12;
+      y0 = 0.45;
+      h = 1.85;
+      const board = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.2, 0.04), M('#f5f6fa'));
+      board.position.y = 1.2;
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(1.56, 1.26, 0.03), M('#95a5a6'));
+      frame.position.set(0, 1.2, -0.01);
+      g.add(board, frame);
+      for (const sx of [-0.7, 0.7]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.6, 0.04), M('#7f8c8d'));
+        leg.position.set(sx, 0.3, 0);
+        const foot = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.04, 0.5), M('#7f8c8d'));
+        foot.position.set(sx, 0.03, 0);
+        g.add(leg, foot);
+      }
+    } else {
+      hw = 0.55;
+      hd = 0.32;
+      y0 = 0.15;
+      h = 1.05;
+      const base = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.06, 0.64), M('#7f8c8d'));
+      base.position.y = 0.2;
+      const top = base.clone();
+      top.position.y = 0.95;
+      const box1 = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.65, 0.55), M(kind === 'laundrycart' ? '#dfe6e9' : '#c8a27a'));
+      box1.position.y = 0.55;
+      const handle = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.5, 0.6), M('#2d3436'));
+      handle.position.set(-0.56, 1.15, 0);
+      g.add(base, top, box1, handle);
+      for (const [sx, sz] of [[-0.48, -0.26], [0.48, -0.26], [-0.48, 0.26], [0.48, 0.26]]) {
+        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.05, 10), M('#2d3436'));
+        w.rotation.x = Math.PI / 2;
+        w.position.set(sx, 0.07, sz);
+        g.add(w);
+      }
+    }
+    g.traverse((o) => o.isMesh && ((o.castShadow = true), (o.receiveShadow = true)));
+    this.group.add(g);
+    const m = { kind, x, z, yaw, hw, hd, y0, h, mesh: g, holder: null };
+    this.placeMovable(m, x, z, yaw);
+    this.movables.push(m);
+    return m;
+  }
+
+  placeMovable(m, x, z, yaw) {
+    m.x = x;
+    m.z = z;
+    m.yaw = yaw;
+    m.mesh.position.set(x, 0, z);
+    m.mesh.rotation.y = yaw;
+    // axis-aligned box around the rotated footprint, for sight lines and bumping
+    const c = Math.abs(Math.cos(yaw));
+    const sn = Math.abs(Math.sin(yaw));
+    const ex = m.hw * c + m.hd * sn;
+    const ez = m.hw * sn + m.hd * c;
+    m.box = { minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez, minY: m.y0, maxY: m.h };
   }
 
   /** A chair/bench spot anyone can sit on (player included). Returns the spot. */
@@ -268,6 +337,27 @@ export class Level {
     this.staticMeshes = [];
     this.buildHashes();
     this.buildCoverPoints();
+    this.markTableSeats();
+  }
+
+  /** Chairs pulled up to a desk or table: your legs go under it, so nobody can see. */
+  markTableSeats() {
+    for (const s of this.seats) {
+      if (s.underTable !== undefined) continue;
+      s.underTable = false;
+      for (const d of [0.45, 0.65, 0.85]) {
+        const px = s.x + Math.sin(s.yaw) * d;
+        const pz = s.z + Math.cos(s.yaw) * d;
+        for (const b of this.occ) {
+          if (b.maxY < 0.55 || b.maxY > 1.05 || b.minY > 0.5) continue;
+          if (px > b.minX - 0.1 && px < b.maxX + 0.1 && pz > b.minZ - 0.1 && pz < b.maxZ + 0.1) {
+            s.underTable = true;
+            break;
+          }
+        }
+        if (s.underTable) break;
+      }
+    }
   }
 
   /** Spots right next to sight blockers, used by sneaking NPCs to get out of view. */
@@ -334,9 +424,23 @@ export class Level {
   }
 
   // ---- collision -------------------------------------------------------
-  resolve(x, z, r) {
+  resolve(x, z, r, ignore = null) {
     if (!this.colHash) this.buildHashes();
     for (let iter = 0; iter < 3; iter++) {
+      for (const m of this.movables) {
+        if (m === ignore) continue;
+        const c = m.box;
+        const cx = Math.max(c.minX, Math.min(x, c.maxX));
+        const cz = Math.max(c.minZ, Math.min(z, c.maxZ));
+        const dx = x - cx;
+        const dz = z - cz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < r * r && d2 > 1e-8) {
+          const d = Math.sqrt(d2);
+          x = cx + (dx / d) * r;
+          z = cz + (dz / d) * r;
+        }
+      }
       this._query(this.colHash, this.colStamp, x - r, x + r, z - r, z + r, (i) => {
         const c = this.colliders[i];
         if (c.h < 0.25) return false;
@@ -419,6 +523,26 @@ export class Level {
       if (t0 < best) best = t0;
       return false;
     });
+    for (const m of this.movables) {
+      const b = m.box;
+      let t0 = 0;
+      let t1 = maxT;
+      let hit = true;
+      for (const [o, d, lo, hi] of [[ox, dx, b.minX, b.maxX], [oy, dy, b.minY, b.maxY], [oz, dz, b.minZ, b.maxZ]]) {
+        if (Math.abs(d) < 1e-9) {
+          if (o < lo || o > hi) hit = false;
+        } else {
+          let ta = (lo - o) / d;
+          let tb = (hi - o) / d;
+          if (ta > tb) [ta, tb] = [tb, ta];
+          t0 = Math.max(t0, ta);
+          t1 = Math.min(t1, tb);
+          if (t0 > t1) hit = false;
+        }
+        if (!hit) break;
+      }
+      if (hit && t0 < best) best = t0;
+    }
     return best;
   }
 
@@ -523,14 +647,16 @@ export class Level {
         }
       }
     }
-    if (!came.has(g) && g !== s) return [{ x: x2, z: z2 }];
+    if (!came.has(g) && g !== s) return null; // unreachable: never cut through walls
     const path = [];
     let k = g;
     while (k !== undefined && k !== s) {
       path.unshift({ x: nodes[k].x, z: nodes[k].z });
       k = came.get(k);
     }
-    path.push({ x: x2, z: z2 });
+    // only step off the grid onto the exact target if nothing is in the way
+    const last = path.length ? path[path.length - 1] : nodes[s];
+    if (this.segmentClear(last.x, last.z, x2, z2, 0.25)) path.push({ x: x2, z: z2 });
     // String pulling
     const out = [];
     let px = x1;

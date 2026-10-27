@@ -162,6 +162,99 @@ export class Minimap {
     this.drawCompass(game, t);
   }
 
+  /** Whole-area map, north up, scaled to fit the canvas. */
+  drawFull(game, canvas) {
+    const L = game.level;
+    if (!L || !this.bg || !canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.fillStyle = '#12121c';
+    ctx.fillRect(0, 0, W, H);
+    const bw = this.bg.width;
+    const bh = this.bg.height;
+    const k = Math.min((W - 40) / bw, (H - 70) / bh);
+    const ox = (W - bw * k) / 2;
+    const oy = (H - bh * k) / 2 + 15;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(this.bg, ox, oy, bw * k, bh * k);
+    const b = L.bounds;
+    const s = this.scale * k;
+    const P = (x, z) => [ox + (x - b.minX) * s, oy + (z - b.minZ) * s];
+    // buses and people
+    for (const bus of game.buses?.buses || []) {
+      const [x, z] = P(bus.x, bus.z);
+      ctx.fillStyle = bus.line.color;
+      ctx.beginPath();
+      ctx.arc(x, z, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (const n of game.npcs) {
+      const [x, z] = P(n.x, n.z);
+      ctx.fillStyle = n.kind === 'manager' ? '#ff4757' : n.kind === 'coworker' ? (n.sneaking ? '#a29bfe' : '#54a0ff') : '#dfe6e9';
+      ctx.beginPath();
+      ctx.arc(x, z, n.kind === 'coworker' || n.kind === 'manager' ? 4 : 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // crisp room labels indoors
+    if (L.name !== 'city') {
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      for (const r of L.rooms || []) {
+        if (!r.label) continue;
+        const [x, z] = P(r.cx, r.cz);
+        const w = ctx.measureText(r.label).width + 8;
+        ctx.fillStyle = 'rgba(20,20,32,.8)';
+        ctx.fillRect(x - w / 2, z - 9, w, 16);
+        ctx.fillStyle = '#ffeaa7';
+        ctx.fillText(r.label, x, z + 3);
+      }
+    }
+    // labels for places in the city
+    if (L.name === 'city') {
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      for (const [kk, pl] of Object.entries(L.places || {})) {
+        const [x, z] = P(pl.door.x, pl.door.z);
+        ctx.fillStyle = 'rgba(0,0,0,.6)';
+        const name = kk === 'home' ? 'Home' : kk === 'work' ? 'Work' : kk === 'poolgate' ? 'Pool gate' : pl.label.replace(/^Enter /, '');
+        const w = ctx.measureText(name).width + 8;
+        ctx.fillRect(x - w / 2, z - 22, w, 15);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(name, x, z - 11);
+      }
+    }
+    // objective
+    const t = game.objectiveTarget();
+    if (t) {
+      const [x, z] = P(t.x, t.z);
+      ctx.strokeStyle = '#55efc4';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x, z, 10 + Math.sin(performance.now() / 200) * 2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // you
+    const p = game.player;
+    const [px, pz] = P(p.x, p.z);
+    ctx.save();
+    ctx.translate(px, pz);
+    ctx.rotate(Math.PI - p.yaw);
+    ctx.fillStyle = '#ff7eb6';
+    ctx.beginPath();
+    ctx.moveTo(0, -11);
+    ctx.lineTo(8, 8);
+    ctx.lineTo(0, 4);
+    ctx.lineTo(-8, 8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('MAP  (M or Esc to close)   N ↑', 16, 26);
+  }
+
   drawCompass(game, t) {
     const el = this.compass;
     const yaw = game.cam.yaw;
