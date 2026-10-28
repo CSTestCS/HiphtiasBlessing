@@ -46,6 +46,10 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 
 **Everyone has a home.** The city has six apartment complexes. Each new game puts you in a random one and gives every coworker a home too (kept with the save). On workdays coworkers walk to work before their shift and home after it, so you can run into them on the street, with consequences. People from your other saves hang around their own buildings. Each building has its own lobby and hallway colors and name signs, and you live on a random floor. Your workplace is also placed at a random spot in the city for each new game.
 
+**Colors.** Clothes, hair, eyes and underwear use a pool of 172 named dyes (skin tones are separate). Each color picker folds into a compact dropdown.
+
+**Coworkers outside work.** Running into a coworker in town or on the commute never gets you reported. Ones who never saw anything at work figure you just hate wearing clothes. Ones who know have their own take. Kind coworkers who know, and fellow blessed coworkers, ask what's going on. Once you've met Celesti you can explain the blessing, which can turn them into allies.
+
 **At home.** If you haven't picked an at-home outfit, you're down to your underwear at home.
 
 **Complaints.** Customer and security complaints count per day. Anyone who has already reported you today won't report you again; they just glare.

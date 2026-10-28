@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { ui, esc } from './ui.js';
 import { storage, newId } from './storage.js';
+import { dyeName } from './dyes.js';
 import { randomApartment, randomWorkSlot, aptById, UNDERWEAR, UNDERWEAR_COLORS, prettyUnderwear, randomUnderwear, JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, FEMALE_NAMES, MALE_NAMES, nameFor, guessGender, guessModelGender, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
 import { createCharacter, inspectVRM, randomColors, addAngelic, clearTemplates } from './character.js';
 import { Game, controlsTable } from './game.js';
@@ -70,7 +71,7 @@ function migrateProfile(p) {
     job: p.job,
     player: { outfits: [wrap(p)] },
     coworkers: (p.coworkers || []).map((c) => ({ name: c.name, personality: c.personality, outfits: [wrap(c)] })),
-    manager: { name: 'Ms. Harper', outfits: [newOutfit('skirt', { ...randomColors(), top: '#2d3436', bottom: '#2d3436' })] },
+    manager: { name: 'Ms. Harper', outfits: [newOutfit('skirt', { ...randomColors(), top: COLORS.defaults.bottom, bottom: COLORS.defaults.bottom })] },
   };
 }
 
@@ -198,10 +199,25 @@ function pickFiles(multiple = false) {
 }
 
 function swatches(kind, current, attr, list = COLORS[kind]) {
-  return `<div class="swatches">${list
-    .map((c) => `<div class="swatch ${c === current ? 'on' : ''}" style="background:${c || 'repeating-linear-gradient(45deg,#888 0 4px,#ccc 4px 8px)'}" data-${attr}="${c || ''}" title="${c ? '' : 'Original colors'}"></div>`)
+  const dot = (c) => c || 'repeating-linear-gradient(45deg,#888 0 4px,#ccc 4px 8px)';
+  const label = (c) => (c ? esc(dyeName(c)) : 'Original colors');
+  const grid = `<div class="swatches">${list
+    .map((c) => `<div class="swatch ${c === current ? 'on' : ''}" style="background:${dot(c)}" data-${attr}="${c || ''}" title="${label(c)}"></div>`)
     .join('')}</div>`;
+  // short lists (skin) stay open; the big dye pool folds into a picker
+  if (list.length <= 12) return grid;
+  return `<details class="swpick"><summary><span class="swatch" style="background:${dot(current)}"></span><span class="swname">${label(current)}</span></summary>${grid}</details>`;
 }
+// keep a folded picker's preview in step with whatever got picked, then fold it
+document.addEventListener('click', (ev) => {
+  const sw = ev.target.closest?.('.swpick .swatches .swatch');
+  if (!sw) return;
+  const det = sw.closest('.swpick');
+  const c = [...sw.attributes].find((a) => a.name.startsWith('data-'))?.value || null;
+  det.querySelector('summary .swatch').style.background = sw.style.background;
+  det.querySelector('summary .swname').textContent = c ? dyeName(c) : 'Original colors';
+  det.open = false;
+});
 
 function matList(model, prefix, field = 'legwearMaterials') {
   if (!model || !model.materials) return '';
@@ -667,8 +683,8 @@ function defaultDraft() {
     name: 'Alex',
     job: 'office',
     layoutSeed: 1 + Math.floor(Math.random() * 99999),
-    player: { gender: 'female', outfits: [newOutfit('skirt', { skin: COLORS.skin[0], hair: COLORS.hair[1], top: COLORS.top[0], bottom: COLORS.bottom[0], under: COLORS.under[0], eye: '#1b1b2f' }, 'female')] },
-    manager: { name: 'Ms. Harper', gender: 'female', outfits: [newOutfit('skirt', { ...randomColors(), top: '#2d3436', bottom: '#2d3436' }, 'female', true)] },
+    player: { gender: 'female', outfits: [newOutfit('skirt', { skin: COLORS.skin[0], hair: COLORS.defaults.hair, top: COLORS.defaults.top, bottom: COLORS.defaults.bottom, under: COLORS.defaults.under, eye: COLORS.defaults.eye }, 'female')] },
+    manager: { name: 'Ms. Harper', gender: 'female', outfits: [newOutfit('skirt', { ...randomColors(), top: COLORS.defaults.bottom, bottom: COLORS.defaults.bottom }, 'female', true)] },
     coworkers: Array.from({ length: 8 }, (_, i) => cw(i)),
   };
 }

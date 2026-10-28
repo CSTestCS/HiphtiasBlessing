@@ -3004,7 +3004,7 @@ export class Game {
     chest.y += 0.3;
     return this.npcs.every((o) => {
       if (o === except || o.removed || !o.canSee() || this.complicit(o)) return true;
-      if (o.kind === 'coworker' && ['friend', 'sympathetic'].includes(o.personality) && this.state.cw[o.index]?.ally) return true;
+      if (o.kind === 'coworker' && this.helps(o)) return true;
       const d = Math.hypot(o.x - p.x, o.z - p.z);
       if (d > o.range) return true;
       return !this.level.lineOfSight(o.eye(), chest);
@@ -3382,7 +3382,7 @@ export class Game {
   allyIntercept(o) {
     if (this.interceptCd > performance.now()) return false;
     const p = this.player;
-    const ally = this.npcs.find((n) => n.kind === 'coworker' && !n.sneaking && !n.away && !n.leaving && this.state.cw[n.index]?.ally && ['friend', 'sympathetic'].includes(n.personality) && !['talk', 'hiding'].includes(n.state) && Math.hypot(n.x - o.x, n.z - o.z) < 14);
+    const ally = this.npcs.find((n) => n.kind === 'coworker' && !n.sneaking && !n.away && !n.leaving && this.helps(n) && !['talk', 'hiding'].includes(n.state) && Math.hypot(n.x - o.x, n.z - o.z) < 14);
     if (!ally) return false;
     this.interceptCd = performance.now() + 60000;
     o.suspicion = 0;
@@ -3503,52 +3503,102 @@ export class Game {
     ui.toast(`Uh oh... isn't that ${c.name} from work, coming down the street?!`, 'bad', 6000);
   }
 
+  /** Coworker ally who will actively help (cover for you, intercept people). */
+  helps(n) {
+    const cw = this.state.cw[n.index];
+    return !!cw?.ally && (['friend', 'sympathetic'].includes(n.personality) || cw.blessed || cw.toldCurse);
+  }
+
+  /**
+   * Running into a coworker outside of work. Nobody reports it: what they say depends on what
+   * they already know. Those who never saw anything at work assume you just hate clothes.
+   */
   async weekendEncounter(n) {
     n.noticeCooldown = 9999;
     n.coworkerEncounter = false;
-    const cw = this.state.cw[n.index];
+    const st = this.state;
+    const cw = st.cw[n.index];
     const nm = n.name;
+    const me = this.profile.name;
+    const P = pronouns(n.gender);
     const resume = n.commuter ? n.steps.slice() : null;
     n.plan([]);
     n.state = 'talk';
-    if (n.commuter) {
-      // ran into each other on the way to or from work
-      const am = this.phase === 'commute_am';
-      if (cw.blessed || cw.joined) {
-        this.addShame(SHAME.encounterFriendly);
-        await this.dialog(`You ran into ${nm}!`, pick([`${nm} spots you on the sidewalk and gives a tiny, knowing nod. "...Commuting like this too, huh? Stay off the main streets."`, `"${this.profile.name}!" ${nm} hisses, tugging their own top down. "The bus is worse. Trust me."`]), undefined, { who: n, pose: 'cover', mood: { surprised: 0.6, happy: 0.2 } });
-      } else if (['friend', 'sympathetic', 'oddball'].includes(n.personality)) {
-        this.addShame(SHAME.encounterFriendly);
-        await this.dialog(`You ran into ${nm}!`, n.personality === 'oddball' ? `"Whoa! Pantsless ${am ? 'commute' : 'walk home'}? Hardcore. I respect it."` : `"${this.profile.name}?! You're walking ${am ? 'to work' : 'home'} like THAT?" ${nm} steps between you and the street until the coast is clear.`, undefined, { who: n, pose: n.personality === 'oddball' ? 'fist' : 'startled', mood: n.personality === 'oddball' ? { happy: 1 } : { surprised: 1 }, bg: 'speed' });
-        if (n.personality !== 'oddball') cw.ally = true;
+    const where = this.phase === 'commute_am' ? 'on the way to work' : this.phase === 'commute_pm' ? 'on the way home' : 'around town';
+    const nearWork = this.level.places?.work && Math.hypot(this.player.x - this.level.places.work.out.x, this.player.z - this.level.places.work.out.z) < 30;
+    // what they already know: they saw it at work, dealt with it, or are in the same boat
+    const knows = !!(cw.sawYou || cw.ally || cw.warned || cw.playing || cw.buddy || cw.asked || cw.outsideSeen);
+    const fellow = cw.blessed || cw.joined;
+    const kind = ['friend', 'sympathetic'].includes(n.personality);
+    const title = `You ran into ${nm}!`;
+    const say = (text, o = {}) => this.dialog(title, text, undefined, { who: n, ...o });
+    const explain = async () => {
+      // the player tells them about Celesti and the "blessing"
+      const cel = this.celestiName();
+      await this.dialog(`${me} explains`, pick([
+        `${me} takes a deep breath. "Okay. This is going to sound insane. An angel named ${cel} visited me. She says Hiphtia, the goddess of hips, 'blessed' me. That's why nothing below the waist stays on. Every day. It's not a choice."`,
+        `"You want the truth? A goddess called Hiphtia decided I needed a 'blessing', and her messenger ${cel} came to break the news. This is the blessing. No pants or skirt will stay on me, no matter what I try."`,
+      ]), undefined, { who: 'player', pose: 'cover', mood: { sad: 0.5, surprised: 0.2 } });
+      cw.toldCurse = true;
+    };
+    let shame = SHAME.encounterFriendly;
+    if (fellow) {
+      if (!cw.toldCurse && st.celestiMet) {
+        await say(`${nm} freezes, then lets out a shaky laugh and tugs at ${P.their} own hem. "${me}... you too? I thought I was losing my mind. Do you know what's happening to us?"`, { pose: 'cover', mood: { surprised: 0.8, sad: 0.3 } });
+        await explain();
+        await say(pick([`"A GODDESS of HIPS? ...Honestly, that explains a lot." ${nm} straightens up. "Okay. Then we're in this together. I'll watch your back at work, you watch mine."`, `${nm} stares at the sky like it owes ${P.them} money. "Hiphtia. Right. Well, if she's going to do this to both of us, we're sticking together."`]), { pose: 'fist', mood: { happy: 0.6 }, bg: 'holy' });
+        cw.ally = true;
+        ui.toast(`${nm} is now your ally!`, 'good', 4000);
+      } else if (!cw.toldCurse) {
+        await say(`${nm} spots you, freezes, and gives a tiny, knowing nod. "...You too, huh? Do you have any idea why this keeps happening?" You don't. Neither does ${P.they}. You part with a sympathetic wince.`, { pose: 'cover', mood: { surprised: 0.6, sad: 0.3 } });
+        cw.asked = true;
       } else {
-        this.addShame(SHAME.encounterHostile);
-        this.talkMood(n, { angry: 0.8, surprised: 0.6 }, 8);
-        this.state.pendingTalks.push({ reason: 'commute', who: nm });
-        await this.dialog(`You ran into ${nm}!`, `${nm} stops dead on the sidewalk. ${pronouns(n.gender).Their} eyes travel down... and back up. "Unbelievable. Out in the STREET?"\n\n"${this.profile.manager.name} is going to hear about this."`, undefined, { who: n, pose: 'point', mood: { angry: 0.9 }, bg: 'speed' });
+        await say(pick([`"Commuting like this too, huh? Stay off the main streets," ${nm} whispers. "Hiphtia owes us both an apology."`, `${nm} gives you a weary salute. "Another glorious day of being blessed. See you at work, partner."`, `"The bus is worse. Trust me," ${nm} mutters, tugging ${P.their} top down.`]), { pose: 'cover', mood: { happy: 0.3, surprised: 0.3 } });
+        if (!cw.ally) ((cw.ally = true), ui.toast(`${nm} is now your ally!`, 'good', 4000));
       }
-      if (!n.removed) {
+    } else if (n.personality === 'oddball') {
+      shame = SHAME.encounterFriendly * 0.5;
+      await say(knows ? pick([`"Ha! Not just at work, then! You're really committed to the bit, ${me}."`, `"${where === 'around town' ? 'Day off' : 'Commute'} edition! Bold. I'm keeping score, you know."`]) : pick([`"Whoa. No pants, out in public? A fellow free spirit! I KNEW you were cool."`, `${nm} looks you up and down and grins. "Clothes are a social construct anyway. Respect."`]), { pose: 'fist', mood: { happy: 1 }, bg: 'speed' });
+    } else if (kind && knows) {
+      if (!cw.asked && !cw.toldCurse) {
+        await say(`"${me}!" ${nm} hurries over and steps between you and the street. "It's not just at work, is it? Please tell me what's going on. Are you okay?"`, { pose: 'startled', mood: { surprised: 0.8, sad: 0.4 } });
+        cw.asked = true;
+        if (st.celestiMet) {
+          await explain();
+          await say(pick([`${nm} is quiet for a long moment. "...I don't know what to say to that, except that I believe you. Nobody would CHOOSE this. I've got your back."`, `"A goddess. Of hips. Okay." ${nm} nods slowly. "That's the most ridiculous thing I've ever heard, and somehow it makes more sense than anything else. I'll help however I can."`]), { pose: 'clasp', mood: { sad: 0.3, happy: 0.3 } });
+        } else {
+          await this.dialog(`${me} answers`, `"I... honestly don't know. It just keeps happening, every single day. I'm not doing it on purpose, I swear."`, undefined, { who: 'player', pose: 'cover', mood: { sad: 0.7 } });
+          await say(`${nm} squeezes your shoulder. "Then we'll figure it out. Until then, I'll keep an eye out for you."`, { pose: 'clasp', mood: { sad: 0.3, happy: 0.2 } });
+        }
+      } else {
+        await say(pick([`"${me}! Still happening, huh?" ${nm} walks with you a bit, keeping ${P.them}self between you and the traffic.`, `${nm} winces in sympathy and quietly hands you ${P.their} coat to hold in front of you for a block.`, `"Rough ${where === 'around town' ? 'day' : 'commute'}? Hang in there. I'll keep watch."`]), { pose: 'clasp', mood: { sad: 0.3, happy: 0.2 } });
+      }
+      if (!cw.ally) ((cw.ally = true), ui.toast(`${nm} is now your ally!`, 'good', 4000));
+    } else if (knows) {
+      // they've seen it at work: so it's not just at work
+      shame = SHAME.encounterHostile * 0.6;
+      await say(nearWork ? pick([`${nm} groans. "Not right outside the office, ${me}. People KNOW we work here. Whatever this is, keep it away from the building."`, `"Seriously? Right by work?" ${nm} glances at the door. "If a client sees this, it's all of us who look bad."`]) : pick([`${nm} sighs. "So it's not just at work. Look, what you do on your own time is your business. Just... don't drag the company into it."`, `"Huh. I figured the office thing was an accident." ${nm} shrugs. "Guess not. Not my problem, as long as it stays not my problem."`, `${nm} raises an eyebrow. "You're consistent, I'll give you that."`]), { pose: nearWork ? 'point' : 'shrug', mood: nearWork ? { angry: 0.5 } : { surprised: 0.3 } });
+    } else {
+      // never saw anything at work: they figure you just hate wearing clothes
+      shame = SHAME.encounterHostile * 0.75;
+      await say(kind
+        ? pick([`"${me}?" ${nm} blinks a few times. "Oh! Um. Is this a... comfort thing? I didn't know you were so... free-spirited. No judgement! Just... wow."`, `${nm} turns pink. "I, uh, didn't know you were one of those people who hates wearing clothes. That's... fine! Totally fine. Have a nice ${where === 'around town' ? 'day' : 'walk'}!"`])
+        : nearWork
+          ? pick([`${nm} stops dead and stares. "Okay, I don't care what you do in your free time, but RIGHT outside work? Our clients walk past here."`, `"Wow." ${nm} glances at the building. "Do whatever you want at home, but this reflects on all of us."`])
+          : pick([`${nm} stops, stares, and eventually shrugs. "...I guess some people just hate pants. Weird, but it's a free country."`, `"Huh. Didn't take you for the clothing-optional type." ${nm} shakes ${P.their} head. "Strange. Whatever. See you at work."`, `${nm}'s eyes travel down... and back up. "That's a choice. Not one I'd make, but okay."`]),
+        { pose: kind ? 'startled' : nearWork ? 'point' : 'talk', mood: kind ? { surprised: 0.9, happy: 0.2 } : nearWork ? { angry: 0.5, surprised: 0.5 } : { surprised: 0.7 } });
+    }
+    cw.outsideSeen = (cw.outsideSeen || 0) + 1;
+    this.addShame(shame);
+    this.talkMood(n, {}, 1);
+    if (!n.removed) {
+      if (n.commuter) {
         n.state = 'idle';
         n.plan(resume && resume.length ? resume : [{ t: 1 }]);
+      } else {
+        n.kind = 'pedestrian';
+        n.plan([{ t: 1 }]);
       }
-      return;
-    }
-    if (cw.blessed || cw.joined) {
-      this.addShame(SHAME.encounterFriendly);
-      await this.dialog(`You ran into ${nm}!`, `${nm} spots you, freezes, and gives a tiny, knowing nod. "...You too, huh. Let's pretend we never saw each other."`, undefined, { who: n, pose: 'cover', mood: { surprised: 0.6, happy: 0.2 } });
-    } else if (['friend', 'sympathetic', 'oddball'].includes(n.personality)) {
-      this.addShame(SHAME.encounterFriendly);
-      await this.dialog(`You ran into ${nm}!`, n.personality === 'oddball' ? `"Whoa, you're playing the no-pants game on your day off too? Dedication! Respect."` : `"${this.profile.name}?! Oh no, even on the weekend?" ${nm} gives you an awkward hug and hurries on, making sure nobody else is looking.`, undefined, { who: n, pose: n.personality === 'oddball' ? 'fist' : 'startled', mood: n.personality === 'oddball' ? { happy: 1 } : { surprised: 1 }, bg: 'speed' });
-      if (n.personality !== 'oddball') cw.ally = true;
-    } else {
-      this.addShame(SHAME.encounterHostile);
-      this.talkMood(n, { angry: 0.8, surprised: 0.6 }, 8);
-      this.state.pendingTalks.push({ reason: 'weekend', who: nm });
-      await this.dialog(`You ran into ${nm}!`, `${nm} stops dead. ${pronouns(n.gender).Their} eyes travel down... and back up. "Unbelievable. Even in PUBLIC?"\n\n"I'll be mentioning this to ${this.profile.manager.name} on Monday."`, undefined, { who: n, pose: 'point', mood: { angry: 0.9 }, bg: 'speed' });
-    }
-    if (!n.removed) {
-      n.kind = 'pedestrian';
-      n.plan([{ t: 1 }]);
     }
   }
 
@@ -5034,7 +5084,7 @@ export class Game {
       }
       for (const r of w.requests) if (r !== w.active) side += `<div style="color:#bbb">• ${esc(r.task.name)}${r.from ? ` (${esc(r.from)})` : ''}</div>`;
       if (!w.clockedOut && this.clock >= SHIFT.end) side += `<div class="cur">▶ Clock out</div>`;
-      const allies = this.profile.coworkers.filter((_, i) => st.cw[i].ally && !st.cw[i].blessed && !st.cw[i].fired).map((c) => c.name);
+      const allies = this.profile.coworkers.filter((_, i) => st.cw[i].ally && (!st.cw[i].blessed || st.cw[i].toldCurse) && !st.cw[i].fired).map((c) => c.name);
       if (allies.length) side += `<div style="margin-top:8px;color:#a29bfe">Allies: ${esc(allies.join(', '))}</div>`;
       if (st.celestiMet) {
         const cands = this.activeCoworkers().filter((i) => !st.cw[i].blessed);

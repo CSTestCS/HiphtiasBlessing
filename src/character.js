@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { VRMLoaderPlugin, VRMUtils, VRMHumanoid, VRMExpressionManager, VRMExpression, VRMExpressionMorphTargetBind } from '@pixiv/three-vrm';
+import { DYE_HEX } from './dyes.js';
 
 // socks, stockings and thigh-highs stay on after a mishap: only pants/skirts/shorts count
 export const LEGWEAR_RE = /(bottom|pants|trouser|skirt|short|jean|slack|legging)/i;
@@ -1090,14 +1091,7 @@ function applyTints(ch, opts) {
 export const SKIN_TONES = ['#ffe3cf', '#f6d1b6', '#e8b98f', '#d29a6e', '#b07a52', '#8a5a3a', '#6b4430'];
 function randomCivilianTints() {
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
-  return {
-    skin: pick(SKIN_TONES),
-    hair: pick(['#3b2a20', '#5a3a22', '#2a1d16', '#e6c87a', '#b5651d', '#c0392b', '#a29bfe', '#ff9ff3', '#9e9e9e', '#1a1a1a', '#d9b380']),
-    eye: pick(['#3498db', '#27ae60', '#8e44ad', '#e67e22', '#795548', '#5d4037', '#2c3e50']),
-    top: pick(['#ff7675', '#74b9ff', '#55efc4', '#ffeaa7', '#a29bfe', '#fd79a8', '#636e72', '#ffffff', '#2d3436', '#e17055', '#00b894']),
-    bottom: pick(['#2d3436', '#34495e', '#1e3799', '#6d4c41', '#b33939', '#7f8c8d', '#c8a27a']),
-    shoe: pick(['#2d3436', '#ffffff', '#6d4c41', '#b33939']),
-  };
+  return { skin: pick(SKIN_TONES), hair: pick(DYE_HEX), eye: pick(DYE_HEX), top: pick(DYE_HEX), bottom: pick(DYE_HEX), shoe: pick(DYE_HEX) };
 }
 
 function finishVRMChar(ch) {
@@ -1848,14 +1842,7 @@ export function createMannequin(opts = {}) {
 
 export function randomColors(rng = Math.random) {
   const pick = (arr) => arr[Math.floor(rng() * arr.length)];
-  return {
-    skin: pick(SKIN_TONES),
-    hair: pick(['#2a1d16', '#5a3a22', '#b98a4a', '#e6c87a', '#7b3f00', '#999999', '#c0392b', '#6c5ce7', '#ff7eb6']),
-    top: pick(['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#ecf0f1', '#34495e', '#e67e22', '#1abc9c']),
-    bottom: pick(['#2d3436', '#34495e', '#1e3799', '#6d4c41', '#7f8c8d', '#2c2c54']),
-    under: pick(['#ffffff', '#ff9ff3', '#74b9ff', '#ffeaa7', '#2d3436']),
-    eye: pick(['#1b1b2f', '#2980b9', '#27ae60', '#8e44ad', '#6d4c41']),
-  };
+  return { skin: pick(SKIN_TONES), hair: pick(DYE_HEX), top: pick(DYE_HEX), bottom: pick(DYE_HEX), under: pick(DYE_HEX), eye: pick(DYE_HEX) };
 }
 
 /** Halo and wings for Celesti (works for VRM or mannequin). No light: she doesn't glow. */

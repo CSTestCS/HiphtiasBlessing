@@ -1,3 +1,4 @@
+import { DYES, DYE_HEX } from './dyes.js';
 // Static game data: jobs, personalities, story text, task templates, errands.
 
 export const PERSONALITIES = {
@@ -294,13 +295,17 @@ export function guessModelGender(title) {
 }
 export const DEFAULT_PERSONALITIES = ['friend', 'strict', 'sympathetic', 'neutral', 'oddball', 'distant', 'sympathetic', 'neutral', 'friend', 'strict', 'oddball', 'neutral'];
 
+// every color except skin comes from the dye pool (see dyes.js); defaults are named dyes
+const D = (name) => DYES.find((d) => d[0] === name)?.[1] || DYE_HEX[0];
 export const COLORS = {
   skin: ['#f3d2b8', '#e8b98f', '#c98e62', '#8d5a3b', '#5c3a24'],
-  hair: ['#2a1d16', '#5a3a22', '#b98a4a', '#e6c87a', '#c0392b', '#6c5ce7', '#ff7eb6', '#eeeeee'],
-  top: ['#ffffff', '#3d5a80', '#2d3436', '#e17055', '#00b894', '#6c5ce7', '#fdcb6e', '#d63031', '#ff7eb6'],
-  bottom: ['#2d3436', '#34495e', '#1e3799', '#6d4c41', '#7f8c8d', '#b33939', '#f5f6fa'],
-  under: ['#ff9ff3', '#ffffff', '#74b9ff', '#ffeaa7', '#55efc4', '#fd79a8', '#2d3436', '#e17055'],
-  tint: [null, '#ffffff', '#ff7675', '#74b9ff', '#55efc4', '#ffeaa7', '#a29bfe', '#fd79a8', '#636e72', '#e17055'],
+  hair: DYE_HEX,
+  top: DYE_HEX,
+  bottom: DYE_HEX,
+  under: DYE_HEX,
+  eye: DYE_HEX,
+  tint: [null, ...DYE_HEX],
+  defaults: { hair: D('Chocolate Brown'), top: D('Snow White'), bottom: D('Soot Black'), under: D('Pink'), eye: D('Ink Blue') },
 };
 
 // ---------------------------------------------------------------------------
@@ -523,7 +528,7 @@ export const UNDERWEAR = {
   bras: ['AdhesiveBraLegoBlack', 'BalconetteBraLegoBlack', 'BikiniBraLegoBlack', 'BraFloralNude', 'BraFloralPastelPink', 'BraLegoBlack', 'EorzeanBraLegoBlack', 'FullCupBraLegoBlack', 'HalfCupBraLegoBlack', 'HalterTopBraLegoBlack', 'LaceBraLegoBlack', 'PlungeBraLegoBlack', 'RacerbackBraLegoBlack', 'SportsBraLegoBlack', 'SportsBraStarsLegoBlack', 'SportsBraTrimmedLegoBlack', 'StraplessBraFloralPastelPink', 'StraplessBraFloralPink', 'StraplessBraLegoBlack', 'TShirtBraLegoBlack', 'TriangleBraLegoBlack', 'TrimmedBikiniBraHearts', 'TrimmedBikiniBraLegoBlack', 'WirelessBraLegoBlack'],
   male: ['BoyshortLegoBlack', 'BriefsLegoBlack', 'EorzeanBriefsLegoBlack', 'HighRiseLegoBlack', 'HighRiseTrimLegoBlack', 'ShapingBriefsLegoBlack', 'TrimmedBriefsLegoBlack', 'TrimmedFullBriefLegoBlack'],
 };
-export const UNDERWEAR_COLORS = ['#ffffff', '#1e1e24', '#ff9ff3', '#fd79a8', '#74b9ff', '#a29bfe', '#55efc4', '#ffeaa7', '#e17055', '#d63031', '#636e72', '#fab1a0'];
+export const UNDERWEAR_COLORS = DYE_HEX;
 export function prettyUnderwear(n) {
   return n.replace(/LegoBlack$/, '').replace(/([a-z])([A-Z])/g, '$1 $2');
 }
