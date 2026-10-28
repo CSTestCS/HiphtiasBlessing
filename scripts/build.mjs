@@ -15,6 +15,7 @@ await build({
 });
 copyFileSync('src/index.html', 'dist/index.html');
 copyFileSync('src/style.css', 'dist/style.css');
+copyFileSync('src/favicon.png', 'dist/favicon.png');
 
 // bundled models
 mkdirSync('dist/models', { recursive: true });

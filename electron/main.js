@@ -13,6 +13,7 @@ function createWindow() {
     minHeight: 640,
     backgroundColor: '#141421',
     title: "Hiphtia's Blessing",
+    icon: path.join(__dirname, 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
