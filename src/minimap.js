@@ -24,7 +24,7 @@ export class Minimap {
     const c = document.createElement('canvas');
     c.width = w;
     c.height = h;
-    const g = c.getContext('2d');
+    const g = c.getContext('2d', { willReadFrequently: true });
     const X = (x) => (x - b.minX) * s;
     const Z = (z) => (z - b.minZ) * s;
     if (city) {

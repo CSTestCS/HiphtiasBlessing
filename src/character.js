@@ -176,7 +176,7 @@ function shrinkTextures(m, max) {
       const c = document.createElement('canvas');
       c.width = Math.round(w * sc);
       c.height = Math.round(h * sc);
-      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      c.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0, c.width, c.height);
       shrunk.set(img, c);
       // analyse alpha on the shrunk copy too
       if (alphaCache.has(img)) alphaCache.set(c, alphaCache.get(img));
@@ -1021,9 +1021,32 @@ function setupVRMChar(ch, scene, hum, opts) {
   }
   ch.setLegwear = (on) => {
     ch.legwearOn = on;
-    ch.legwearMeshes.forEach((m) => (m.visible = on && !m.userData.hiddenByClothes));
-    if (ch.underwearMesh) ch.underwearMesh.visible = !on && !ch.borrowed;
+    ch.legwearMeshes.forEach((m) => (m.visible = on && !ch.undressed && !m.userData.hiddenByClothes));
+    if (ch.underwearMesh) ch.underwearMesh.visible = (!on || ch.undressed) && !ch.borrowed;
     if (ch._bodyHidden || ch.borrowed) refreshBodyHiding(ch);
+  };
+  // down to underwear: every clothing part (own or borrowed-fit) is hidden
+  ch.setUndressed = (on) => {
+    on = !!on;
+    if (on === !!ch.undressed) return;
+    ch.undressed = on;
+    ch.scene.traverse((o) => {
+      if (!o.isMesh || o.userData.isLegwear) return;
+      const ms = Array.isArray(o.material) ? o.material : [o.material];
+      const cloth = ms.some((m) => {
+        const n = cleanName(m && m.name);
+        return (CLOTH_RE.test(n) || LEGWEAR_RE.test(n)) && !SKIN_RE.test(n);
+      });
+      if (!cloth) return;
+      if (on) {
+        o.userData.undressWas = o.visible;
+        o.visible = false;
+      } else if (o.userData.undressWas !== undefined) {
+        o.visible = o.userData.undressWas && !o.userData.hiddenByClothes;
+        delete o.userData.undressWas;
+      }
+    });
+    ch.setLegwear(ch.legwearOn);
   };
   applyTints(ch, opts);
 }
@@ -1889,7 +1912,7 @@ async function unionMask(R) {
     const img = await fetch(UW_BASE + 'union.png').then((r) => r.blob()).then((b) => createImageBitmap(b));
     const c = document.createElement('canvas');
     c.width = c.height = R;
-    const g = c.getContext('2d');
+    const g = c.getContext('2d', { willReadFrequently: true });
     g.drawImage(img, 0, 0, R, R);
     const d = g.getImageData(0, 0, R, R).data;
     const m = new Uint8Array(R * R);
@@ -1903,7 +1926,7 @@ async function unionMask(R) {
 function tintedOverlay(img, color, R) {
   const c = document.createElement('canvas');
   c.width = c.height = R;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', { willReadFrequently: true });
   g.drawImage(img, 0, 0, R, R);
   if (color) {
     g.globalCompositeOperation = 'multiply';
@@ -1944,7 +1967,7 @@ export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
     if (!tex) {
       const c = document.createElement('canvas');
       c.width = c.height = R;
-      const g = c.getContext('2d');
+      const g = c.getContext('2d', { willReadFrequently: true });
       if (paint) {
         g.drawImage(map.image, 0, 0, R, R);
         // clear the model's own painted underwear: anything in the underwear areas that isn't skin

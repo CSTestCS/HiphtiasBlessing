@@ -142,7 +142,7 @@ export class Game {
     this.levels.hallway = buildHallway(this.homeApt, this.homeFloor);
     this.levels.pool = buildPool(this.homeApt, this.homeFloor);
     this.levels.laundry = buildLaundry();
-    this.levels.city = buildCity({ workplaceName: this.job.workplaceName, jobColor: '#273c75', homeId: this.profile.home || 'maple' });
+    this.levels.city = buildCity({ workplaceName: this.job.workplaceName, jobColor: '#273c75', homeId: this.profile.home || 'maple', workSlot: this.profile.workSlot || 0 });
     ui.setScreen('<div class="loading">Building your workplace...</div>');
     await new Promise((r) => setTimeout(r, 30));
     this.levels.work = buildWorkplace(this.jobId, this.job, { coworkers: this.profile.coworkers, seed: this.state.seed });
@@ -332,7 +332,9 @@ export class Game {
     const sel = this.state.daily.player || {};
     const homeIdx = sel.home ?? p.player.homeOutfit;
     const sameHome = (homeIdx === undefined || homeIdx === null || homeIdx === (sel.outfit || 0)) && !sel.homeTop && !sel.homeBottom && !sel.homeLegwearType;
-    this.playerHome = sameHome ? this.playerOut : await this.charFromDef(p.player, 'player', true, true);
+    // no at-home outfit picked: at home you're down to your underwear
+    this.homeUnderwearOnly = homeIdx === undefined || homeIdx === null;
+    this.playerHome = sameHome || this.homeUnderwearOnly ? this.playerOut : await this.charFromDef(p.player, 'player', true, true);
     this.player.char = this.playerOut;
     this.scene.add(this.player.char.root);
     this.lw = this.playerOut.legwearType;
@@ -357,6 +359,7 @@ export class Game {
       next.root.rotation.y = p.yaw;
       next.resetPhysics();
     }
+    next.setUndressed?.(which === 'home' && this.homeUnderwearOnly);
     next.setLegwear(legwearOn);
     next.setWet(p.wet);
   }
@@ -744,7 +747,7 @@ export class Game {
       this.cam.dist = 3.6;
     } else if (outdoor) {
       if (phase === 'commute_am') this.clock = Math.max(this.clock, 468);
-      if (phase === 'commute_pm' && prev === 'work') this.clock = 1050;
+      if (phase === 'commute_pm' && prev === 'work') this.clock = Math.max(this.clock, SHIFT.end);
       if (phase === 'dayoff' && prev === 'lobby' && !this.dayoffStarted) {
         this.clock = 600;
         this.dayoffStarted = true;
@@ -759,7 +762,12 @@ export class Game {
         clockedIn: false, clockedOut: false, done: 0, task: null, step: 0, lastTpl: null, sneakT: 0,
         mishapPending: st.day === 1, coverT: 0, requests: [], active: null, reqT: 20, events: {}, pendingStaff: [],
       };
-      this.complaints = 0;
+      // complaints count per day: leaving and coming back doesn't wipe them, a new day does
+      if (this.complaintsDay !== st.day) {
+        this.complaintsDay = st.day;
+        this.complaints = 0;
+        this.complainedBy = new Set();
+      }
       this.mgrGrace = 0;
       this.cwRuntime.forEach((r) => {
         r.bond = 0;
@@ -2814,6 +2822,15 @@ export class Game {
       this.addShame((n.kind === 'clerk' ? SHAME.clerk : SHAME.pedestrian) * REACTIONS[kind].shame);
       return;
     }
+    // anyone who already reported you today has said their piece: just a glare
+    const ckey = n.kind === 'guard' ? 'guard' : n.kind === 'customer' ? n : null;
+    if (ckey && this.complainedBy?.has(ckey)) {
+      n.noticeCooldown = 30;
+      this.bubble(n, pick(["I already reported you. Twice is just sad.", '*shakes head*', "Still? Really?", '*sighs loudly*']));
+      this.talkMood(n, { angry: 0.6 }, 3);
+      this.addShame(SHAME.customer * 0.25);
+      return;
+    }
     this.cancelInteract();
     n.plan([]);
     n.state = 'talk';
@@ -2825,6 +2842,7 @@ export class Game {
       return;
     }
     if (n.kind === 'customer' || n.kind === 'guard') {
+      (this.complainedBy ||= new Set()).add(ckey);
       this.complaints++;
       this.talkMood(n, { angry: 0.8, surprised: 0.5 }, 6);
       this.addShame(SHAME.customer);
@@ -2833,6 +2851,7 @@ export class Game {
       if (n.kind === 'guard') {
         await this.dialog('Security noticed!', `The security guard's radio crackles. ${pick(['"Uh... management? We have a... dress code situation by the entrance."', '"Ma\'am? Sir? I\'m going to have to write this up."', '"I\'ve seen a lot on this job. Not this, though."'])}\n\nThat goes on record as a complaint. (${c}/3 complaints today)`, undefined, { who: n, pose: 'point', mood: { angry: 0.8, surprised: 0.5 }, bg: 'speed' });
         if (!n.removed) n.plan([{ t: 6 }]);
+        n.noticeCooldown = 30;
       } else {
         await this.dialog(`A ${this.job.customerWord} noticed!`, `"${pick(['Excuse me?! Is that... your UNDERWEAR?! I want to speak to a manager!', 'Is this some kind of joke? Where is your manager?', 'Unbelievable. I\'m reporting this.', 'I came here to shop, not to see THAT.'])}"\n\nThe ${this.job.customerWord} storms off to complain. (${c}/3 complaints today)`, undefined, { who: n, pose: 'point', mood: { angry: 0.8, surprised: 0.5 }, bg: 'speed' });
       }

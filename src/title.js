@@ -10,7 +10,7 @@ let active = null;
 function glowTexture() {
   const c = document.createElement('canvas');
   c.width = c.height = 256;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', { willReadFrequently: true });
   const grd = g.createRadialGradient(128, 128, 4, 128, 128, 128);
   grd.addColorStop(0, 'rgba(255,248,220,1)');
   grd.addColorStop(0.35, 'rgba(255,225,150,.55)');
@@ -36,7 +36,7 @@ function glowTexture() {
 function sparkleTexture() {
   const c = document.createElement('canvas');
   c.width = c.height = 64;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', { willReadFrequently: true });
   const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
   grd.addColorStop(0, 'rgba(255,255,255,1)');
   grd.addColorStop(0.25, 'rgba(255,236,170,.9)');

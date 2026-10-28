@@ -2,7 +2,7 @@
 // your apartment, your workplace, cars, sidewalk routes and bus lines.
 import * as THREE from 'three';
 import { Level, mat, textPlane } from '../level.js';
-import { PLACES, APARTMENTS } from '../data.js';
+import { PLACES, APARTMENTS, WORK_SLOTS } from '../data.js';
 
 function mulberry(seed) {
   return () => {
@@ -34,7 +34,7 @@ export function streetName(axis, v) {
   return axis === 'x' ? AVES[i] : STS[i];
 }
 
-export function buildCity({ workplaceName = 'Work', jobColor = '#273c75', homeId = 'maple' } = {}) {
+export function buildCity({ workplaceName = 'Work', jobColor = '#273c75', homeId = 'maple', workSlot = 0 } = {}) {
   const L = new Level('city');
   const rng = mulberry(4242);
   L.indoor = false;
@@ -73,7 +73,6 @@ export function buildCity({ workplaceName = 'Work', jobColor = '#273c75', homeId
   // ---- blocks
   const palette = ['#d1ccc0', '#b8a99a', '#a4b0be', '#c8d6e5', '#e3c4a8', '#c7a17a', '#95a5a6', '#d6a2ad', '#b5c99a', '#dcd3c4'];
   const special = {
-    '3,0': [{ kind: 'work', side: 'n' }],
     '1,3': [{ kind: 'supermarket', side: 'n' }],
     '2,3': [{ kind: 'pharmacy', side: 'w' }],
     '0,1': [{ kind: 'postoffice', side: 'e' }],
@@ -82,6 +81,9 @@ export function buildCity({ workplaceName = 'Work', jobColor = '#273c75', homeId
     '3,2': [{ kind: 'hardware', side: 'w' }],
     '1,0': [{ kind: 'bookstore', side: 'e' }],
   };
+  // the workplace: wherever this save put it
+  const [wb, ws] = WORK_SLOTS[workSlot] || WORK_SLOTS[0];
+  (special[wb] ||= []).push({ kind: 'work', side: ws });
   // apartment complexes; one of them is home
   for (const a of APARTMENTS) (special[a.block] ||= []).push({ kind: 'apt:' + a.id, side: a.side, home: a.id === homeId });
   L.apartments = {};

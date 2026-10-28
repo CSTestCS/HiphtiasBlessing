@@ -44,7 +44,11 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 
 **Dialog** is laid out like a manga panel: the speaker posed for the moment (startled, pointing, arms crossed, covering up, floating...), quotes in speech bubbles and narration in caption boxes.
 
-**Everyone has a home.** The city has six apartment complexes. Each new game puts you in a random one and gives every coworker a home too (kept with the save). On workdays coworkers walk to work before their shift and home after it, so you can run into them on the street, with consequences. People from your other saves hang around their own buildings. Each building has its own lobby and hallway colors and name signs, and you live on a random floor.
+**Everyone has a home.** The city has six apartment complexes. Each new game puts you in a random one and gives every coworker a home too (kept with the save). On workdays coworkers walk to work before their shift and home after it, so you can run into them on the street, with consequences. People from your other saves hang around their own buildings. Each building has its own lobby and hallway colors and name signs, and you live on a random floor. Your workplace is also placed at a random spot in the city for each new game.
+
+**At home.** If you haven't picked an at-home outfit, you're down to your underwear at home.
+
+**Complaints.** Customer and security complaints count per day. Anyone who has already reported you today won't report you again; they just glare.
 
 **Morning outfit screen.** Each morning you can open the full outfit editor for anyone (model, colors, parts, underwear), the same one used at setup, and preview each outfit normally, after a mishap, soaked, or both.
 

@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { ui, esc } from './ui.js';
 import { storage, newId } from './storage.js';
-import { randomApartment, aptById, UNDERWEAR, UNDERWEAR_COLORS, prettyUnderwear, randomUnderwear, JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, FEMALE_NAMES, MALE_NAMES, nameFor, guessGender, guessModelGender, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
+import { randomApartment, randomWorkSlot, aptById, UNDERWEAR, UNDERWEAR_COLORS, prettyUnderwear, randomUnderwear, JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, FEMALE_NAMES, MALE_NAMES, nameFor, guessGender, guessModelGender, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
 import { createCharacter, inspectVRM, randomColors, addAngelic, clearTemplates } from './character.js';
 import { Game, controlsTable } from './game.js';
 import { listSlots, loadSlot, createSlot, writeProfile, deleteSlot, otherSlotPeople } from './saves.js';
@@ -1022,6 +1022,7 @@ async function beginNewGame() {
   // where everyone lives: picked fresh for each new game, then kept with the save
   profile.home = randomApartment();
   profile.homeFloor = 2 + Math.floor(Math.random() * 11);
+  profile.workSlot = randomWorkSlot(profile.home);
   for (const c of profile.coworkers) c.home = randomApartment();
   const id = await createSlot(profile, { day: 1, shame: 0, seed: profile.layoutSeed });
   startGame(id);
@@ -1060,8 +1061,8 @@ function chooseOutfits(g) {
           ${
             e.key === 'player'
               ? `<label>At-home outfit</label>
-          <select data-ohome="player">${e.def.outfits
-            .map((o, i) => `<option value="${i}" ${(d.home ?? e.def.homeOutfit ?? d.outfit) === i ? 'selected' : ''}>Outfit ${i + 1}: ${o.model ? esc(o.model.title) : 'Simple figure'}</option>`)
+          <select data-ohome="player"><option value="" ${(d.home ?? e.def.homeOutfit) == null ? 'selected' : ''}>Just underwear</option>${e.def.outfits
+            .map((o, i) => `<option value="${i}" ${(d.home ?? e.def.homeOutfit) === i ? 'selected' : ''}>Outfit ${i + 1}: ${o.model ? esc(o.model.title) : 'Simple figure'}</option>`)
             .join('')}</select>
           <label>At-home top color</label>${swatches('tint', d.homeTop, 'ohtop-' + e.key, tintList)}
           <div class="row" style="margin-top:6px"><button class="secondary" data-ohprev="1">Preview at-home outfit</button></div>`
@@ -1105,7 +1106,13 @@ function chooseOutfits(g) {
         const d = daily[e.key];
         previewer.setLegwear(!(view === 'mishap' || view === 'both'));
         if (homePrev && e.key === 'player') {
-          const o = e.def.outfits[d.home ?? e.def.homeOutfit ?? d.outfit] || e.def.outfits[0];
+          const hi = d.home ?? e.def.homeOutfit;
+          if (hi == null) {
+            // no at-home outfit: today's clothes come off
+            const o = e.def.outfits[d.outfit] || e.def.outfits[0];
+            return previewer.show(await outfitOpts(o, d, e.def.gender, e.def.underwear), (ch) => (look(ch), ch.setUndressed?.(true)));
+          }
+          const o = e.def.outfits[hi] || e.def.outfits[0];
           return previewer.show(await outfitOpts(o, { top: d.homeTop, bottom: null }, e.def.gender, e.def.underwear), look);
         }
         const o = e.def.outfits[d.outfit] || e.def.outfits[0];
@@ -1126,7 +1133,7 @@ function chooseOutfits(g) {
       s.querySelectorAll('[data-osel]').forEach((b) => (b.onclick = () => ((sel = b.dataset.osel), render())));
       s.querySelectorAll('[data-ooutfit]').forEach((b) => (b.onchange = () => ((daily[b.dataset.ooutfit].outfit = +b.value), (daily[b.dataset.ooutfit].legwearType = null), (sel = b.dataset.ooutfit), (homePrev = false), render())));
       s.querySelectorAll('[data-olw]').forEach((b) => (b.onchange = () => ((daily[b.dataset.olw].legwearType = b.value), (sel = b.dataset.olw), (homePrev = false), show())));
-      s.querySelectorAll('[data-ohome]').forEach((b) => (b.onchange = () => ((daily.player.home = +b.value), (g.profile.player.homeOutfit = +b.value), (sel = 'player'), (homePrev = true), show())));
+      s.querySelectorAll('[data-ohome]').forEach((b) => (b.onchange = () => ((daily.player.home = b.value === '' ? null : +b.value), (g.profile.player.homeOutfit = b.value === '' ? null : +b.value), (sel = 'player'), (homePrev = true), show())));
       s.querySelectorAll('[data-ohprev]').forEach((b) => (b.onclick = () => ((sel = 'player'), (homePrev = true), show())));
       s.querySelectorAll('[data-ohtop-player]').forEach((el) => {
         el.onclick = () => {

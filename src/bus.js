@@ -113,7 +113,7 @@ export class Bus {
     const c = document.createElement('canvas');
     c.width = 512;
     c.height = 64;
-    const ctx = c.getContext('2d');
+    const ctx = c.getContext('2d', { willReadFrequently: true });
     ctx.fillStyle = '#111';
     ctx.fillRect(0, 0, 512, 64);
     ctx.fillStyle = '#ffb142';

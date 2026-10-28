@@ -247,6 +247,18 @@ export const PLACES = {
 };
 
 // Apartment complexes around town. Each game the player lives in one, and every coworker in one too.
+// Where the workplace can stand: [city block, street side]. Every free slot is equally likely.
+export const WORK_SLOTS = [
+  ['3,0', 'n'], ['3,0', 'w'], ['1,1', 'n'], ['1,1', 'e'], ['1,1', 's'], ['1,1', 'w'], ['2,2', 'n'], ['2,2', 'e'], ['2,2', 's'], ['2,2', 'w'],
+  ['0,1', 'n'], ['0,0', 'e'], ['1,0', 's'], ['3,2', 'e'], ['2,3', 'e'], ['3,1', 'e'], ['0,2', 'w'], ['1,3', 'w'], ['0,3', 'w'], ['3,3', 's'], ['2,0', 'w'],
+];
+/** A random work slot, not on the same block as home. */
+export function randomWorkSlot(homeId) {
+  const hb = APARTMENTS.find((a) => a.id === homeId)?.block;
+  const ok = WORK_SLOTS.map((w, i) => i).filter((i) => WORK_SLOTS[i][0] !== hb);
+  return ok[Math.floor(Math.random() * ok.length)];
+}
+
 export const APARTMENTS = [
   { id: 'maple', name: 'Maple Court Apartments', short: 'Maple Court', color: '#5d4037', block: '0,3', side: 'e', wall: '#d9cbb8', carpet: '#6d5d4b', lobbyFloor: '#8d6e63', lobbyWall: '#e3d5c3' },
   { id: 'riverside', name: 'Riverside Towers', short: 'Riverside Towers', color: '#1e3799', block: '3,3', side: 'n', wall: '#c8d6e5', carpet: '#34495e', lobbyFloor: '#576574', lobbyWall: '#dfe6e9' },

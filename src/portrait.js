@@ -24,7 +24,7 @@ function background(kind) {
   const c = document.createElement('canvas');
   c.width = 384;
   c.height = 512;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', { willReadFrequently: true });
   const W = c.width;
   const H = c.height;
   g.fillStyle = kind === 'holy' ? '#fff8e6' : kind === 'dark' ? '#e3e0ea' : '#fbfaf6';

@@ -16,7 +16,7 @@ export function mat(color, opts = {}) {
 
 export function textPlane(text, { color = '#ffffff', bg = '#2d3436', size = 64, height = 0.5 } = {}) {
   const c = document.createElement('canvas');
-  const ctx = c.getContext('2d');
+  const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.font = `bold ${size}px sans-serif`;
   const w = Math.ceil(ctx.measureText(text).width) + 40;
   c.width = w;
