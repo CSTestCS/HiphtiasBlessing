@@ -1926,9 +1926,121 @@ function tintedOverlay(img, color, R) {
 }
 
 const uwTexCache = new Map();
+const uvMaskCache = new Map();
+
+/** Where this material's UV islands lie on its texture (1 = used), so seams can be padded. */
+function uvIslandMask(ch, m, R, flipY) {
+  const key = (ch.tplKey || m.map?.uuid || '') + '|' + m.name + '|' + R;
+  if (uvMaskCache.has(key)) return uvMaskCache.get(key);
+  const c = document.createElement('canvas');
+  c.width = c.height = R;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.fillStyle = '#fff';
+  let any = false;
+  ch.scene.traverse((o) => {
+    if (!o.isMesh || !o.geometry?.attributes?.uv) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    const geo = o.geometry;
+    const uv = geo.attributes.uv;
+    const idx = geo.index ? geo.index.array : null;
+    const groups = geo.groups?.length ? geo.groups : [{ start: 0, count: idx ? idx.length : uv.count, materialIndex: 0 }];
+    for (const gr of groups) {
+      const mm = mats[gr.materialIndex ?? 0];
+      if (!mm || (mm !== m && mm.map !== m.map)) continue;
+      const path = new Path2D();
+      for (let i = gr.start; i + 2 < gr.start + gr.count; i += 3) {
+        for (let k = 0; k < 3; k++) {
+          const v = idx ? idx[i + k] : i + k;
+          const x = uv.getX(v) * R;
+          const y = (flipY ? 1 - uv.getY(v) : uv.getY(v)) * R;
+          if (k === 0) path.moveTo(x, y);
+          else path.lineTo(x, y);
+        }
+        path.closePath();
+      }
+      g.fill(path);
+      // a hairline stroke so thin triangles still count
+      g.strokeStyle = '#fff';
+      g.lineWidth = 1;
+      g.stroke(path);
+      any = true;
+    }
+  });
+  let mask = null;
+  if (any) {
+    const d = g.getImageData(0, 0, R, R).data;
+    mask = new Uint8Array(R * R);
+    for (let i = 0; i < R * R; i++) mask[i] = d[i * 4 + 3] > 0 ? 1 : 0;
+  }
+  uvMaskCache.set(key, mask);
+  return mask;
+}
+
+/** Bleed island edge colors outward so filtering at UV seams never picks up the background. */
+function padIslands(id, mask, R, passes = 8) {
+  if (!mask) return;
+  const d = id.data;
+  let have = mask.slice();
+  // only the band of pixels just outside the islands needs work
+  let front = [];
+  for (let i = 0; i < R * R; i++) if (!have[i]) {
+    const x = i % R;
+    if ((x > 0 && have[i - 1]) || (x < R - 1 && have[i + 1]) || (i >= R && have[i - R]) || (i < R * R - R && have[i + R])) front.push(i);
+  }
+  for (let p = 0; p < passes && front.length; p++) {
+    const done = [];
+    for (const i of front) {
+      if (have[i]) continue;
+      const x = i % R;
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let n = 0;
+      const add = (j) => {
+        r += d[j * 4];
+        g += d[j * 4 + 1];
+        b += d[j * 4 + 2];
+        n++;
+      };
+      if (x > 0 && have[i - 1]) add(i - 1);
+      if (x < R - 1 && have[i + 1]) add(i + 1);
+      if (i >= R && have[i - R]) add(i - R);
+      if (i < R * R - R && have[i + R]) add(i + R);
+      if (!n) continue;
+      d[i * 4] = r / n;
+      d[i * 4 + 1] = g / n;
+      d[i * 4 + 2] = b / n;
+      d[i * 4 + 3] = 255;
+      done.push(i);
+    }
+    for (const i of done) have[i] = 2;
+    const next = [];
+    for (const i of done) {
+      const x = i % R;
+      for (const j of [x > 0 ? i - 1 : -1, x < R - 1 ? i + 1 : -1, i >= R ? i - R : -1, i < R * R - R ? i + R : -1]) if (j >= 0 && !have[j]) next.push(j);
+    }
+    front = next;
+  }
+}
+
+/** Most common opaque color of an image (the bare skin of a body texture). */
+function dominantColor(d) {
+  const hist = new Map();
+  for (let i = 0; i < d.length; i += 4 * 97) {
+    if (d[i + 3] < 200) continue;
+    const k = ((d[i] >> 3) << 10) | ((d[i + 1] >> 3) << 5) | (d[i + 2] >> 3);
+    hist.set(k, (hist.get(k) || 0) + 1);
+  }
+  let best = 0;
+  let bk = 0;
+  for (const [k, v] of hist) if (v > best) ((best = v), (bk = k));
+  return [((bk >> 10) & 31) * 8 + 4, ((bk >> 5) & 31) * 8 + 4, (bk & 31) * 8 + 4];
+}
+
 /**
  * uw: { panty, bra, color }. cfg.underwear / cfg.bra: material names that hold the underwear (a body
  * skin material is painted over; any other material is replaced outright). R: texture resolution.
+ * On a painted body, the old underwear is cleared from the color, shade and normal textures alike.
  */
 export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
   if (!ch.mats || !uw?.panty) return;
@@ -1941,81 +2053,123 @@ export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
   const targets = new Map();
   if (pantyMat) targets.set(pantyMat, ['panty']);
   if (braMat) targets.set(braMat, [...(targets.get(braMat) || []), 'bra']);
+  const ratio = (cur, base) => {
+    const t = new THREE.Color(1, 1, 1);
+    if (cur && base) t.setRGB(cur.r / Math.max(1e-3, base.r), cur.g / Math.max(1e-3, base.g), cur.b / Math.max(1e-3, base.b));
+    return t;
+  };
   for (const [e, parts] of targets) {
     const m = e.m;
     const map = m.map;
     if (!map || !map.image) continue;
     const paint = isSkin(e); // painted on the skin: keep the skin, clear the old underwear
-    // the skin tint currently multiplied into the material color gets baked into the texture instead
-    const tint = new THREE.Color(1, 1, 1);
-    if (paint && e.base && m.color) tint.setRGB(m.color.r / Math.max(1e-3, e.base.r), m.color.g / Math.max(1e-3, e.base.g), m.color.b / Math.max(1e-3, e.base.b));
-    const key = [ch.tplKey || map.uuid, e.name, paint ? tint.getHexString() : '', parts.includes('panty') ? uw.panty : '', parts.includes('bra') ? uw.bra : '', uw.color || '', R].join('|');
-    let tex = uwTexCache.get(key);
-    if (!tex) {
-      const c = document.createElement('canvas');
-      c.width = c.height = R;
-      const g = c.getContext('2d', { willReadFrequently: true });
-      if (paint) {
-        g.drawImage(map.image, 0, 0, R, R);
-        // clear the model's own painted underwear: anything in the underwear areas that isn't skin
-        const id = g.getImageData(0, 0, R, R);
-        const d = id.data;
-        const hist = new Map();
-        for (let i = 0; i < d.length; i += 4 * 97) {
-          if (d[i + 3] < 200) continue;
-          const k = ((d[i] >> 3) << 10) | ((d[i + 1] >> 3) << 5) | (d[i + 2] >> 3);
-          hist.set(k, (hist.get(k) || 0) + 1);
-        }
-        let best = 0;
-        let bk = 0;
-        for (const [k, v] of hist) if (v > best) ((best = v), (bk = k));
-        const sr = ((bk >> 10) & 31) * 8 + 4;
-        const sg = ((bk >> 5) & 31) * 8 + 4;
-        const sb = (bk & 31) * 8 + 4;
-        const mask = await unionMask(R);
-        for (let p = 0; p < R * R; p++) {
-          if (!mask[p]) continue;
-          const i = p * 4;
-          const diff = Math.abs(d[i] - sr) + Math.abs(d[i + 1] - sg) + Math.abs(d[i + 2] - sb);
-          if (diff > 60) {
-            d[i] = sr;
-            d[i + 1] = sg;
-            d[i + 2] = sb;
-          }
-        }
-        g.putImageData(id, 0, 0);
-        // bake the skin tone in
-        g.globalCompositeOperation = 'multiply';
-        g.fillStyle = '#' + tint.getHexString();
-        g.fillRect(0, 0, R, R);
-        g.globalCompositeOperation = 'destination-in';
-        g.drawImage(map.image, 0, 0, R, R);
-        g.globalCompositeOperation = 'source-over';
-      }
-      // a print keeps its own colors; plain designs take the chosen color
+    // the skin tint currently multiplied into the material colors gets baked into the textures instead
+    const tint = paint ? ratio(m.color, e.base) : new THREE.Color(1, 1, 1);
+    const shadeTex = paint && m.shadeMultiplyTexture && m.shadeMultiplyTexture !== map && m.shadeMultiplyTexture.image ? m.shadeMultiplyTexture : null;
+    const shadeTint = paint ? ratio(m.shadeColorFactor, e.baseShade) : null;
+    const normTex = paint && m.normalMap?.image ? m.normalMap : null;
+    const key = [ch.tplKey || map.uuid, e.name, paint ? tint.getHexString() + (shadeTint ? shadeTint.getHexString() : '') : '', parts.includes('panty') ? uw.panty : '', parts.includes('bra') ? uw.bra : '', uw.color || '', R].join('|');
+    let set = uwTexCache.get(key);
+    if (!set) {
+      const islands = uvIslandMask(ch, m, R, map.flipY);
+      const overlays = [];
       for (const part of parts) {
         const name = part === 'panty' ? uw.panty : uw.bra;
         const img = await loadOverlay(part === 'panty' ? 'panties' : 'bras', name);
-        g.drawImage(tintedOverlay(img, /LegoBlack$/.test(name) ? uw.color : null, R), 0, 0);
+        overlays.push(tintedOverlay(img, /LegoBlack$/.test(name) ? uw.color : null, R));
       }
-      tex = new THREE.CanvasTexture(c);
-      tex.colorSpace = map.colorSpace;
-      tex.flipY = map.flipY;
-      tex.wrapS = map.wrapS;
-      tex.wrapT = map.wrapT;
-      tex.anisotropy = 4;
-      uwTexCache.set(key, tex);
+      // which pixels belong to the old underwear: decided once, on the color texture
+      let erase = null;
+      if (paint) {
+        const c = document.createElement('canvas');
+        c.width = c.height = R;
+        const g = c.getContext('2d', { willReadFrequently: true });
+        g.drawImage(map.image, 0, 0, R, R);
+        const d = g.getImageData(0, 0, R, R).data;
+        const [sr, sg, sb] = dominantColor(d);
+        const mask = await unionMask(R);
+        erase = new Uint8Array(R * R);
+        for (let p = 0; p < R * R; p++) {
+          if (!mask[p]) continue;
+          const i = p * 4;
+          if (Math.abs(d[i] - sr) + Math.abs(d[i + 1] - sg) + Math.abs(d[i + 2] - sb) > 45) erase[p] = 1;
+        }
+        // grow by a few pixels to take the soft, anti-aliased rim with it
+        for (let pass = 0; pass < 3; pass++) {
+          const grown = erase.slice();
+          for (let y = 1; y < R - 1; y++)
+            for (let x = 1; x < R - 1; x++) {
+              const p = y * R + x;
+              if (!erase[p] && mask[p] && (erase[p - 1] || erase[p + 1] || erase[p - R] || erase[p + R])) grown[p] = 1;
+            }
+          erase = grown;
+        }
+      }
+      // one texture: draw, clear the old underwear to bare skin, bake the tint, add the new design
+      const build = (img, tintCol, withOverlay, normal = false) => {
+        const c = document.createElement('canvas');
+        c.width = c.height = R;
+        const g = c.getContext('2d', { willReadFrequently: true });
+        g.drawImage(img, 0, 0, R, R);
+        if (erase) {
+          const id = g.getImageData(0, 0, R, R);
+          const d = id.data;
+          const [sr, sg, sb] = normal ? [128, 128, 255] : dominantColor(d);
+          for (let p = 0; p < R * R; p++) {
+            if (!erase[p]) continue;
+            const i = p * 4;
+            d[i] = sr;
+            d[i + 1] = sg;
+            d[i + 2] = sb;
+            d[i + 3] = 255;
+          }
+          g.putImageData(id, 0, 0);
+        }
+        if (tintCol && !normal) {
+          g.globalCompositeOperation = 'multiply';
+          g.fillStyle = '#' + tintCol.getHexString();
+          g.fillRect(0, 0, R, R);
+          g.globalCompositeOperation = 'destination-in';
+          g.drawImage(img, 0, 0, R, R);
+          g.globalCompositeOperation = 'source-over';
+        }
+        // a print keeps its own colors; plain designs take the chosen color
+        if (withOverlay) for (const ov of overlays) g.drawImage(ov, 0, 0);
+        if (islands) {
+          const id = g.getImageData(0, 0, R, R);
+          padIslands(id, islands, R);
+          g.putImageData(id, 0, 0);
+        }
+        return c;
+      };
+      const mk = (c, like) => {
+        const t = new THREE.CanvasTexture(c);
+        t.colorSpace = like.colorSpace;
+        t.flipY = like.flipY;
+        t.wrapS = like.wrapS;
+        t.wrapT = like.wrapT;
+        t.anisotropy = 4;
+        return t;
+      };
+      set = { map: mk(build(map.image, paint ? tint : null, true), map) };
+      if (shadeTex) set.shade = mk(build(shadeTex.image, shadeTint, true), shadeTex);
+      if (normTex) set.normal = mk(build(normTex.image, null, false, true), normTex);
+      uwTexCache.set(key, set);
       if (uwTexCache.size > 160) uwTexCache.delete(uwTexCache.keys().next().value);
     }
     const shadeSame = m.shadeMultiplyTexture && m.shadeMultiplyTexture === map;
+    const shadeOld = m.shadeMultiplyTexture;
+    const normOld = m.normalMap;
     for (const x of ch.mats) {
       // the outline material shares the texture
       if (x.m.map !== map) continue;
-      x.m.map = tex;
-      if (x.m.shadeMultiplyTexture === map) x.m.shadeMultiplyTexture = tex;
+      x.m.map = set.map;
+      if (shadeSame && x.m.shadeMultiplyTexture === map) x.m.shadeMultiplyTexture = set.map;
+      else if (set.shade && x.m.shadeMultiplyTexture === shadeOld) x.m.shadeMultiplyTexture = set.shade;
+      if (set.normal && x.m.normalMap === normOld) x.m.normalMap = set.normal;
       if (paint) {
         if (x.base && x.m.color) x.m.color.copy(x.base);
-        if (shadeSame && x.baseShade && x.m.shadeColorFactor) x.m.shadeColorFactor.copy(x.baseShade);
+        if ((shadeSame || set.shade) && x.baseShade && x.m.shadeColorFactor) x.m.shadeColorFactor.copy(x.baseShade);
       } else {
         // a separate underwear mesh: the design's own shape and alpha decide what shows
         if (x.m.color) x.m.color.setRGB(1, 1, 1);
