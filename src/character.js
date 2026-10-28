@@ -957,6 +957,8 @@ function setupVRMChar(ch, scene, hum, opts) {
   // wet see-through parts; null means "pick sensible defaults" (blouses, shirts, tops)
   ch.wetAuto = opts.wetMaterials == null;
   ch.wetSet = new Set(opts.wetMaterials || []);
+  // parts that stay on in underwear, at home and at the pool (glasses, important accessories)
+  ch.keepSet = new Set([...(opts.keepMaterials || []), ...(opts.cfg?.keep || [])]);
   scene.traverse((o) => {
     if (!o.isMesh) return;
     o.castShadow = true;
@@ -971,7 +973,7 @@ function setupVRMChar(ch, scene, hum, opts) {
     o.userData.isLegwear = isLeg;
     mats.forEach((m) => m && ch.mats.push({ m, leg: isLeg, name: cleanName(m.name), base: m.color?.clone(), baseShade: m.shadeColorFactor?.clone() }));
     // parts this model takes off at home and at the pool (shoes, jackets...)
-    if (opts.cfg?.homeHide?.length && mats.some((m) => m && opts.cfg.homeHide.includes(cleanName(m.name)))) (ch.homeHideMeshes ||= []).push(o);
+    if (opts.cfg?.homeHide?.length && mats.some((m) => m && opts.cfg.homeHide.includes(cleanName(m.name))) && !mats.some((m) => m && ch.keepSet.has(cleanName(m.name)))) (ch.homeHideMeshes ||= []).push(o);
   });
   if (ch.wetAuto) for (const e of ch.mats) if (/(tops|shirt|blouse|onepiece|dress)/i.test(e.name) && !e.leg) ch.wetSet.add(e.name);
   ch.setHomeMode = (on) => {
@@ -1034,6 +1036,7 @@ function setupVRMChar(ch, scene, hum, opts) {
     ch.scene.traverse((o) => {
       if (!o.isMesh || o.userData.isLegwear) return;
       const ms = Array.isArray(o.material) ? o.material : [o.material];
+      if (ms.some((m) => m && ch.keepSet?.has(cleanName(m.name)))) return;
       const cloth = ms.some((m) => {
         const n = cleanName(m && m.name);
         return (CLOTH_RE.test(n) || LEGWEAR_RE.test(n)) && !SKIN_RE.test(n);

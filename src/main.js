@@ -164,6 +164,7 @@ async function outfitOpts(o, tint = {}, gender = null, underwear = null) {
     tintTop: tint.top || null,
     tintBottom: tint.bottom || null,
     wetMaterials: m?.wetMaterials || [],
+    keepMaterials: m?.keepMaterials || null,
     gender,
     clothes: o.clothesFrom ? { vrm: await getModel(o.clothesFrom), key: modelKey(o.clothesFrom), legwearMaterials: o.clothesFrom.legwearMaterials || null } : null,
   };
@@ -289,10 +290,13 @@ async function showTitleScene(lastSlot) {
   let player = null;
   try {
     if (lastSlot) {
-      const { profile: raw } = await loadSlot(lastSlot.id);
+      const { profile: raw, save } = await loadSlot(lastSlot.id);
       const profile = migrateProfile(raw);
-      const o = profile?.player?.outfits?.[0];
-      if (o) player = await outfitOpts(o, {}, profile.player.gender, profile.player.underwear);
+      // any outfit they've worn on one of their days (or the first one, for a fresh save)
+      const worn = (save?.worn || []).filter((w) => profile?.player?.outfits?.[w.outfit]);
+      const look = worn.length ? worn[Math.floor(Math.random() * worn.length)] : { outfit: 0 };
+      const o = profile?.player?.outfits?.[look.outfit] || profile?.player?.outfits?.[0];
+      if (o) player = await outfitOpts(o, look, profile.player.gender, profile.player.underwear);
     }
   } catch (e) {
     console.warn('title: could not load last save', e);
@@ -456,10 +460,15 @@ async function showCivilians() {
       <div class="footer"><button class="secondary" id="civ-back">Back</button><span></span></div>
     </div>`);
   previewer = new Previewer(s.querySelector('#pv'));
-  let cur = settings.civilians[0] || { asset: BUNDLED.civilians[0].asset };
+  let cur = settings.civilians[0] || { ...BUNDLED.civilians[0] };
   const show = async () => {
     if (!cur) return previewer.show({ colors: randomColors() });
-    previewer.show({ vrm: await getModel(cur), key: 'civ:' + modelKey(cur), randomize: true, underwearOverlay: false });
+    // same settings townsfolk get in-game: colors per part, legwear, underwear...
+    previewer.show({
+      vrm: await getModel(cur), key: 'civ:' + modelKey(cur), randomize: true, underwearOverlay: false, gender: cur.gender,
+      legwearMaterials: cur.legwearMaterials || null, wetMaterials: cur.wetMaterials?.length ? cur.wetMaterials : null, cfg: cur.cfg || null,
+      underwear: randomUnderwear(cur.gender || 'female'), underwearRes: 1024,
+    });
   };
   show();
   s.querySelector('#civ-roll').onclick = show;
@@ -467,7 +476,7 @@ async function showCivilians() {
     settings.useBundledCivilians = e.target.checked;
     await putSettings(settings);
   };
-  s.querySelectorAll('[data-bprev]').forEach((b) => (b.onclick = () => ((cur = { asset: BUNDLED.civilians[+b.dataset.bprev].asset }), show())));
+  s.querySelectorAll('[data-bprev]').forEach((b) => (b.onclick = () => ((cur = { ...BUNDLED.civilians[+b.dataset.bprev] }), show())));
   s.querySelectorAll('[data-cgen]').forEach(
     (b) =>
       (b.onchange = async () => {
@@ -522,6 +531,7 @@ async function showCivModel(i) {
   }
   const mats = c.materials || [];
   c.cfg = c.cfg || { slots: {}, homeHide: [], underwear: null, bra: null };
+  c.cfg.keep = c.cfg.keep || [];
   c.legwearMaterials = c.legwearMaterials || [];
   c.wetMaterials = c.wetMaterials || [];
   const female = c.gender !== 'male';
@@ -533,8 +543,8 @@ async function showCivModel(i) {
       <div class="cols">
         <div style="max-height:62vh;overflow:auto">
           <table class="mattable">
-            <tr><th>Part</th><th>Random color</th><th title="Removable bottoms (pants/skirt)">Legwear</th><th title="Goes see-through when soaked">Wet</th><th title="Taken off at home and at the pool">Home/pool</th><th title="The texture the underwear is on (body skin, or a separate underwear mesh)">Underwear</th>${female ? '<th title="The texture the bra is on">Bra</th>' : ''}</tr>
-            <tr><td class="note">Detect automatically</td><td></td><td></td><td></td><td></td><td><input type="radio" name="uw" data-uw="-1" ${!c.cfg.underwear ? 'checked' : ''}/></td>${female ? `<td><input type="radio" name="bra" data-bra="-1" ${!c.cfg.bra ? 'checked' : ''}/></td>` : ''}</tr>
+            <tr><th>Part</th><th>Random color</th><th title="Removable bottoms (pants/skirt)">Legwear</th><th title="Goes see-through when soaked">Wet</th><th title="Taken off at home and at the pool">Home/pool</th><th title="Always kept on, even in underwear, at home or at the pool (glasses, accessories)">Keep</th><th title="The texture the underwear is on (body skin, or a separate underwear mesh)">Underwear</th>${female ? '<th title="The texture the bra is on">Bra</th>' : ''}</tr>
+            <tr><td class="note">Detect automatically</td><td></td><td></td><td></td><td></td><td></td><td><input type="radio" name="uw" data-uw="-1" ${!c.cfg.underwear ? 'checked' : ''}/></td>${female ? `<td><input type="radio" name="bra" data-bra="-1" ${!c.cfg.bra ? 'checked' : ''}/></td>` : ''}</tr>
             ${mats
               .map(
                 (m, k) => `<tr><td>${esc(m)}</td>
@@ -542,6 +552,7 @@ async function showCivModel(i) {
                 <td><input type="checkbox" data-leg="${k}" ${c.legwearMaterials.includes(m) ? 'checked' : ''}/></td>
                 <td><input type="checkbox" data-wet="${k}" ${c.wetMaterials.includes(m) ? 'checked' : ''}/></td>
                 <td><input type="checkbox" data-home="${k}" ${c.cfg.homeHide.includes(m) ? 'checked' : ''}/></td>
+                <td><input type="checkbox" data-keep="${k}" ${c.cfg.keep.includes(m) ? 'checked' : ''}/></td>
                 <td><input type="radio" name="uw" data-uw="${k}" ${c.cfg.underwear === m ? 'checked' : ''}/></td>
                 ${female ? `<td><input type="radio" name="bra" data-bra="${k}" ${c.cfg.bra === m ? 'checked' : ''}/></td>` : ''}</tr>`
               )
@@ -571,7 +582,7 @@ async function showCivModel(i) {
         legwearMaterials: c.legwearMaterials, wetMaterials: c.wetMaterials.length ? c.wetMaterials : null, cfg: c.cfg, underwear: uwPick, underwearRes: 1024,
       },
       (ch) => {
-        if (view.bare) for (const e of ch.mats || []) if (!/skin|body|face|eye|hair|brow|mouth|lash/i.test(e.name) && e.name !== c.cfg.underwear && e.name !== c.cfg.bra) e.m.visible = false;
+        if (view.bare) for (const e of ch.mats || []) if (!/skin|body|face|eye|hair|brow|mouth|lash/i.test(e.name) && e.name !== c.cfg.underwear && e.name !== c.cfg.bra && !c.cfg.keep.includes(e.name)) e.m.visible = false;
         if (view.wet) ch.setWet(1);
         if (view.home) ch.setHomeMode?.(true);
       }
@@ -597,6 +608,7 @@ async function showCivModel(i) {
   s.querySelectorAll('[data-leg]').forEach((el) => (el.onchange = () => ((c.legwearMaterials = toggle(c.legwearMaterials, mats[+el.dataset.leg], el.checked)), save())));
   s.querySelectorAll('[data-wet]').forEach((el) => (el.onchange = () => ((c.wetMaterials = toggle(c.wetMaterials, mats[+el.dataset.wet], el.checked)), save())));
   s.querySelectorAll('[data-home]').forEach((el) => (el.onchange = () => ((c.cfg.homeHide = toggle(c.cfg.homeHide, mats[+el.dataset.home], el.checked)), save())));
+  s.querySelectorAll('[data-keep]').forEach((el) => (el.onchange = () => ((c.cfg.keep = toggle(c.cfg.keep, mats[+el.dataset.keep], el.checked)), save())));
   s.querySelectorAll('[data-uw]').forEach((el) => (el.onchange = () => ((c.cfg.underwear = +el.dataset.uw < 0 ? null : mats[+el.dataset.uw]), save())));
   s.querySelectorAll('[data-bra]').forEach((el) => (el.onchange = () => ((c.cfg.bra = +el.dataset.bra < 0 ? null : mats[+el.dataset.bra]), save())));
   s.querySelector('#cm-roll').onclick = () => ((uwPick = randomUnderwear(c.gender)), show());
@@ -804,6 +816,7 @@ function outfitEditor(o, prefix, full) {
         ${m.materials ? '' : `<button class="secondary" data-${prefix}parts>Show parts list</button>`}
         ${m.materials ? `<div class="note">Legwear parts (hidden after a mishap):</div>${matList(m, prefix + 'mat')}` : ''}
         ${m.materials ? `<div class="note">Parts that turn see-through when wet:</div>${matList(m, prefix + 'wet', 'wetMaterials')}` : ''}
+        ${m.materials ? `<div class="note">Parts kept on in underwear, at home and at the pool (glasses, accessories):</div>${matList(m, prefix + 'keep', 'keepMaterials')}` : ''}
         <label><input type="checkbox" data-${prefix}uw ${m.underwearOverlay ? 'checked' : ''}/> Add simple underwear overlay (only if the model has no underwear)</label>
         <label>Clothes</label><select data-${prefix}clothes>${clothesOpts}</select>
         <div class="note">Wear another model's clothes, fitted to this body.</div></details>`
@@ -926,6 +939,7 @@ function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator, onRefr
   if (o.model) {
     bindMatList(s, o.model, prefix + 'mat', refresh);
     bindMatList(s, o.model, prefix + 'wet', refresh, 'wetMaterials');
+    bindMatList(s, o.model, prefix + 'keep', refresh, 'keepMaterials');
   }
   for (const k of ['skin', 'hair', 'top', 'bottom', 'under']) {
     s.querySelectorAll(`[data-${prefix}${k}]`).forEach((el) => {

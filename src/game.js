@@ -306,6 +306,7 @@ export class Game {
       tintBottom: bottom,
       // bundled bodies with nothing picked get the default see-through-when-wet parts (their tops)
       wetMaterials: o.model?.asset && !(o.model.wetMaterials || []).length ? null : o.model?.wetMaterials || [],
+      keepMaterials: o.model?.keepMaterials || null,
       gender: def.gender,
       clothes,
       cfg: o.model?.cfg || null,
@@ -833,6 +834,15 @@ export class Game {
       ui.showHUD(false);
       await this.hooks.chooseOutfits(this);
       ui.showHUD(true);
+    }
+    // remember what the player wore today (the title screen picks from these)
+    const today = this.state.daily.player;
+    if (today) {
+      const look = { outfit: today.outfit || 0, top: today.top || null, bottom: today.bottom || null, legwearType: today.legwearType || null };
+      const worn = (this.state.worn ||= []);
+      const k = JSON.stringify(look);
+      if (!worn.some((w) => JSON.stringify(w) === k)) worn.push(look);
+      if (worn.length > 40) worn.shift();
     }
     await this.hireReplacements();
     await this.loadDayChars();
@@ -4901,7 +4911,7 @@ export class Game {
     if (!this.slotId) return;
     await writeSave(this.slotId, JSON.parse(JSON.stringify({
       day: st.day, shame: st.shame, writeups: st.writeups, cw: st.cw, pendingBless: st.pendingBless, pendingTalks: st.pendingTalks, news: st.news || [],
-      celestiMet: st.celestiMet, eveningShown: st.eveningShown, daily: st.daily, seed: st.seed, done: !!st.done, savedAt: Date.now(),
+      celestiMet: st.celestiMet, eveningShown: st.eveningShown, daily: st.daily, worn: st.worn || [], seed: st.seed, done: !!st.done, savedAt: Date.now(),
     })));
   }
 

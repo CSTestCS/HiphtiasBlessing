@@ -50,6 +50,8 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 
 **Coworkers outside work.** Running into a coworker in town or on the commute never gets you reported. Ones who never saw anything at work figure you just hate wearing clothes. Ones who know have their own take. Kind coworkers who know, and fellow blessed coworkers, ask what's going on. Once you've met Celesti you can explain the blessing, which can turn them into allies.
 
+**Kept parts.** Glasses or other accessories can be marked "Keep" (in a civilian model's Details, or in your outfit's model parts). They stay on in underwear, at home and at the pool.
+
 **At home.** If you haven't picked an at-home outfit, you're down to your underwear at home.
 
 **Complaints.** Customer and security complaints count per day. Anyone who has already reported you today won't report you again; they just glare.
