@@ -5,11 +5,33 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { propMesh } from './props.js';
 
+/**
+ * See-through cutout: world geometry between the camera and the player is not drawn inside a circle
+ * around the player on screen, so walls never hide them (the game sets these every frame).
+ */
+export const CUTOUT = { uCutScreen: { value: new THREE.Vector2() }, uCutDepth: { value: 0 }, uCutRadius: { value: 0 } };
+function addCutout(m) {
+  m.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, CUTOUT);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vCutY;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvCutY = (modelMatrix * vec4(transformed, 1.0)).y;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec2 uCutScreen;\nuniform float uCutDepth;\nuniform float uCutRadius;\nvarying float vCutY;')
+      .replace(
+        '#include <clipping_planes_fragment>',
+        '#include <clipping_planes_fragment>\nif (uCutRadius > 0.0 && vCutY > 0.35 && vViewPosition.z < uCutDepth && distance(gl_FragCoord.xy, uCutScreen) < uCutRadius) discard;'
+      );
+  };
+  m.customProgramCacheKey = () => 'cutout';
+  return m;
+}
+
 const mats = {};
 export function mat(color, opts = {}) {
   const key = color + JSON.stringify(opts);
   if (!mats[key]) {
-    mats[key] = new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.85, metalness: 0, ...opts });
+    mats[key] = addCutout(new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.85, metalness: 0, ...opts }));
   }
   return mats[key];
 }
@@ -275,7 +297,11 @@ export class Level {
   }
 
   floor(x, z, w, d, color, y = 0) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat(color));
+    // layered floors (roads on sidewalks, lines on roads, rugs...) are pushed toward the camera by
+    // their layer, so they never flicker against what's under them
+    const layer = Math.min(12, Math.round(y * 1000));
+    const fm = layer > 0 ? mat(color, { polygonOffset: true, polygonOffsetFactor: -layer, polygonOffsetUnits: -layer * 4 }) : mat(color);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), fm);
     m.rotation.x = -Math.PI / 2;
     m.position.set(x, y + 0.001, z);
     m.receiveShadow = true;

@@ -20,6 +20,7 @@ import {
   MAKESHIFT_FAILS, MAKESHIFT_SNAGS, RESIDENT_INTRO, RESIDENT_REPLIES, WARDROBE_RUIN, HOME_RUIN, MACHINE_ERRORS, FRIEND_CHECKS, FRIEND_FINE, FRIEND_COMFORT, BLESSED_FRIEND_CHECKS, ODDBALL_CHECKS, BLESSED_MEET, BLESSED_MEET_REPLIES, BLESSED_APOLOGY, BLESSED_BANTER } from './lines.js';
 import { buildApartment } from './levels/apartment.js';
 import { buildCity } from './levels/city.js';
+import { CUTOUT } from './level.js';
 import { buildWorkplace } from './levels/workplace.js';
 import { buildShop } from './levels/shop.js';
 import { BusSystem, DOOR } from './bus.js';
@@ -96,14 +97,14 @@ export class Game {
     this.clock = 450;
     this.stamina = 100;
 
-    const r = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true }));
+    const r = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' }));
     r.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     r.setSize(window.innerWidth, window.innerHeight);
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     r.outputColorSpace = THREE.SRGBColorSpace;
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 400);
+    this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.15, 400);
     this.hemi = new THREE.HemisphereLight(0xffffff, 0x8d7b68, 1.2);
     this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xffffff, 2.0);
@@ -5224,7 +5225,8 @@ export class Game {
     const pitch = p.bus ? Math.max(0.65, c.pitch) : c.pitch;
     const dir = new THREE.Vector3(-Math.sin(c.yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(c.yaw) * Math.cos(pitch));
     let dist = p.bus ? Math.min(c.dist, 4.5) : c.dist;
-    if (this.level && !p.bus) {
+    // indoors, walls pull the camera in; outside, building walls don't (it sees through them from inside)
+    if (this.level && !p.bus && !this.outdoors) {
       const hit = this.level.rayHit(target.x, target.y, target.z, dir.x, dir.y, dir.z, dist, p.pushing);
       if (hit < dist) dist = Math.max(0.6, hit - 0.25);
     }
@@ -5256,6 +5258,17 @@ export class Game {
     this.camera.position.copy(target).addScaledVector(dir, dist);
     if (this.camera.position.y < 0.25) this.camera.position.y = 0.25;
     this.camera.lookAt(target);
+    // outside, walls between the camera and the player get a see-through hole around them
+    if (this.outdoors && !p.bus) {
+      const buf = this.renderer.getDrawingBufferSize(this._cutV || (this._cutV = new THREE.Vector2()));
+      this.camera.updateMatrixWorld();
+      const sp = target.clone().project(this.camera);
+      CUTOUT.uCutScreen.value.set(((sp.x + 1) / 2) * buf.x, ((sp.y + 1) / 2) * buf.y);
+      CUTOUT.uCutDepth.value = Math.max(0.2, dist - 0.7);
+      // about the player's on-screen height
+      const px = buf.y / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) * Math.max(0.5, dist));
+      CUTOUT.uCutRadius.value = px * 1.15;
+    } else CUTOUT.uCutRadius.value = 0;
     const now = performance.now();
     const dt = Math.min(0.05, (now - (this._rt || now)) / 1000);
     this._rt = now;
