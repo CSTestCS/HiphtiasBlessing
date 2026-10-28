@@ -2320,6 +2320,21 @@ export class Game {
         else if (coming && d < 10) aware.push(o);
       }
       const nearestOf = (list) => list.slice().sort((a, b) => near(a) - near(b))[0];
+      // people planted in place (the guard, customers, anyone settled at a desk) don't look away for long
+      const isPlanted = (o) => o.state !== 'walk' && (['guard', 'customer', 'clerk', 'manager'].includes(o.kind) || o.working || o.sitting);
+      const watchedSpot = (x, z) => obs.some((o) => isPlanted(o) && this.seesPoint(o, x, z, 0.6));
+      s.avoid = (s.avoid || []).filter((a) => a.until > now);
+      const avoidHere = (x, z) => s.avoid.push({ x, z, until: now + 90000 });
+      const skipActivity = () => {
+        const k = s.steps.findIndex((x) => x.go);
+        s.plan(k >= 0 ? s.steps.slice(k) : []);
+      };
+      // standing around (working, idling) somewhere a planted watcher can see: go do something else
+      if (!threats.length && !s.sitting && s.state !== 'walk' && !s.cur?.evade && !s.cur?.hold && watchedSpot(s.x, s.z)) {
+        avoidHere(s.x, s.z);
+        skipActivity();
+        continue;
+      }
       // a carried item stays pointed at whoever is most likely to see; crouch past people nearby
       const facing = nearestOf(threats) || nearestOf(aware);
       s.faceYaw = s.carry && facing ? Math.atan2(facing.x - s.x, facing.z - s.z) : null;
@@ -2355,19 +2370,17 @@ export class Game {
             if (left <= 0) break;
           }
           const dest = s.cur.go;
-          s.avoid = (s.avoid || []).filter((a) => a.until > now);
           const avoided = s.avoid.some((a) => Math.hypot(a.x - dest.x, a.z - dest.z) < 1.5);
           const spotter = obs.find((o) => near(o) < o.range + 2 && pts.some((q) => this.seesPoint(o, q.x, q.z, 0.15)));
           // someone planted in place (the guard, a customer, a person at their desk) won't look away for
           // long: don't wait them out, find something else to do somewhere they can't see
           const planted = spotter && spotter.state !== 'walk' && (['guard', 'customer', 'clerk'].includes(spotter.kind) || spotter.working || spotter.sitting);
-          const destSeen = obs.some((o) => o.state !== 'walk' && this.seesPoint(o, dest.x, dest.z, 0.6));
+          const destSeen = !s.cur.evade && watchedSpot(dest.x, dest.z);
           s.holdT = s.holdT || 0;
-          if (avoided || ((planted || destSeen) && s.holdT > 2.5)) {
-            s.avoid.push({ x: dest.x, z: dest.z, until: now + 90000 });
+          if (avoided || destSeen || (planted && s.holdT > 2.5)) {
+            avoidHere(dest.x, dest.z);
             s.holdT = 0;
-            const k = s.steps.findIndex((x) => x.go);
-            s.plan(k >= 0 ? s.steps.slice(k) : []);
+            skipActivity();
             continue;
           }
           if (spotter && s.holdT < 14) {
@@ -2405,6 +2418,15 @@ export class Game {
       const carrying = !!s.carry;
       const all = [...threats, ...aware];
       const tableSeat = (r) => (L.seats || []).filter((x) => !x.taken && x.underTable && near(x) < r && !threats.some((o) => near(o) < 1.5)).sort((a, b) => near(a) - near(b))[0];
+      if (threats.some(isPlanted)) {
+        const nextGo = resume.find((x) => x.go);
+        if (nextGo && watchedSpot(nextGo.go.x, nextGo.go.z)) {
+          avoidHere(nextGo.go.x, nextGo.go.z);
+          const k = resume.indexOf(nextGo);
+          const k2 = resume.findIndex((x, i) => i > k && x.go);
+          resume.splice(0, k2 >= 0 ? k2 : resume.length);
+        }
+      }
       const mark = (dest) => (s.evade = { ids: new Set(threats.map((o) => o.id)), until: now + 6000, dest, resume });
       const sitAt = (seat) => {
         seat.taken = s;
