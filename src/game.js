@@ -2276,49 +2276,134 @@ export class Game {
     });
   }
 
-  /** Sneaking coworkers react to threats: run to cover that blocks every threat's line of sight. */
+  /** Could observer o see a sneaker's hips at (x, z)? fovPad widens the cone for people about to turn. */
+  seesPoint(o, x, z, fovPad = 0, h = 0.85) {
+    const dx = x - o.x;
+    const dz = z - o.z;
+    const d = Math.hypot(dx, dz);
+    if (d > o.range) return false;
+    if (d > 1.2 && Math.abs(angDiff(Math.atan2(dx, dz), o.lookYaw)) > o.fov / 2 + fovPad) return false;
+    return this.level.lineOfSight(o.eye(), new THREE.Vector3(x, h, z));
+  }
+
+  /**
+   * Sneaking coworkers keep track of everyone who could get them in trouble, all the time:
+   * they react the moment someone new looks their way, check their route before walking it,
+   * wait in cover until a watcher turns away, keep a carried item toward whoever might see,
+   * and crouch past people who could turn around.
+   */
   updateSneakers(dt) {
     this.work.coverT -= dt;
     if (this.work.coverT > 0) return;
-    this.work.coverT = 0.5;
+    const step = 0.25;
+    this.work.coverT = step;
     const L = this.level;
+    const now = performance.now();
     for (const s of this.npcs) {
-      if (s.kind !== 'coworker' || !s.sneaking || s.char.legwearOn || ['talk', 'hiding'].includes(s.state)) continue;
-      if (s.coverUntil && s.coverUntil > performance.now()) continue;
-      const threats = this.sneakObservers(s).filter((o) => {
-        const d = Math.hypot(o.x - s.x, o.z - s.z);
-        if (d > o.range + 3) return false;
-        const looking = Math.abs(angDiff(Math.atan2(s.x - o.x, s.z - o.z), o.lookYaw)) < o.fov / 2 + 0.3;
-        const approaching = o.state === 'walk' && o.path.length && Math.hypot(o.path[o.path.length - 1].x - s.x, o.path[o.path.length - 1].z - s.z) < d;
-        return (looking || approaching || d < 5) && L.lineOfSight(o.eye(), s.hip());
-      });
-      if (!threats.length) continue;
-      // already sitting: stay put until it's clear
+      if (s.kind !== 'coworker' || !s.sneaking || s.char.legwearOn || ['talk', 'hiding'].includes(s.state)) {
+        s.faceYaw = null;
+        s.sneakCrouch = false;
+        continue;
+      }
+      const obs = this.sneakObservers(s);
+      const near = (o) => Math.hypot(o.x - s.x, o.z - s.z);
+      // who can see me right now, who's coming, and who's close enough to turn around and see
+      const threats = [];
+      const aware = [];
+      for (const o of obs) {
+        const d = near(o);
+        if (d > o.range + 4) continue;
+        const los = L.lineOfSight(o.eye(), s.hip());
+        const coming = o.state === 'walk' && o.path.length && Math.hypot(o.path[o.path.length - 1].x - s.x, o.path[o.path.length - 1].z - s.z) < Math.min(d, 8);
+        if (los && (d < 4.5 || coming || Math.abs(angDiff(Math.atan2(s.x - o.x, s.z - o.z), o.lookYaw)) < o.fov / 2 + 0.35)) threats.push(o);
+        else if (los && d < 9) aware.push(o);
+        else if (coming && d < 10) aware.push(o);
+      }
+      const nearestOf = (list) => list.slice().sort((a, b) => near(a) - near(b))[0];
+      // a carried item stays pointed at whoever is most likely to see; crouch past people nearby
+      const facing = nearestOf(threats) || nearestOf(aware);
+      s.faceYaw = s.carry && facing ? Math.atan2(facing.x - s.x, facing.z - s.z) : null;
+      s.sneakCrouch = !s.carry && (aware.length > 0 || threats.length > 0) && !s.sitting;
+
+      // an evasion in progress stays put only while it still makes sense
+      const ev = s.evade;
+      if (ev && ev.until > now) {
+        const newcomer = threats.some((o) => !ev.ids.has(o.id));
+        const destBlown = ev.dest && threats.some((o) => this.seesPoint(o, ev.dest.x, ev.dest.z, 0.3, ev.dest.low ? 0.5 : 0.85));
+        if (!newcomer && !destBlown) continue;
+      }
+      if (ev && ev.until <= now) s.evade = null;
+
+      if (!threats.length) {
+        s.evade = null;
+        // look before you leap: is the stretch of route ahead visible to someone looking that way?
+        if (s.state === 'walk' && s.cur?.go && s.path.length && !s.sitting) {
+          const pts = [];
+          let px = s.x;
+          let pz = s.z;
+          let left = 5;
+          for (const wp of s.path) {
+            const seg = Math.hypot(wp.x - px, wp.z - pz);
+            const n = Math.ceil(Math.min(seg, left) / 1.5);
+            for (let k = 1; k <= n; k++) {
+              const f = Math.min(1, (k * 1.5) / seg);
+              pts.push({ x: px + (wp.x - px) * f, z: pz + (wp.z - pz) * f });
+            }
+            left -= seg;
+            px = wp.x;
+            pz = wp.z;
+            if (left <= 0) break;
+          }
+          const spotter = obs.find((o) => near(o) < o.range + 2 && pts.some((q) => this.seesPoint(o, q.x, q.z, 0.15)));
+          s.holdT = s.holdT || 0;
+          if (spotter && !s.carry && s.holdT < 14) {
+            // wait here (out of sight) for them to look away, then carry on
+            s.holdT += step;
+            if (!s.cur.hold) {
+              const resume = [s.cur, ...s.steps];
+              s.plan([{ t: 1, hold: true, lowCover: true, yaw: Math.atan2(spotter.x - s.x, spotter.z - s.z) }, ...resume]);
+            } else s.timer = Math.max(s.timer, 0.5);
+            continue;
+          }
+          if (spotter && s.holdT >= 14) s.speedMul = 1.45; // waited long enough: dash across
+          if (!spotter) s.holdT = Math.max(0, s.holdT - step * 2);
+        }
+        continue;
+      }
+
+      // already sitting at a desk: stay put until it's clear
       if (s.sitting) {
         s.timer = Math.max(s.timer || 0, 2.5);
         continue;
       }
-      s.coverUntil = performance.now() + 3500;
+      s.holdT = 0;
       const faceOf = (o) => Math.atan2(o.x - s.x, o.z - s.z);
       const angs = threats.map(faceOf);
       let spread = 0;
       for (const a of angs) for (const b of angs) spread = Math.max(spread, Math.abs(angDiff(a, b)));
       const mean = Math.atan2(angs.reduce((v, a) => v + Math.sin(a), 0), angs.reduce((v, a) => v + Math.cos(a), 0));
-      const resume = s.steps.slice();
+      const cur = s.cur && !s.cur.evade && !s.cur.hold ? [s.cur] : [];
+      const resume = (s.evade?.resume || [...cur, ...s.steps]).filter((x) => !x.evade && !x.hold);
       const carrying = !!s.carry;
-      const near = (o) => Math.hypot(o.x - s.x, o.z - s.z);
-      const tableSeat = (r) => (L.seats || []).filter((x) => !x.taken && x.underTable && near(x) < r).sort((a, b) => near(a) - near(b))[0];
+      const all = [...threats, ...aware];
+      const tableSeat = (r) => (L.seats || []).filter((x) => !x.taken && x.underTable && near(x) < r && !threats.some((o) => near(o) < 1.5)).sort((a, b) => near(a) - near(b))[0];
+      const mark = (dest) => (s.evade = { ids: new Set(threats.map((o) => o.id)), until: now + 6000, dest, resume });
       const sitAt = (seat) => {
         seat.taken = s;
-        s.plan([{ go: seat }, { sit: true, t: 4 + Math.random() * 4, yaw: seat.yaw, call: () => (seat.taken = s) }, { t: 0, call: () => seat.taken === s && (seat.taken = false) }, ...resume]);
+        mark({ x: seat.x, z: seat.z, low: true });
+        s.plan([{ go: seat, evade: true }, { sit: true, evade: true, t: 4 + Math.random() * 4, yaw: seat.yaw, call: () => (seat.taken = s) }, { t: 0, call: () => seat.taken === s && (seat.taken = false) }, ...resume]);
       };
-      const face = (t = 2.5 + Math.random() * 2) => s.plan([{ t, yaw: mean }, ...resume]);
-      const c = this.findCover(s, threats);
+      const face = (t = 2 + Math.random() * 1.5) => {
+        mark(null);
+        s.plan([{ t, yaw: mean, evade: true }, ...resume]);
+      };
+      const c = this.findCover(s, threats, all);
       const cd = c ? near(c) : Infinity;
       const toCover = (faceThem) => {
         const fy = faceThem ? Math.atan2(threats[0].x - c.x, threats[0].z - c.z) : Math.atan2(c.x - threats[0].x, c.z - threats[0].z);
+        mark({ x: c.x, z: c.z, low: !c.tall });
         // short hops are quick; long dashes in plain view are what get people caught
-        s.plan([{ go: c, run: cd > 1.5, lowCover: !c.tall }, { t: 4 + Math.random() * 4, yaw: fy, lowCover: !c.tall }, ...resume]);
+        s.plan([{ go: c, run: cd > 1.5, lowCover: !c.tall, evade: true }, { t: 3 + Math.random() * 3, yaw: fy, lowCover: !c.tall, evade: true }, ...resume]);
       };
       const surrounded = threats.length >= 2 && spread > 1.6;
       // 1) holding something: keep it between you and them; step into cover only if it's right there
@@ -2334,6 +2419,7 @@ export class Game {
         else if (c && cd < 4) toCover(carrying);
         else if (carrying) face();
         else if (c) toCover(false);
+        else face();
         continue;
       }
       // 3) empty-handed: nearby cover, a desk to sit at, or something to grab and hold up
@@ -2349,10 +2435,11 @@ export class Game {
       const pk = (L.pickups || []).filter((k) => !k.taken && near(k) < 3).sort((a, b) => near(a) - near(b))[0];
       if (pk) {
         pk.taken = true;
+        mark(null);
         s.plan([
-          { go: pk },
-          { t: 0.4, call: () => ((pk.mesh.visible = false), (s.keepCarry = pk.kind), (s.heldPickup = pk), s.setCarry(pk.kind)) },
-          { t: 2.5, yaw: mean },
+          { go: pk, evade: true },
+          { t: 0.4, evade: true, call: () => ((pk.mesh.visible = false), (s.keepCarry = pk.kind), (s.heldPickup = pk), s.setCarry(pk.kind)) },
+          { t: 2.5, yaw: mean, evade: true },
           ...resume,
         ]);
         continue;
@@ -2365,8 +2452,9 @@ export class Game {
       const o = threats[0];
       const a = Math.atan2(s.x - o.x, s.z - o.z);
       const q = L.resolve(s.x + Math.sin(a) * 3, s.z + Math.cos(a) * 3, 0.3);
-      if (this.coverSafe(q, threats, false)) s.plan([{ go: q, run: true }, { t: 2, yaw: a }, ...resume]);
-      else s.plan([{ t: 2, lowCover: true, yaw: a }, ...resume]);
+      mark(q);
+      if (this.coverSafe(q, threats, false)) s.plan([{ go: q, run: true, evade: true }, { t: 2, yaw: a, evade: true }, ...resume]);
+      else s.plan([{ t: 2, lowCover: true, yaw: a, evade: true }, ...resume]);
     }
   }
 
@@ -2376,7 +2464,7 @@ export class Game {
     return threats.every((o) => !this.level.lineOfSight(o.eye(), hip));
   }
 
-  findCover(s, threats) {
+  findCover(s, threats, others = []) {
     const L = this.level;
     const cands = [];
     for (const c of L.coverPoints || []) {
@@ -2398,7 +2486,11 @@ export class Game {
         const dt = Math.hypot(o.x - c.x, o.z - c.z);
         if (dt < 3) score += 12;
         else score += 6 / dt;
+        // the dash over there: is it in plain view the whole way?
+        for (const f of [0.35, 0.7]) if (this.seesPoint(o, s.x + (c.x - s.x) * f, s.z + (c.z - s.z) * f, 0.3)) score += 4;
       }
+      // somewhere people nearby could also see is only half a hiding place
+      for (const o of others) if (!threats.includes(o) && this.level.lineOfSight(o.eye(), new THREE.Vector3(c.x, c.tall ? 0.85 : 0.5, c.z))) score += 3;
       if (score < bs) {
         bs = score;
         best = c;

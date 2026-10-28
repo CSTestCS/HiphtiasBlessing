@@ -263,11 +263,12 @@ export class NPC {
           this.path.shift();
           if (!this.path.length) this.next();
         } else {
-          const sp = this.speed * (this.speedMul || 1) * (this.crouch ? 0.55 : 1);
+          const sp = this.speed * (this.speedMul || 1) * (this.crouch ? 0.55 : 1) * (this.faceYaw != null ? 0.7 : 1);
           const step = Math.min(d, sp * dt);
           this.x += (dx / d) * step;
           this.z += (dz / d) * step;
-          const a = Math.atan2(dx, dz);
+          // a sneaker carrying something keeps it toward whoever might see, walking sideways if need be
+          const a = this.faceYaw != null ? this.faceYaw : Math.atan2(dx, dz);
           this.yaw += angDiff(a, this.yaw) * Math.min(1, dt * 8);
           this.lookYaw = this.yaw + Math.sin(t * 0.9 + this.seed) * 0.3;
           moving = true;
@@ -301,8 +302,8 @@ export class NPC {
     }
 
     // sneakers crouch only where it helps: behind low cover or while hiding
-    this.crouch = this.sneaking && ((this.lowCover && !moving) || this.state === 'hiding' || (this.lowCover && this.cur && this.cur.go && this.path.length <= 1));
-    this.curSpeed += ((moving ? this.speed * (this.speedMul || 1) * (this.crouch ? 0.55 : 1) : 0) - this.curSpeed) * Math.min(1, dt * 10);
+    this.crouch = this.sneaking && ((this.lowCover && !moving) || this.state === 'hiding' || (this.lowCover && this.cur && this.cur.go && this.path.length <= 1) || (this.sneakCrouch && moving && !(this.cur && this.cur.run)));
+    this.curSpeed += ((moving ? this.speed * (this.speedMul || 1) * (this.crouch ? 0.55 : 1) * (this.faceYaw != null ? 0.7 : 1) : 0) - this.curSpeed) * Math.min(1, dt * 10);
     if (this.pushing && moving) {
       const m = this.pushing;
       const tg = g.level.pushTarget(m, this.x, this.z, this.yaw);
