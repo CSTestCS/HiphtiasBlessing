@@ -1531,7 +1531,9 @@ export function fitClothing(srcScene, srcHum, dst, filter) {
     }
     const clothPts = [];
     for (const i of clothIdx) clothPts.push(pos.getX(i), pos.getY(i), pos.getZ(i), Math.max(0.022, Math.min(0.07, maxEdge[i] * 0.7)));
-    const inv = D.body.bindMatrixInverse;
+    // the body's rest-pose matrix (bindMatrixInverse follows the character around the world in
+    // 'attached' mode, which would throw the clothes off the body wherever it isn't at the origin)
+    const inv = D.body.bindMatrix.clone().invert();
     geo.applyMatrix4(inv);
     pos.needsUpdate = true;
     si.needsUpdate = true;
