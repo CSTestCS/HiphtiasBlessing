@@ -7,7 +7,7 @@ import { ui, esc } from './ui.js';
 import { NPC, angDiff, pick, propMesh } from './npc.js';
 import { drawPortrait } from './portrait.js';
 import { sound, reactionSound, applyVolumeSettings, volumeSlidersHTML, bindVolumeSliders } from './audio.js';
-import { createCharacter, createMannequin, randomColors, addAngelic, setExpressionMax, borrowLegwear, workKindFor } from './character.js';
+import { createCharacter, createMannequin, randomColors, addAngelic, setExpressionMax, setWetMaxSee, borrowLegwear, workKindFor } from './character.js';
 import { buildLobby } from './levels/lobby.js';
 import { buildHallway, buildPool, buildLaundry } from './levels/building.js';
 import { Rain } from './weather.js';
@@ -33,6 +33,9 @@ const RUN = 4.3;
 const CROUCH = 1.1;
 const LEND_TIME = 90; // seconds per turn in the borrowed legwear
 const DISTRACT_TIME = 14;
+const DISTRACT_COOLDOWN = 120; // seconds before the same person will make another scene
+const LEND_COOLDOWN = 180; // seconds after giving their legwear back before they'll lend it again
+const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.ceil(t % 60)).padStart(2, '0')}`;
 const MGR_GRACE = 150;
 // the workday, in minutes after midnight
 const SHIFT = { start: 540, lunch: 720, lunchEnd: 780, end: 1020 };
@@ -67,6 +70,7 @@ export class Game {
     this.extraCivs = ctx.extraCivs || [];
     this.minPerSec = 60 / Math.max(20, this.settings.hourSeconds || 240);
     setExpressionMax(this.settings.exprMax ?? 0.7);
+    setWetMaxSee(this.settings.wetMaxSee ?? 0.5);
     this.onEnd = onEnd;
     this.jobId = this.profile.job;
     this.job = JOBS[this.jobId];
@@ -1843,10 +1847,45 @@ export class Game {
       }
     }
     p.wet = w;
+    this.soakedShame(dt);
     // only push to the materials when it changed visibly
     if (Math.abs(w - (p.wetShown ?? -1)) > 0.02 || (w === 0 && p.wetShown !== 0)) {
       p.wetShown = w;
       p.char.setWet(w);
+    }
+  }
+
+  /**
+   * Soaked through, with see-through clothes: that's exposure too, whatever you're holding or wearing
+   * over your hips. Anyone who can see you adds a little shame.
+   */
+  soakedShame(dt) {
+    const p = this.player;
+    const see = this.settings.wetMaxSee ?? 0.5;
+    const home = this.phase === 'morning' || this.phase === 'evening';
+    if (p.wet < 0.7 || see < 0.05 || home || p.hidden || !(p.char.wetSet?.size > 0)) return;
+    this.soakT = (this.soakT || 0) - dt;
+    if (this.soakT > 0) return;
+    const step = 0.5;
+    this.soakT = step;
+    const chest = new THREE.Vector3(p.x, (p.char.height || 1.6) * 0.75, p.z);
+    let watchers = 0;
+    for (const n of this.npcs) {
+      if (!n.canSee() || n.sneaking || this.complicit(n)) continue;
+      const dx = p.x - n.x;
+      const dz = p.z - n.z;
+      const d = Math.hypot(dx, dz);
+      if (d > Math.min(n.range, 12)) continue;
+      if (d > 1.2 && Math.abs(angDiff(Math.atan2(dx, dz), n.lookYaw)) > n.fov / 2) continue;
+      if (this.level.lineOfSight(n.eye(), chest)) watchers++;
+    }
+    if (p.bus) watchers += Math.min(3, p.bus.passengers?.length || 0) > 0 ? 1 : 0;
+    if (!watchers) return;
+    const k = ((p.wet - 0.7) / 0.3) * (see / 0.5);
+    this.addShame(SHAME.soaked * step * Math.min(3, watchers) * k, true);
+    if (!this.soakNoted || performance.now() - this.soakNoted > 60000) {
+      this.soakNoted = performance.now();
+      ui.toast('Your soaked clothes are see-through... and people can see it. (Shame rising: get somewhere dry!)', 'bad', 5000);
     }
   }
 
@@ -2994,6 +3033,8 @@ export class Game {
     if (b.undo) b.undo();
     else b.char.setLegwear(false);
     b.npc.lending = false;
+    // they need a while before lending them out again
+    if (this.cwRuntime[b.npc.index]) this.cwRuntime[b.npc.index].lendCd = LEND_COOLDOWN;
     const cw = this.state.cw[b.npc.index];
     if (!b.npc.removed) {
       b.npc.char.setLegwear(!(cw.blessed || cw.playing));
@@ -3149,9 +3190,9 @@ export class Game {
     const opts = [
       { label: '"I\'m fine. Totally fine."', value: 'fine' },
       { label: '"Honestly? Barely surviving."', value: 'honest' },
-      { label: '"Could you cause a distraction?"', value: 'distract', disabled: rt.distractCd > 0 },
+      { label: rt.distractCd > 0 ? `"Could you cause a distraction?" (not for ${mmss(rt.distractCd)})` : '"Could you cause a distraction?"', value: 'distract', disabled: rt.distractCd > 0 },
     ];
-    if (!this.player.borrow && !n.lending) opts.push({ label: `"Could I borrow your ${n.legwearType} for a bit?"`, value: 'lend', disabled: rt.lendCd > 0 });
+    if (!this.player.borrow && !n.lending) opts.push({ label: rt.lendCd > 0 ? `"Could I borrow your ${n.legwearType}?" (not for ${mmss(rt.lendCd)})` : `"Could I borrow your ${n.legwearType} for a bit?"`, value: 'lend', disabled: rt.lendCd > 0 });
     const v = await this.dialog(`${nm} checks on you`, pick(FRIEND_CHECKS)(nm, you, this.profile.manager.name), opts, { who: n, pose: 'clasp', mood: { sad: 0.4, surprised: 0.2 }, bg: 'tone' });
     rt.bond += 3;
     if (v === 'fine') {
@@ -3215,7 +3256,7 @@ export class Game {
     const L = this.level;
     const p = this.player;
     const rt = this.cwRuntime[n.index];
-    rt.distractCd = 50;
+    rt.distractCd = DISTRACT_TIME + DISTRACT_COOLDOWN;
     rt.bond += 6;
     // somewhere believable to make a fuss: a copier, printer, coffee machine... not right next to you
     const tags = ['copier', 'printer', 'coffee', 'vending', 'fridge', 'microwave', 'supply', 'register', 'shelf', 'table', 'mop'];
@@ -3325,12 +3366,12 @@ export class Game {
     const opts = [];
     if (n.personality === 'friend') {
       opts.push({
-        label: rt.lendCd > 0 ? `Swap legwear (${n.name} needs a break: ${Math.ceil(rt.lendCd)}s)` : `Take turns with ${n.name}'s ${n.legwearType} (${LEND_TIME}s, somewhere private)`,
+        label: rt.lendCd > 0 ? `Swap legwear (${n.name} needs a break: ${mmss(rt.lendCd)})` : `Take turns with ${n.name}'s ${n.legwearType} (${LEND_TIME}s, somewhere private)`,
         value: 'lend',
         disabled: rt.lendCd > 0 || !!p.borrow,
       });
     }
-    opts.push({ label: rt.distractCd > 0 ? `Ask for a distraction (ready in ${Math.ceil(rt.distractCd)}s)` : 'Ask for a distraction', value: 'distract', disabled: rt.distractCd > 0 });
+    opts.push({ label: rt.distractCd > 0 ? `Ask for a distraction (${n.name} needs ${mmss(rt.distractCd)})` : 'Ask for a distraction', value: 'distract', disabled: rt.distractCd > 0 });
     opts.push({ label: 'Never mind', value: null, cls: 'secondary' });
     n.plan([]);
     n.state = 'talk';
@@ -4127,8 +4168,9 @@ export class Game {
     w.clockedOut = true;
     const left = w.requests.length;
     if (left) {
-      ui.toast(`${left} request${left > 1 ? 's' : ''} left unfinished.`, left >= 3 ? 'bad' : '', 4500);
-      if (left >= 3) this.state.pendingTalks.push({ reason: 'slacking', who: left });
+      const ok = this.settings.allowedUnfinished ?? 2;
+      ui.toast(`${left} request${left > 1 ? 's' : ''} left unfinished${left > ok ? '' : ` (up to ${ok} is fine)`}.`, left > ok ? 'bad' : '', 4500);
+      if (left > ok) this.state.pendingTalks.push({ reason: 'slacking', who: left });
     }
     if (this.player.borrow) {
       this.endBorrow(true);

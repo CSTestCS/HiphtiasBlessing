@@ -317,6 +317,12 @@ async function showSettings() {
       <input type="range" id="s-detect" min="0.25" max="2" step="0.05" value="${st.detectScale ?? 1}" />
       <p class="note">How quickly someone who can see your underwear realizes what they're looking at.</p>
       <label><input type="checkbox" id="s-sleep" ${st.sleepRecovery !== false ? 'checked' : ''}/> A night's sleep reduces Shame</label>
+      <label>Soaked clothes see-through: <b id="v-wet"></b></label>
+      <input type="range" id="s-wet" min="0" max="0.95" step="0.05" value="${st.wetMaxSee ?? 0.5}" />
+      <p class="note">How see-through wet tops and dresses get when completely soaked. 0% = rain never shows through.</p>
+      <label>Unfinished requests allowed at clock-out: <b id="v-unf"></b></label>
+      <input type="range" id="s-unf" min="0" max="8" step="1" value="${st.allowedUnfinished ?? 2}" />
+      <p class="note">Leave more than this many requests undone and the manager wants a word. Lower = harder.</p>
       <label>Facial expression strength: <b id="v-expr"></b></label>
       <input type="range" id="s-expr" min="0" max="1" step="0.05" value="${st.exprMax}" />
       <p class="note">Maximum weight of VRoid facial expressions (blend shapes) used to show how characters feel.</p>
@@ -332,6 +338,8 @@ async function showSettings() {
     s.querySelector('#v-shame').textContent = `×${(+s.querySelector('#s-shame').value).toFixed(2)}`;
     s.querySelector('#v-expr').textContent = `${Math.round(+s.querySelector('#s-expr').value * 100)}%`;
     s.querySelector('#v-detect').textContent = `×${(+s.querySelector('#s-detect').value).toFixed(2)}`;
+    s.querySelector('#v-wet').textContent = `${Math.round(+s.querySelector('#s-wet').value * 100)}%`;
+    s.querySelector('#v-unf').textContent = `${s.querySelector('#s-unf').value}`;
   };
   fmt();
   const save = async () => {
@@ -340,6 +348,8 @@ async function showSettings() {
     st.exprMax = +s.querySelector('#s-expr').value;
     st.detectScale = +s.querySelector('#s-detect').value;
     st.sleepRecovery = s.querySelector('#s-sleep').checked;
+    st.wetMaxSee = +s.querySelector('#s-wet').value;
+    st.allowedUnfinished = +s.querySelector('#s-unf').value;
     st.minimap = s.querySelector('#s-map').checked;
     st.useBundledCivilians = s.querySelector('#s-civ').checked;
     await putSettings(st);
@@ -347,7 +357,7 @@ async function showSettings() {
   s.querySelectorAll('input:not([id^="s-vol"])').forEach((el) => (el.oninput = el.onchange = () => (fmt(), save())));
   bindVolumeSliders(s, st, () => putSettings(st));
   s.querySelector('#s-reset').onclick = async () => {
-    Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, detectScale: 1, sleepRecovery: true, minimap: true, useBundledCivilians: true });
+    Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, detectScale: 1, sleepRecovery: true, wetMaxSee: 0.5, allowedUnfinished: 2, minimap: true, useBundledCivilians: true });
     for (const k of ['volMaster', 'volSfx', 'volVoice', 'volAmbient', 'volUi']) st[k] = DEFAULT_SETTINGS[k];
     applyVolumeSettings(st);
     await putSettings(st);

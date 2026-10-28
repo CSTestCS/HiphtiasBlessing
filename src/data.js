@@ -415,7 +415,7 @@ export function mishapFor(tag) {
 export const SHAME = {
   pedestrian: 3, pedestrianStare: 0.35, busDriver: 2, busPass: 1.5, busNeighbor: 2, busNeighborRate: 0.06, busStandRate: 0.04, busStandCap: 0.5,
   friend: 2, sympathetic: 3, oddball: 1, neutralWarn: 6, report: 4, customer: 4, managerTalk: 5, clerk: 2, encounterFriendly: 2, encounterHostile: 4,
-  dog: 1, sleep: 25,
+  dog: 1, sleep: 25, soaked: 0.3,
 };
 
 export const DEFAULT_SETTINGS = {
@@ -429,6 +429,8 @@ export const DEFAULT_SETTINGS = {
   sleepRecovery: true,
   exprMax: 0.7,
   minimap: true,
+  wetMaxSee: 0.5,
+  allowedUnfinished: 2,
   volMaster: 0.8,
   volSfx: 1,
   volVoice: 0.9,

@@ -22,6 +22,11 @@ let EXPR_MAX = 0.7;
 export function setExpressionMax(v) {
   EXPR_MAX = Math.max(0, Math.min(1, v));
 }
+// how see-through wet clothes can get at most (0 = never, 1 = fully invisible)
+let WET_MAX_SEE = 0.5;
+export function setWetMaxSee(v) {
+  WET_MAX_SEE = Math.max(0, Math.min(0.95, v));
+}
 
 function makeLoader() {
   const loader = new GLTFLoader();
@@ -922,7 +927,7 @@ class CharacterBase {
           m.depthWrite = want ? false : o.depthWrite;
           m.needsUpdate = true;
         }
-        m.opacity = (o.opacity ?? 1) * (1 - 0.8 * see); // never below 20% opacity
+        m.opacity = (o.opacity ?? 1) * (1 - WET_MAX_SEE * see); // capped by the 'soaked see-through' setting
         // cut-out (MASK) materials would discard everything below the cutoff, making the part vanish
         m.alphaTest = want ? Math.min(o.alphaTest || 0, 0.04) : o.alphaTest;
       }
