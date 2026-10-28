@@ -27,3 +27,14 @@ for (const f of readdirSync('assets/models')) {
 // fonts (Comic Neue, SIL Open Font License)
 mkdirSync('dist/fonts', { recursive: true });
 for (const f of readdirSync('assets/fonts')) copyFileSync('assets/fonts/' + f, 'dist/fonts/' + f);
+
+// underwear overlays
+mkdirSync('dist/underwear', { recursive: true });
+copyFileSync('assets/underwear/union.png', 'dist/underwear/union.png');
+for (const sub of ['panties', 'bras']) {
+  mkdirSync('dist/underwear/' + sub, { recursive: true });
+  for (const f of readdirSync('assets/underwear/' + sub)) {
+    const dst = 'dist/underwear/' + sub + '/' + f;
+    if (!existsSync(dst)) copyFileSync('assets/underwear/' + sub + '/' + f, dst);
+  }
+}

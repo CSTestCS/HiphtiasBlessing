@@ -55,6 +55,7 @@ export class Minimap {
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       for (const [k, pl] of Object.entries(L.places || {})) {
+        if (k !== 'home' && pl === L.places.home) continue; // your building is drawn as home
         const icon = k === 'home' ? '⌂' : k === 'work' ? '★' : '●';
         g.fillStyle = k === 'home' ? '#55efc4' : k === 'work' ? '#ffd36e' : '#ff7eb6';
         g.fillText(icon, X(pl.door.x), Z(pl.door.z));
@@ -215,6 +216,7 @@ export class Minimap {
       ctx.font = 'bold 12px sans-serif';
       ctx.textAlign = 'center';
       for (const [kk, pl] of Object.entries(L.places || {})) {
+        if (kk !== 'home' && pl === L.places.home) continue;
         const [x, z] = P(pl.door.x, pl.door.z);
         ctx.fillStyle = 'rgba(0,0,0,.6)';
         const name = kk === 'home' ? 'Home' : kk === 'work' ? 'Work' : kk === 'poolgate' ? 'Pool gate' : pl.label.replace(/^Enter /, '');

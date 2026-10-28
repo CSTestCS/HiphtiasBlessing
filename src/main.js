@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { ui, esc } from './ui.js';
 import { storage, newId } from './storage.js';
-import { JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, FEMALE_NAMES, MALE_NAMES, nameFor, guessGender, guessModelGender, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
+import { randomApartment, aptById, UNDERWEAR, UNDERWEAR_COLORS, prettyUnderwear, randomUnderwear, JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, FEMALE_NAMES, MALE_NAMES, nameFor, guessGender, guessModelGender, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
 import { createCharacter, inspectVRM, randomColors, addAngelic, clearTemplates } from './character.js';
 import { Game, controlsTable } from './game.js';
 import { listSlots, loadSlot, createSlot, writeProfile, deleteSlot, otherSlotPeople } from './saves.js';
@@ -50,9 +50,13 @@ const randGender = () => (Math.random() < 0.5 ? 'female' : 'male');
 function migrateProfile(p) {
   if (!p) return p;
   if (p.player) {
+    // everyone has a home somewhere in town (older saves: the player stays at Maple Court)
+    if (!p.home) p.home = 'maple';
+    for (const c of p.coworkers || []) if (!c.home) c.home = randomApartment();
     // everyone has a gender now: guess from the name, and give them a matching bundled body
     for (const d of [p.player, p.manager, ...(p.coworkers || [])]) {
       if (!d) continue;
+      if (d !== p.player && !d.underwear) d.underwear = randomUnderwear(d.gender === 'male' ? 'male' : 'female');
       if (d.gender !== 'female' && d.gender !== 'male') {
         d.gender = d === p.player ? 'female' : guessGender(d.name);
         for (const o of d.outfits || []) if (o.model?.asset && BUNDLED.bodies.some((b) => b.asset === o.model.asset)) o.model = bundledBody(d.gender, /old/i.test(o.model.asset));
@@ -144,9 +148,11 @@ function killPreview() {
   previewer = null;
 }
 
-async function outfitOpts(o, tint = {}, gender = null) {
+async function outfitOpts(o, tint = {}, gender = null, underwear = null) {
   const m = o.model;
   return {
+    underwear: m && underwear?.panty ? underwear : null,
+    cfg: m?.cfg || null,
     vrm: m ? await getModel(m) : null,
     full: true,
     legwearMaterials: m ? m.legwearMaterials || null : null,
@@ -270,7 +276,7 @@ async function showTitleScene(lastSlot) {
       const { profile: raw } = await loadSlot(lastSlot.id);
       const profile = migrateProfile(raw);
       const o = profile?.player?.outfits?.[0];
-      if (o) player = await outfitOpts(o, {}, profile.player.gender);
+      if (o) player = await outfitOpts(o, {}, profile.player.gender, profile.player.underwear);
     }
   } catch (e) {
     console.warn('title: could not load last save', e);
@@ -421,7 +427,7 @@ async function showCivilians() {
                   .map(
                     (c, i) => `<div class="row" style="margin:6px 0"><span>${esc(c.title)}</span>
                     <select data-cgen="${i}"><option value="female" ${c.gender !== 'male' ? 'selected' : ''}>Female</option><option value="male" ${c.gender === 'male' ? 'selected' : ''}>Male</option></select>
-                    <button class="secondary" data-cprev="${i}">Preview</button><button class="danger" data-cdel="${i}">Remove</button></div>`
+                    <button class="secondary" data-cprev="${i}">Preview</button><button class="secondary" data-cedit="${i}">Details...</button><button class="danger" data-cdel="${i}">Remove</button></div>`
                   )
                   .join('')
               : '<p>No custom templates yet.</p>'
@@ -454,6 +460,7 @@ async function showCivilians() {
       })
   );
   s.querySelectorAll('[data-cprev]').forEach((b) => (b.onclick = () => ((cur = settings.civilians[+b.dataset.cprev]), show())));
+  s.querySelectorAll('[data-cedit]').forEach((b) => (b.onclick = () => showCivModel(+b.dataset.cedit)));
   s.querySelectorAll('[data-cdel]').forEach(
     (b) =>
       (b.onclick = async () => {
@@ -480,6 +487,108 @@ async function showCivilians() {
     showCivilians();
   };
   s.querySelector('#civ-back').onclick = showTitle;
+}
+
+/**
+ * Details for one civilian model: which parts take which random colors, which are legwear, which go
+ * see-through when wet, which come off at home / at the pool, and where the underwear (and bra) live.
+ */
+async function showCivModel(i) {
+  killPreview();
+  const settings = await getSettings();
+  const c = settings.civilians[i];
+  if (!c) return showCivilians();
+  ui.setScreen('<div class="loading">Reading the model...</div>');
+  try {
+    await ensureMaterials(c);
+  } catch (e) {
+    console.warn(e);
+  }
+  const mats = c.materials || [];
+  c.cfg = c.cfg || { slots: {}, homeHide: [], underwear: null, bra: null };
+  c.legwearMaterials = c.legwearMaterials || [];
+  c.wetMaterials = c.wetMaterials || [];
+  const female = c.gender !== 'male';
+  const SLOTS = [['', 'Auto'], ['skin', 'Skin'], ['hair', 'Hair'], ['eye', 'Eyes'], ['top', 'Top'], ['bottom', 'Bottom'], ['shoe', 'Shoes'], ['accent', 'Accent (random)'], ['none', 'Keep original']];
+  const view = { bare: false, wet: false, home: false };
+  const s = ui.setScreen(`
+    <div class="panel" style="max-width:1100px">
+      <h2>${esc(c.title)}: details</h2>
+      <div class="cols">
+        <div style="max-height:62vh;overflow:auto">
+          <table class="mattable">
+            <tr><th>Part</th><th>Random color</th><th title="Removable bottoms (pants/skirt)">Legwear</th><th title="Goes see-through when soaked">Wet</th><th title="Taken off at home and at the pool">Home/pool</th><th title="The texture the underwear is on (body skin, or a separate underwear mesh)">Underwear</th>${female ? '<th title="The texture the bra is on">Bra</th>' : ''}</tr>
+            <tr><td class="note">Detect automatically</td><td></td><td></td><td></td><td></td><td><input type="radio" name="uw" data-uw="-1" ${!c.cfg.underwear ? 'checked' : ''}/></td>${female ? `<td><input type="radio" name="bra" data-bra="-1" ${!c.cfg.bra ? 'checked' : ''}/></td>` : ''}</tr>
+            ${mats
+              .map(
+                (m, k) => `<tr><td>${esc(m)}</td>
+                <td><select data-slot="${k}">${SLOTS.map(([v, l]) => `<option value="${v}" ${(c.cfg.slots[m] || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
+                <td><input type="checkbox" data-leg="${k}" ${c.legwearMaterials.includes(m) ? 'checked' : ''}/></td>
+                <td><input type="checkbox" data-wet="${k}" ${c.wetMaterials.includes(m) ? 'checked' : ''}/></td>
+                <td><input type="checkbox" data-home="${k}" ${c.cfg.homeHide.includes(m) ? 'checked' : ''}/></td>
+                <td><input type="radio" name="uw" data-uw="${k}" ${c.cfg.underwear === m ? 'checked' : ''}/></td>
+                ${female ? `<td><input type="radio" name="bra" data-bra="${k}" ${c.cfg.bra === m ? 'checked' : ''}/></td>` : ''}</tr>`
+              )
+              .join('')}
+          </table>
+          <p class="note">Underwear: pick the body skin if the model's underwear is painted on its skin, or the underwear part if it's a separate mesh. Each townsperson then gets a random design and color${female ? ' (and a bra)' : ''} in place of the model's own.</p>
+        </div>
+        <div>
+          <canvas class="preview" id="pv"></canvas>
+          <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">
+            <button class="secondary" id="cm-roll">Roll a new townsperson</button>
+            <label><input type="checkbox" id="cm-bare"/> Underwear only</label>
+            <label><input type="checkbox" id="cm-wet"/> Soaked</label>
+            <label><input type="checkbox" id="cm-home"/> At home / pool</label>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><button class="secondary" id="cm-back">Back</button><span class="note" id="cm-saved"></span></div>
+    </div>`);
+  previewer = new Previewer(s.querySelector('#pv'));
+  let uwPick = randomUnderwear(c.gender);
+  const show = async () => {
+    previewer.legwear = !view.bare;
+    await previewer.show(
+      {
+        vrm: await getModel(c), key: 'civedit:' + c.key, randomize: true, underwearOverlay: false, gender: c.gender,
+        legwearMaterials: c.legwearMaterials, wetMaterials: c.wetMaterials.length ? c.wetMaterials : null, cfg: c.cfg, underwear: uwPick, underwearRes: 1024,
+      },
+      (ch) => {
+        if (view.bare) for (const e of ch.mats || []) if (!/skin|body|face|eye|hair|brow|mouth|lash/i.test(e.name) && e.name !== c.cfg.underwear && e.name !== c.cfg.bra) e.m.visible = false;
+        if (view.wet) ch.setWet(1);
+        if (view.home) ch.setHomeMode?.(true);
+      }
+    );
+  };
+  const save = async () => {
+    await putSettings(settings);
+    s.querySelector('#cm-saved').textContent = 'Saved.';
+    show();
+  };
+  const toggle = (list, m, on) => {
+    const set = new Set(list);
+    if (on) set.add(m);
+    else set.delete(m);
+    return [...set];
+  };
+  s.querySelectorAll('[data-slot]').forEach((el) => (el.onchange = () => {
+    const m = mats[+el.dataset.slot];
+    if (el.value) c.cfg.slots[m] = el.value;
+    else delete c.cfg.slots[m];
+    save();
+  }));
+  s.querySelectorAll('[data-leg]').forEach((el) => (el.onchange = () => ((c.legwearMaterials = toggle(c.legwearMaterials, mats[+el.dataset.leg], el.checked)), save())));
+  s.querySelectorAll('[data-wet]').forEach((el) => (el.onchange = () => ((c.wetMaterials = toggle(c.wetMaterials, mats[+el.dataset.wet], el.checked)), save())));
+  s.querySelectorAll('[data-home]').forEach((el) => (el.onchange = () => ((c.cfg.homeHide = toggle(c.cfg.homeHide, mats[+el.dataset.home], el.checked)), save())));
+  s.querySelectorAll('[data-uw]').forEach((el) => (el.onchange = () => ((c.cfg.underwear = +el.dataset.uw < 0 ? null : mats[+el.dataset.uw]), save())));
+  s.querySelectorAll('[data-bra]').forEach((el) => (el.onchange = () => ((c.cfg.bra = +el.dataset.bra < 0 ? null : mats[+el.dataset.bra]), save())));
+  s.querySelector('#cm-roll').onclick = () => ((uwPick = randomUnderwear(c.gender)), show());
+  s.querySelector('#cm-bare').onchange = (e) => ((view.bare = e.target.checked), show());
+  s.querySelector('#cm-wet').onchange = (e) => ((view.wet = e.target.checked), show());
+  s.querySelector('#cm-home').onchange = (e) => ((view.home = e.target.checked), show());
+  s.querySelector('#cm-back').onclick = showCivilians;
+  show();
 }
 
 // ---------------------------------------------------------------------------
@@ -552,7 +661,7 @@ function defaultDraft() {
     const g = randGender();
     const name = nameFor(g, used);
     used.add(name);
-    return { name, gender: g, personality: DEFAULT_PERSONALITIES[i], outfits: [newOutfit(g === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', randomColors(), g, Math.random() < 0.25)] };
+    return { name, gender: g, underwear: randomUnderwear(g), personality: DEFAULT_PERSONALITIES[i], outfits: [newOutfit(g === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', randomColors(), g, Math.random() < 0.25)] };
   };
   return {
     name: 'Alex',
@@ -576,7 +685,7 @@ async function refreshPreview() {
   if (!def) return;
   const label = document.getElementById('pv-label');
   if (label) label.textContent = previewTarget === 'player' ? draft.name || 'You' : def.name + (previewTarget === 'mgr' ? ' (manager)' : '');
-  await previewer.show(await outfitOpts(def.outfits[0], {}, def.gender));
+  await previewer.show(await outfitOpts(def.outfits[0], {}, def.gender, def.underwear));
 }
 
 function stepsBar() {
@@ -693,6 +802,36 @@ function outfitEditor(o, prefix, full) {
     ${full && !m ? `<label>Underwear color</label>${swatches('under', o.colors.under, prefix + 'under')}` : ''}`;
 }
 
+/** Underwear: a design (or the model's own), a bra for women, and a color for the plain designs. */
+function underwearEditor(def, attr) {
+  const uw = def.underwear || {};
+  const male = def.gender === 'male';
+  const pants = male ? UNDERWEAR.male : UNDERWEAR.panties;
+  return `<label>Underwear</label>
+    <div class="row" style="gap:6px;flex-wrap:wrap">
+      <select data-${attr}-p><option value="">The model's own</option>${pants.map((n) => `<option value="${n}" ${uw.panty === n ? 'selected' : ''}>${esc(prettyUnderwear(n))}</option>`).join('')}</select>
+      ${male ? '' : `<select data-${attr}-b ${uw.panty ? '' : 'disabled'}><option value="">No bra</option>${UNDERWEAR.bras.map((n) => `<option value="${n}" ${uw.bra === n ? 'selected' : ''}>${esc(prettyUnderwear(n))}</option>`).join('')}</select>`}
+      <button class="secondary" style="padding:4px 10px" data-${attr}-r>Random</button>
+    </div>
+    ${uw.panty ? swatches('under', uw.color, attr + '-c', UNDERWEAR_COLORS) : ''}
+    ${uw.panty ? '<div class="note">Plain designs take the color; printed ones keep their pattern. Only shows on .vrm models.</div>' : ''}`;
+}
+
+function bindUnderwear(s, def, attr, target) {
+  const re = () => ((previewTarget = target), renderCreator());
+  const p = s.querySelector(`[data-${attr}-p]`);
+  if (!p) return;
+  p.onchange = () => {
+    if (!p.value) def.underwear = null;
+    else def.underwear = { ...(def.underwear || randomUnderwear(def.gender)), panty: p.value };
+    re();
+  };
+  const b = s.querySelector(`[data-${attr}-b]`);
+  if (b) b.onchange = () => ((def.underwear = { ...def.underwear, bra: b.value || null }), re());
+  s.querySelector(`[data-${attr}-r]`).onclick = () => ((def.underwear = randomUnderwear(def.gender)), re());
+  s.querySelectorAll(`[data-${attr}-c]`).forEach((el) => (el.onclick = () => ((def.underwear = { ...def.underwear, color: el.getAttribute(`data-${attr}-c`) }), re())));
+}
+
 function genderSelect(def, attr) {
   return `<label>Gender</label><select data-${attr}><option value="female" ${def.gender === 'female' ? 'selected' : ''}>Female</option><option value="male" ${def.gender === 'male' ? 'selected' : ''}>Male</option></select>`;
 }
@@ -712,6 +851,8 @@ function bindGender(s, def, attr, target) {
       }
       if (def === draft.manager) def.name = def.name.replace(/^(Ms|Mrs|Miss|Mr)\.?(?=\s)/, def.gender === 'male' ? 'Mr.' : 'Ms.');
     }
+    if (def.underwear && def.gender === 'male' && (def.underwear.bra || !UNDERWEAR.male.includes(def.underwear.panty))) def.underwear = randomUnderwear('male');
+    if (def.underwear && def.gender === 'female' && !def.underwear.bra && def !== draft?.player) def.underwear = randomUnderwear('female');
     // swap a bundled body to one of the matching gender
     for (const o of def.outfits) if (o.model?.asset && def.gender) o.model = bundledBody(def.gender, /old/i.test(o.model.asset));
     previewTarget = target;
@@ -785,6 +926,7 @@ function creatorProfile() {
     <input type="text" id="f-name" maxlength="20" value="${esc(draft.name)}" />
     ${genderSelect(draft.player, 'pgender')}
     ${outfitEditor(draft.player.outfits[0], 'p', true)}
+    ${underwearEditor(draft.player, 'puw')}
     <p class="note">Tip: export from VRoid Studio without "delete hidden body parts" so the legs are complete under the clothes. You can add more outfits each morning.</p>`;
 }
 
@@ -804,6 +946,7 @@ function creatorCoworkers() {
       <div class="note">${esc(PERSONALITIES[c.personality].desc)}</div>
       ${genderSelect(c, 'cgender' + i)}
       ${outfitEditor(c.outfits[0], 'c' + i + 'x', false)}
+      ${underwearEditor(c, 'cuw' + i)}
     </div>`;
   return `<p class="note" style="margin-top:0">Coworkers' personalities decide how they react if they catch you. You need 4 to 12 coworkers (${draft.coworkers.length} now).</p>
   <div class="cw" style="margin-bottom:14px;border-color:#c0392b">
@@ -812,6 +955,7 @@ function creatorCoworkers() {
     <div class="note">Hands out write-ups. Three and you're fired. Patrols the building and works in their office.</div>
     ${genderSelect(draft.manager, 'mgender')}
     ${outfitEditor(draft.manager.outfits[0], 'm', false)}
+    ${underwearEditor(draft.manager, 'muw')}
   </div>
   <div class="cw-grid">${draft.coworkers.map(card).join('')}</div>
   <div class="row" style="margin-top:12px"><button id="cw-add" ${draft.coworkers.length >= 12 ? 'disabled' : ''}>+ Add coworker</button><span></span></div>`;
@@ -841,15 +985,18 @@ function bindCreator(s) {
     };
     bindOutfitEditor(s, draft.player.outfits[0], 'p', 'player');
     bindGender(s, draft.player, 'pgender', 'player');
+    bindUnderwear(s, draft.player, 'puw', 'player');
   } else if (step === 1) {
     q('[data-job]').forEach((el) => (el.onclick = () => ((draft.job = el.dataset.job), renderCreator())));
   } else if (step === 2) {
     s.querySelector('#mgr-name').oninput = (e) => (draft.manager.name = e.target.value);
     bindOutfitEditor(s, draft.manager.outfits[0], 'm', 'mgr');
     bindGender(s, draft.manager, 'mgender', 'mgr');
+    bindUnderwear(s, draft.manager, 'muw', 'mgr');
     draft.coworkers.forEach((c, i) => {
       bindOutfitEditor(s, c.outfits[0], 'c' + i + 'x', i);
       bindGender(s, c, 'cgender' + i, i);
+      bindUnderwear(s, c, 'cuw' + i, i);
     });
     q('[data-cwname]').forEach((el) => (el.oninput = () => (draft.coworkers[+el.dataset.cwname].name = el.value)));
     q('[data-cwpers]').forEach((el) => (el.onchange = () => ((draft.coworkers[+el.dataset.cwpers].personality = el.value), renderCreator())));
@@ -859,7 +1006,7 @@ function bindCreator(s) {
       const used = new Set(draft.coworkers.map((c) => c.name));
       const g = randGender();
       const nm = nameFor(g, used);
-      draft.coworkers.push({ name: nm, gender: g, personality: DEFAULT_PERSONALITIES[draft.coworkers.length % DEFAULT_PERSONALITIES.length], outfits: [newOutfit(g === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', randomColors(), g, Math.random() < 0.25)] });
+      draft.coworkers.push({ name: nm, gender: g, underwear: randomUnderwear(g), personality: DEFAULT_PERSONALITIES[draft.coworkers.length % DEFAULT_PERSONALITIES.length], outfits: [newOutfit(g === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', randomColors(), g, Math.random() < 0.25)] });
       previewTarget = draft.coworkers.length - 1;
       renderCreator();
     };
@@ -870,6 +1017,9 @@ async function beginNewGame() {
   killPreview();
   const profile = JSON.parse(JSON.stringify({ name: draft.name.trim(), job: draft.job, layoutSeed: draft.layoutSeed, player: draft.player, manager: draft.manager, coworkers: draft.coworkers }));
   profile.coworkers.forEach((c) => (c.name = c.name.trim()));
+  // where everyone lives: picked fresh for each new game, then kept with the save
+  profile.home = randomApartment();
+  for (const c of profile.coworkers) c.home = randomApartment();
   const id = await createSlot(profile, { day: 1, shame: 0, seed: profile.layoutSeed });
   startGame(id);
 }
@@ -935,10 +1085,10 @@ function chooseOutfits(g) {
         const d = daily[e.key];
         if (homePrev && e.key === 'player') {
           const o = e.def.outfits[d.home ?? e.def.homeOutfit ?? d.outfit] || e.def.outfits[0];
-          return previewer.show(await outfitOpts(o, { top: d.homeTop, bottom: null }, e.def.gender));
+          return previewer.show(await outfitOpts(o, { top: d.homeTop, bottom: null }, e.def.gender, e.def.underwear));
         }
         const o = e.def.outfits[d.outfit] || e.def.outfits[0];
-        previewer.show(await outfitOpts(o, d, e.def.gender));
+        previewer.show(await outfitOpts(o, d, e.def.gender, e.def.underwear));
       };
       show();
       s.querySelectorAll('[data-osel]').forEach((b) => (b.onclick = () => ((sel = b.dataset.osel), render())));

@@ -17,7 +17,7 @@ The week runs Monday to Friday at work. Saturdays and Sundays are **days off wit
 The title screen shows Celesti floating in, and the main character of your last played save looking very startled about it.
 - **Continue / Load Game**: multiple save slots, each its own game. Coworkers from your other saves walk around town as named townsfolk.
 - **New Game**: create your character (name, gender, body, legwear, colors or your own .vrm), pick one of 7 jobs, and set up 4–12 coworkers plus a manager.
-- **Settings**: length of an in-game hour (default 4 real minutes), shame buildup intensity, how fast people notice you, whether sleep reduces shame, facial expression strength, minimap on/off, bundled townsfolk on/off, and volume for master, effects, voices, ambience and interface (also in the pause menu).
+- **Settings**: length of an in-game hour (default 4 real minutes), shame buildup intensity, how fast people notice you, whether sleep reduces shame, facial expression strength, minimap on/off, bundled townsfolk on/off, and volume for master, effects, voices, ambience and interface (also in the pause menu), how see-through soaked clothes get, and how many unfinished requests are fine at clock-out.
 - **Civilian Models**: 4 bundled townsperson models are used by default. Import more .vrm templates (with a gender). Every NPC gets random skin, hair, eye and clothing colors.
 - **Celesti's Model**: the bundled Celesti model is used by default. Import your own .vrm (a halo and wings are added) and set her name.
 
@@ -43,6 +43,14 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 **People in on the secret.** Friends who know drop by now and then to check you're okay (and can cause a distraction or lend you their pants). Oddballs who joined in come over to compare how many times each of you has been spotted. Coworkers who only see you after they've been blessed themselves have their own moment of recognition, and might team up with you; ones who saw you before apologize. After that, blessed coworkers trade a quick word when you pass.
 
 **Dialog** is laid out like a manga panel: the speaker posed for the moment (startled, pointing, arms crossed, covering up, floating...), quotes in speech bubbles and narration in caption boxes.
+
+**Everyone has a home.** The city has six apartment complexes. Each new game puts you in a random one and gives every coworker a home too (kept with the save). On workdays coworkers walk to work before their shift and home after it, so you can run into them on the street, with consequences. People from your other saves hang around their own buildings.
+
+**Underwear.** Every character has some: pick a design (38 cuts, 24 bras, plain ones in any color or printed sets) for yourself and your coworkers in the creator, and townsfolk get random ones. It's painted into the body texture (replacing the model's own) or, for models with a separate underwear mesh, replaces that mesh's texture.
+
+**Civilian model details.** For imported townsperson models, *Details...* lets you set which parts take which random colors, which are legwear, which go see-through when wet, which come off at home and at the pool, and which texture holds the underwear (and bra).
+
+**Coworkers.** Names and bodies always match the character's gender. Two days after someone is fired, a new hire takes their desk. Allies need a break between favors (about 3 minutes after a legwear swap, 2 after a distraction). Being fully soaked in see-through clothes slowly adds Shame whenever people can see you, whatever you're holding.
 
 **Sound.** Everything is synthesized live (no audio files): footsteps that change with the floor (and other people's, so you can hear someone coming), doors, elevators, office machines, phones, buses, rain and thunder, a heartbeat that quickens as someone starts to notice you, manga-style stingers when you're caught, wordless voices for reactions (gasps, giggles, wolf whistles, tutting), and ambience for every area.
 
@@ -130,6 +138,7 @@ The `.exe` is portable: no installer, just double-click it. It isn't code-signed
 - `src/portrait.js`: posed character snapshots for the manga-style dialog panels
 - `src/title.js`: the 3D title screen backdrop
 - `src/audio.js`: synthesized sound effects, ambience loops and volume settings
+- `assets/underwear/`: underwear designs (texture overlays in the VRoid body layout)
 - `assets/fonts/`: Comic Neue (SIL Open Font License) for speech bubbles
 - `src/level.js`: level building, collision, sight lines, navigation
 - `src/levels/`: apartment, lobby, city, workplace generator, shops

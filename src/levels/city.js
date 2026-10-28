@@ -2,7 +2,7 @@
 // your apartment, your workplace, cars, sidewalk routes and bus lines.
 import * as THREE from 'three';
 import { Level, mat, textPlane } from '../level.js';
-import { PLACES } from '../data.js';
+import { PLACES, APARTMENTS } from '../data.js';
 
 function mulberry(seed) {
   return () => {
@@ -34,7 +34,7 @@ export function streetName(axis, v) {
   return axis === 'x' ? AVES[i] : STS[i];
 }
 
-export function buildCity({ workplaceName = 'Work', jobColor = '#273c75' } = {}) {
+export function buildCity({ workplaceName = 'Work', jobColor = '#273c75', homeId = 'maple' } = {}) {
   const L = new Level('city');
   const rng = mulberry(4242);
   L.indoor = false;
@@ -73,19 +73,18 @@ export function buildCity({ workplaceName = 'Work', jobColor = '#273c75' } = {})
   // ---- blocks
   const palette = ['#d1ccc0', '#b8a99a', '#a4b0be', '#c8d6e5', '#e3c4a8', '#c7a17a', '#95a5a6', '#d6a2ad', '#b5c99a', '#dcd3c4'];
   const special = {
-    '0,3': { kind: 'home', side: 'e' },
-    '3,0': { kind: 'work', side: 'n' },
-    '1,3': { kind: 'supermarket', side: 'n' },
-    '2,3': { kind: 'pharmacy', side: 'w' },
-    '0,1': { kind: 'postoffice', side: 'e' },
-    '0,0': { kind: 'laundromat', side: 's' },
-    '2,0': { kind: 'bank', side: 's' },
-    '3,2': { kind: 'hardware', side: 'w' },
-    '1,0': { kind: 'bookstore', side: 'e' },
-    '3,3': { kind: 'misc' },
-    '3,1': { kind: 'misc' },
-    '0,2': { kind: 'misc' },
+    '3,0': [{ kind: 'work', side: 'n' }],
+    '1,3': [{ kind: 'supermarket', side: 'n' }],
+    '2,3': [{ kind: 'pharmacy', side: 'w' }],
+    '0,1': [{ kind: 'postoffice', side: 'e' }],
+    '0,0': [{ kind: 'laundromat', side: 's' }],
+    '2,0': [{ kind: 'bank', side: 's' }],
+    '3,2': [{ kind: 'hardware', side: 'w' }],
+    '1,0': [{ kind: 'bookstore', side: 'e' }],
   };
+  // apartment complexes; one of them is home
+  for (const a of APARTMENTS) (special[a.block] ||= []).push({ kind: 'apt:' + a.id, side: a.side, home: a.id === homeId });
+  L.apartments = {};
   const parks = new Set(['1,2', '2,1']);
   L.places = {};
   const blocks = [];
@@ -96,7 +95,7 @@ export function buildCity({ workplaceName = 'Work', jobColor = '#273c75' } = {})
       const [z0, z1] = blockRange(bz);
       const key = bx + ',' + bz;
       if (parks.has(key)) buildPark(L, x0, x1, z0, z1, rng);
-      else buildBlock(L, x0, x1, z0, z1, rng, palette, special[key], { workplaceName, jobColor });
+      else buildBlock(L, x0, x1, z0, z1, rng, palette, special[key] || [], { workplaceName, jobColor });
       // street furniture on the block's sidewalks
       blocks.push([x0, x1, z0, z1]);
     }
@@ -169,7 +168,8 @@ function buildBlock(L, x0, x1, z0, z1, rng, palette, sp, ctx) {
   for (const s of sides) {
     let a = s.a0;
     const len = s.a1 - s.a0;
-    const isSpecial = sp && sp.side === s.side;
+    const spS = sp.find((x) => x.side === s.side);
+    const isSpecial = !!spS;
     const specW = Math.min(18, len);
     const specA = s.a0 + len / 2 - specW / 2;
     while (a < s.a1 - 0.5) {
@@ -187,8 +187,8 @@ function buildBlock(L, x0, x1, z0, z1, rng, palette, sp, ctx) {
         a += w;
         continue;
       }
-      const h = special ? 9 : 7 + rng() * 16;
-      const col = special ? (sp.kind === 'home' ? '#c8a27a' : sp.kind === 'work' ? '#dfe4ea' : PLACES[sp.kind] ? '#ecf0f1' : palette[Math.floor(rng() * palette.length)]) : palette[Math.floor(rng() * palette.length)];
+      const h = special ? (spS.kind.startsWith('apt:') ? 16 : 9) : 7 + rng() * 16;
+      const col = special ? (spS.kind.startsWith('apt:') ? (spS.home ? '#c8a27a' : '#d7bfa3') : spS.kind === 'work' ? '#dfe4ea' : PLACES[spS.kind] ? '#ecf0f1' : palette[Math.floor(rng() * palette.length)]) : palette[Math.floor(rng() * palette.length)];
       const ca = a + w / 2;
       const cf = s.fixed + s.dir * (depth / 2);
       const bx = s.axis === 'x' ? ca : cf;
@@ -204,13 +204,13 @@ function buildBlock(L, x0, x1, z0, z1, rng, palette, sp, ctx) {
       for (let fy = 4; fy < h - 1; fy += 3.2) {
         L.box(fx, fz, s.axis === 'x' ? ww : 0.05, s.axis === 'x' ? 0.05 : ww, 1.2, '#34495e', { y: fy, collide: false, occlude: false, shadow: false });
       }
-      if (special) placeSpecial(L, sp.kind, s, ca, ctx);
+      if (special) placeSpecial(L, spS.kind, s, ca, ctx, spS);
       a += w;
     }
   }
 }
 
-function placeSpecial(L, kind, s, ca, ctx) {
+function placeSpecial(L, kind, s, ca, ctx, spec = {}) {
   // outward normal from the building face toward the street
   const nx = s.axis === 'z' ? -s.dir : 0;
   const nz = s.axis === 'x' ? -s.dir : 0;
@@ -222,10 +222,11 @@ function placeSpecial(L, kind, s, ca, ctx) {
   let label;
   let signText;
   let signBg;
-  if (kind === 'home') {
-    label = 'Enter your apartment';
-    signText = 'Maple Court Apartments';
-    signBg = '#5d4037';
+  const apt = kind.startsWith('apt:') ? APARTMENTS.find((a) => 'apt:' + a.id === kind) : null;
+  if (apt) {
+    label = spec.home ? `Enter ${apt.name} (home)` : apt.name;
+    signText = apt.name;
+    signBg = apt.color;
   } else if (kind === 'work') {
     label = `Enter ${ctx.workplaceName}`;
     signText = ctx.workplaceName;
@@ -244,7 +245,11 @@ function placeSpecial(L, kind, s, ca, ctx) {
     door: { x: fx + nx * 1.0, z: fz + nz * 1.0 },
     out: { x: fx + nx * 2.2, z: fz + nz * 2.2, yaw },
   };
-  if (kind === 'home') {
+  if (apt) {
+    L.apartments[apt.id] = L.places[kind];
+    if (spec.home) L.places.home = L.places[kind];
+  }
+  if (apt && spec.home) {
     // the residents' pool gate, a few meters along the same face: a back way in
     const ax = s.axis === 'x' ? 1 : 0;
     const az = s.axis === 'x' ? 0 : 1;
@@ -256,7 +261,7 @@ function placeSpecial(L, kind, s, ca, ctx) {
     gsign.rotation.y = yaw;
     L.add(gsign);
     L.places.poolgate = {
-      label: "Residents' pool gate (back way into Maple Court)",
+      label: `Residents' pool gate (back way into ${apt.short})`,
       door: { x: gx + nx * 1.0, z: gz + nz * 1.0 },
       out: { x: gx + nx * 2.2, z: gz + nz * 2.2, yaw },
     };

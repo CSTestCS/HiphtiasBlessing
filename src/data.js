@@ -222,6 +222,7 @@ export const REPORT_REASONS = {
   late: (mins) => `You were ${mins} minutes late this morning. And then you show up... like that.`,
   slacking: (n) => `Yesterday you left ${n} requests unfinished. People noticed. And then there's... the other thing.`,
   weekend: (who) => `${who} told me they saw you around town over the weekend. Dressed like... that. People talk, you know.`,
+  commute: (who) => `${who} says they passed you in the street on the way to or from work. Dressed like... that. In broad daylight.`,
 };
 
 // Errands for days off. Each errand happens inside a shop interior.
@@ -244,6 +245,18 @@ export const PLACES = {
   hardware: { name: 'Handy Hardware', color: '#e67e22' },
   bookstore: { name: 'Page Turner Books', color: '#a0522d' },
 };
+
+// Apartment complexes around town. Each game the player lives in one, and every coworker in one too.
+export const APARTMENTS = [
+  { id: 'maple', name: 'Maple Court Apartments', short: 'Maple Court', color: '#5d4037', block: '0,3', side: 'e' },
+  { id: 'riverside', name: 'Riverside Towers', short: 'Riverside Towers', color: '#1e3799', block: '3,3', side: 'n' },
+  { id: 'oakwood', name: 'Oakwood Residences', short: 'Oakwood', color: '#6d4c41', block: '3,1', side: 'w' },
+  { id: 'cedar', name: 'Cedar Heights', short: 'Cedar Heights', color: '#2d6a4f', block: '0,2', side: 'e' },
+  { id: 'pine', name: 'Pine View Lofts', short: 'Pine View', color: '#00695c', block: '1,3', side: 's' },
+  { id: 'elm', name: 'Elm Garden Flats', short: 'Elm Garden', color: '#8e44ad', block: '2,0', side: 'n' },
+];
+export const aptById = (id) => APARTMENTS.find((a) => a.id === id) || APARTMENTS[0];
+export const randomApartment = () => APARTMENTS[Math.floor(Math.random() * APARTMENTS.length)].id;
 
 export const FEMALE_NAMES = ['Mia', 'Priya', 'Sofia', 'Hana', 'Aria', 'Nora', 'Yuki', 'Lena', 'Chloe', 'Emma', 'Ines', 'Maya', 'Ruth', 'Zoe', 'Ivy', 'Clara', 'Amara', 'Elena', 'Rosa', 'Tess', 'Mei', 'Freya', 'Lucia', 'Naomi'];
 export const MALE_NAMES = ['Daniel', 'Kenji', 'Marcus', 'Leo', 'Felix', 'Theo', 'Omar', 'Ravi', 'Jonah', 'Mateo', 'Elliot', 'Samir', 'Hugo', 'Victor', 'Noah', 'Ethan', 'Diego', 'Kai', 'Ivan', 'Oscar', 'Tomas', 'Arjun', 'Liam', 'Rafael'];
@@ -489,4 +502,30 @@ export function pronouns(gender) {
   if (gender === 'male') return { they: 'he', them: 'him', their: 'his', theyre: "he's", They: 'He', Their: 'His' };
   if (gender === 'female') return { they: 'she', them: 'her', their: 'her', theyre: "she's", They: 'She', Their: 'Her' };
   return { they: 'they', them: 'them', their: 'their', theyre: "they're", They: 'They', Their: 'Their' };
+}
+
+// Underwear designs (texture overlays in the VRoid body layout). 'LegoBlack' ones are plain and take any
+// color; floral/heart/star ones keep their own print. Males only get the fuller cuts.
+export const UNDERWEAR = {
+  panties: ['BandThongLegoBlack', 'BikiniBriefFloralPastelPink', 'BikiniBriefLegoBlack', 'BikiniHipstersLegoBlack', 'BoyshortLegoBlack', 'BrazilianBriefsLegoBlack', 'BriefsLegoBlack', 'CheekyHighRiseLegoBlack', 'CheekyHipstersLegoBlack', 'CuteCheekyBriefsLegoBlack', 'EorzeanBriefsLegoBlack', 'EriHighBriefsLegoBlack', 'FrenchCutLegoBlack', 'FrenchCutThongLegoBlack', 'FullThongLegoBlack', 'HalfThongBriefLegoBlack', 'HalfThongLegoBlack', 'HalfTycoonsLegoBlack', 'HighCutThongLegoBlack', 'HighRiseLegoBlack', 'HighRiseTrimLegoBlack', 'HipstersLegoBlack', 'LowRiseCheekyLegoBlack', 'LowRiseCheekyTrimmedLegoBlack', 'LowRiseTangaLegoBlack', 'MidRiseThongLegoBlack', 'NierThongLegoBlack', 'ShapingBriefsLegoBlack', 'SimpleBikiniBriefLegoBlack', 'StringBikiniLegoBlack', 'StringTangaLegoBlack', 'StringThongLegoBlack', 'TangaLegoBlack', 'ThongBriefLegoBlack', 'ThongLegoBlack', 'TrimmedBriefsLegoBlack', 'TrimmedFullBriefLegoBlack', 'TycoonsLegoBlack'],
+  bras: ['AdhesiveBraLegoBlack', 'BalconetteBraLegoBlack', 'BikiniBraLegoBlack', 'BraFloralNude', 'BraFloralPastelPink', 'BraLegoBlack', 'EorzeanBraLegoBlack', 'FullCupBraLegoBlack', 'HalfCupBraLegoBlack', 'HalterTopBraLegoBlack', 'LaceBraLegoBlack', 'PlungeBraLegoBlack', 'RacerbackBraLegoBlack', 'SportsBraLegoBlack', 'SportsBraStarsLegoBlack', 'SportsBraTrimmedLegoBlack', 'StraplessBraFloralPastelPink', 'StraplessBraFloralPink', 'StraplessBraLegoBlack', 'TShirtBraLegoBlack', 'TriangleBraLegoBlack', 'TrimmedBikiniBraHearts', 'TrimmedBikiniBraLegoBlack', 'WirelessBraLegoBlack'],
+  male: ['BoyshortLegoBlack', 'BriefsLegoBlack', 'EorzeanBriefsLegoBlack', 'HighRiseLegoBlack', 'HighRiseTrimLegoBlack', 'ShapingBriefsLegoBlack', 'TrimmedBriefsLegoBlack', 'TrimmedFullBriefLegoBlack'],
+};
+export const UNDERWEAR_COLORS = ['#ffffff', '#1e1e24', '#ff9ff3', '#fd79a8', '#74b9ff', '#a29bfe', '#55efc4', '#ffeaa7', '#e17055', '#d63031', '#636e72', '#fab1a0'];
+export function prettyUnderwear(n) {
+  return n.replace(/LegoBlack$/, '').replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+/** Random underwear for a character who doesn't have any chosen. */
+export function randomUnderwear(gender) {
+  const pick = (a) => a[Math.floor(Math.random() * a.length)];
+  const plain = (n) => /LegoBlack$/.test(n);
+  const panty = pick(gender === 'male' ? UNDERWEAR.male : UNDERWEAR.panties);
+  // matching sets now and then
+  let bra = null;
+  if (gender !== 'male') {
+    const print = panty.replace(/^.*?(Floral|Hearts|Stars)/, '$1');
+    const match = !plain(panty) && UNDERWEAR.bras.find((x) => x.includes(print));
+    bra = match || pick(UNDERWEAR.bras.filter(plain));
+  }
+  return { panty, bra, color: pick(UNDERWEAR_COLORS) };
 }

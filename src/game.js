@@ -25,7 +25,7 @@ import { buildShop } from './levels/shop.js';
 import { BusSystem, DOOR } from './bus.js';
 import {
   JOBS, GENERIC_TASKS, STORY, REPORT_REASONS, ERRANDS, PLACES,
-  WEEKDAYS, weekday, isWorkday, CELESTI_DAY, ROLE_TASKS, mishapFor, SHAME, weatherFor, WEATHER, pronouns, BUNDLED, guessGender, guessModelGender, nameFor } from './data.js';
+  WEEKDAYS, weekday, isWorkday, CELESTI_DAY, ROLE_TASKS, mishapFor, SHAME, weatherFor, WEATHER, pronouns, BUNDLED, guessGender, guessModelGender, nameFor, randomUnderwear, APARTMENTS, aptById, randomApartment } from './data.js';
 
 const WALK = 2.0;
 const RUN = 4.3;
@@ -141,7 +141,7 @@ export class Game {
     this.levels.hallway = buildHallway();
     this.levels.pool = buildPool();
     this.levels.laundry = buildLaundry();
-    this.levels.city = buildCity({ workplaceName: this.job.workplaceName, jobColor: '#273c75' });
+    this.levels.city = buildCity({ workplaceName: this.job.workplaceName, jobColor: '#273c75', homeId: this.profile.home || 'maple' });
     ui.setScreen('<div class="loading">Building your workplace...</div>');
     await new Promise((r) => setTimeout(r, 30));
     this.levels.work = buildWorkplace(this.jobId, this.job, { coworkers: this.profile.coworkers, seed: this.state.seed });
@@ -156,12 +156,12 @@ export class Game {
     if (this.settings.useBundledCivilians !== false) {
       for (const b of BUNDLED.civilians) {
         const buf = await modelBuffer({ asset: b.asset });
-        if (buf) tpls.push({ key: 'asset:' + b.asset, buf, gender: b.gender });
+        if (buf) tpls.push({ key: 'asset:' + b.asset, buf, gender: b.gender, cfg: null, wetMaterials: null });
       }
     }
     for (const t of this.settings.civilians || []) {
       const buf = await modelBuffer({ key: t.key });
-      if (buf) tpls.push({ key: t.key, buf, gender: t.gender === 'male' || t.gender === 'female' ? t.gender : guessModelGender(t.title), legwearMaterials: t.legwearMaterials });
+      if (buf) tpls.push({ key: t.key, buf, gender: t.gender === 'male' || t.gender === 'female' ? t.gender : guessModelGender(t.title), legwearMaterials: t.legwearMaterials, wetMaterials: t.wetMaterials?.length ? t.wetMaterials : null, cfg: t.cfg || null });
     }
     this.civTemplates = tpls;
     // named townsfolk: coworkers from the player's other save slots
@@ -173,9 +173,11 @@ export class Game {
           vrm: await modelBuffer(o.model), key: modelKey(o.model), legwearMaterials: o.model?.legwearMaterials || null,
           underwearOverlay: !!o.model?.underwearOverlay, colors: o.colors, tintable: !!o.model?.tintable || !!o.model?.asset,
           legwearType: o.legwearType, gender: e.def.gender || guessGender(e.name), wetMaterials: o.model?.wetMaterials,
+          cfg: o.model?.cfg || null, underwear: e.def.underwear?.panty ? e.def.underwear : randomUnderwear(e.def.gender || guessGender(e.name)), underwearRes: 512,
         });
         ch.civilian = true;
         ch.civName = e.name;
+        ch.civHome = e.def.home || null;
         ch.gender = e.def.gender || guessGender(e.name);
         this.civPool.push(ch);
       } catch (err) {
@@ -187,12 +189,20 @@ export class Game {
       let ch;
       if (tpls.length) {
         const t = tpls[i % tpls.length];
-        ch = await createCharacter({ vrm: t.buf, key: 'civ:' + t.key, randomize: true, underwearOverlay: false, legwearMaterials: t.legwearMaterials || null, gender: t.gender });
+        ch = await createCharacter(this.civOpts(t));
         ch.gender = t.gender;
       } else ch = this.makeMannequinCiv();
       ch.civilian = true;
       this.civPool.push(ch);
     }
+  }
+
+  /** Options for a random townsperson from a template: random colors, and random underwear (everyone has secrets). */
+  civOpts(t) {
+    return {
+      vrm: t.buf, key: 'civ:' + t.key, randomize: true, underwearOverlay: false, legwearMaterials: t.legwearMaterials || null, gender: t.gender,
+      wetMaterials: t.wetMaterials ?? null, cfg: t.cfg || null, underwear: randomUnderwear(t.gender), underwearRes: 512,
+    };
   }
 
   makeMannequinCiv() {
@@ -211,7 +221,7 @@ export class Game {
       try {
         for (let i = 0; i < 10 && !this.ended; i++) {
           const t = this.civTemplates[Math.floor(Math.random() * this.civTemplates.length)];
-          const ch = await createCharacter({ vrm: t.buf, key: 'civ:' + t.key, randomize: true, underwearOverlay: false, legwearMaterials: t.legwearMaterials || null, gender: t.gender });
+          const ch = await createCharacter(this.civOpts(t));
           ch.civilian = true;
           ch.gender = t.gender;
           this.civPool.push(ch);
@@ -233,10 +243,12 @@ export class Game {
     return true;
   }
 
-  acquireCivilian() {
+  acquireCivilian(home = false, want = null) {
     if (this.civPool.length < 8) this.refillCivilians();
     let ch;
-    if (this.civPool.length) ch = this.civPool.splice(Math.floor(Math.random() * this.civPool.length), 1)[0];
+    const wi = want ? this.civPool.indexOf(want) : -1;
+    if (wi >= 0) ch = this.civPool.splice(wi, 1)[0];
+    else if (this.civPool.length) ch = this.civPool.splice(Math.floor(Math.random() * this.civPool.length), 1)[0];
     else {
       // nobody loaded yet: a hidden stand-in that gets swapped for a real model as soon as one is ready
       ch = this.makeMannequinCiv();
@@ -248,6 +260,8 @@ export class Game {
     ch.setProp(null);
     ch.setMood({});
     ch.setWet(0);
+    // at home (residents) and at the pool, people leave off what their model says they would
+    ch.setHomeMode?.(home || this.phase === 'pool');
     return ch;
   }
 
@@ -293,6 +307,9 @@ export class Game {
       wetMaterials: o.model?.asset && !(o.model.wetMaterials || []).length ? null : o.model?.wetMaterials || [],
       gender: def.gender,
       clothes,
+      cfg: o.model?.cfg || null,
+      underwear: def.underwear?.panty ? def.underwear : null,
+      underwearRes: 1024,
     });
     ch.legwearType = lt === 'skirt' ? 'skirt' : 'pants';
     ch.gender = def.gender;
@@ -584,6 +601,10 @@ export class Game {
   }
 
   /** Out under the sky (city streets or the pool courtyard). */
+  get homeApt() {
+    return aptById(this.profile.home || 'maple');
+  }
+
   get openAir() {
     return this.outdoors || this.phase === 'pool';
   }
@@ -850,9 +871,9 @@ export class Game {
       if (this.isRaining && this.player.wet > 0.3) ui.toast("You're dripping wet from the rain...", '', 4000);
       if (this.lateMins > 0) ui.toast(`You're ${this.lateMins} minutes late!`, 'bad', 5000);
     } else if (phase === 'commute_pm' && prev === 'work') {
-      ui.toast('Shift over! Get home to Maple Court Apartments.', '', 5000);
+      ui.toast(`Shift over! Get home to ${this.homeApt.name}.`, '', 5000);
     } else if (phase === 'dayoff' && prev === 'lobby' && this.clock <= 601) {
-      ui.toast('Run your errands. Your apartment is at Maple Court, the shops are all over town.', '', 6000);
+      ui.toast(`Run your errands. You live at ${this.homeApt.short}; the shops are all over town.`, '', 6000);
     } else if (phase === 'shop') {
       if (this.errand) ui.toast(`Errand: ${this.errand.name}`, '', 4000);
       else ui.toast('Nothing to do here today.', '', 3000);
@@ -963,12 +984,7 @@ export class Game {
         if (seat) seat.owner = i;
       }
       // everyone keeps slightly different hours: a few arrive late, some leave early, some stay late
-      const r = Math.random();
-      const sched = {
-        start: SHIFT.start + (Math.random() < 0.3 ? 5 + Math.random() * 40 : -15 + Math.random() * 15),
-        end: r < 0.15 ? 900 + Math.random() * 30 : r < 0.85 ? SHIFT.end + Math.random() * 10 : SHIFT.end + 25 + Math.random() * 40,
-        lunchOut: Math.random() < 0.4,
-      };
+      const sched = this.daySchedule(i);
       this.staffInfo[i] = { st, seat, role, sched };
       if (sched.start > this.clock + 1) this.work.pendingStaff.push({ i, start: sched.start });
       else this.spawnCoworker(i, false);
@@ -1292,6 +1308,18 @@ export class Game {
   pedestrianBrain(n) {
     if (n.idleSpot) return n.plan([{ sit: !!n.idleSpot.sit, t: 20 + Math.random() * 40, yaw: n.idleSpot.yaw }]);
     const G = this.level.pedGraph;
+    if (!G) return n.plan([{ t: 2 }]);
+    if (n.node == null || !G[n.node]) {
+      // not on the sidewalk network yet (a commuter, someone from a doorway): join at the nearest corner
+      let bi = 0;
+      let bd = Infinity;
+      for (let k = 0; k < G.length; k++) {
+        const d = Math.hypot(G[k].x - n.x, G[k].z - n.z);
+        if (d < bd) ((bd = d), (bi = k));
+      }
+      n.node = bi;
+      n.prevNode = bi;
+    }
     const node = G[n.node];
     let opts = node.n.filter((k) => k !== n.prevNode);
     if (!opts.length) opts = node.n;
@@ -1394,6 +1422,32 @@ export class Game {
     const want = this.pedTarget();
     let guard = 0;
     while (count < want && guard++ < 60 && this.civAvailable()) {
+      // people from your other saves are often around their own building
+      if (L.apartments && Math.random() < 0.35) {
+        const local = this.civPool.find((ch) => {
+          const d = ch.civHome && L.apartments[ch.civHome];
+          if (!d) return false;
+          const dd = Math.hypot(d.out.x - p.x, d.out.z - p.z);
+          return dd > (initial ? 8 : 25) && dd < 80;
+        });
+        if (local) {
+          const d = L.apartments[local.civHome].out;
+          const n = new NPC(this, this.acquireCivilian(false, local), { kind: 'pedestrian', x: d.x, z: d.z, yaw: d.yaw, range: 13, speed: 1.3 + Math.random() * 0.5 });
+          let bi = 0;
+          let bd = Infinity;
+          for (let k = 0; k < G.length; k++) {
+            const dk = Math.hypot(G[k].x - d.x, G[k].z - d.z);
+            if (dk < bd) ((bd = dk), (bi = k));
+          }
+          n.node = bi;
+          n.prevNode = bi;
+          n.plan([{ go: { x: G[bi].x, z: G[bi].z } }]);
+          this.dressCivilian(n);
+          this.npcs.push(n);
+          count++;
+          continue;
+        }
+      }
       // pick an edge near the player
       const a = Math.floor(Math.random() * G.length);
       const b = pick(G[a].n);
@@ -1526,6 +1580,7 @@ export class Game {
         this.spawnPedestrians(false);
       }
       if (this.phase === 'dayoff') this.updateChaos(dt);
+      this.updateCommuters(dt);
     }
     if (this.distraction) {
       this.distraction.t -= dt;
@@ -1696,11 +1751,11 @@ export class Game {
     let n;
     if (kind < 0.35) {
       // comes home from the elevator and goes inside
-      n = new NPC(this, this.acquireCivilian(), { kind: 'resident', name: `Resident (${d.apt})`, x: elev.x, z: elev.z, yaw: Math.PI / 2, range: 11 });
+      n = new NPC(this, this.acquireCivilian(true), { kind: 'resident', name: `Resident (${d.apt})`, x: elev.x, z: elev.z, yaw: Math.PI / 2, range: 11 });
       n.plan([{ go: d }, { t: 1, yaw: d.yaw + Math.PI }, { call: () => this.removeNPC(n) }]);
       ui.toast('*ding* The elevator doors open...', 'bad', 2500);
     } else {
-      n = new NPC(this, this.acquireCivilian(), { kind: 'resident', name: `Resident (${d.apt})`, x: d.x, z: d.z, yaw: d.yaw, range: 11 });
+      n = new NPC(this, this.acquireCivilian(true), { kind: 'resident', name: `Resident (${d.apt})`, x: d.x, z: d.z, yaw: d.yaw, range: 11 });
       if (kind < 0.7) n.plan([{ t: 3 + Math.random() * 4, yaw: d.yaw + (Math.random() < 0.5 ? 1 : -1) * Math.PI / 2 }, { t: 1.5, yaw: d.yaw }, { call: () => this.removeNPC(n) }]);
       else n.plan([{ t: 1 }, { go: Math.random() < 0.6 ? elev : stairs }, { call: () => this.removeNPC(n) }]);
       ui.toast('*click* A door opens down the hall...', 'bad', 2500);
@@ -1716,7 +1771,7 @@ export class Game {
     const L = this.level;
     const e = L.pois.entrance;
     const apt = pick(this.levels.hallway.pois.doors).apt;
-    const n = new NPC(this, this.acquireCivilian(), { kind: 'resident', name: `Resident (${apt})`, x: e.x, z: e.z, yaw: Math.PI / 2, range: 12 });
+    const n = new NPC(this, this.acquireCivilian(true), { kind: 'resident', name: `Resident (${apt})`, x: e.x, z: e.z, yaw: Math.PI / 2, range: 12 });
     n.apt = apt;
     n.setCarry('laundry');
     const w = L.interactables.get(pick(['washer0', 'washer1', 'washer3', 'washer4']));
@@ -1736,7 +1791,7 @@ export class Game {
       for (let k = 0; k < events; k++) this.later(1.5 + Math.random() * 10, () => this.hallwayResident());
     } else if (phase === 'pool' && !this.isRaining && this.clock < 1200) {
       for (const sp of L.pois.customerSpots.slice(0, 1 + Math.floor(Math.random() * 2))) {
-        const n = new NPC(this, this.acquireCivilian(), { kind: 'resident', name: 'Resident', x: sp.x, z: sp.z, yaw: sp.yaw, range: 10 });
+        const n = new NPC(this, this.acquireCivilian(true), { kind: 'resident', name: 'Resident', x: sp.x, z: sp.z, yaw: sp.yaw, range: 10 });
         n.sitting = !!sp.sit;
         n.plan([{ sit: !!sp.sit, t: 9999, yaw: sp.yaw }]);
         this.npcs.push(n);
@@ -2734,7 +2789,7 @@ export class Game {
   // Getting caught
   async caught(n) {
     const name = this.profile.name;
-    this.work.spotted = (this.work.spotted || 0) + 1;
+    if (this.work) this.work.spotted = (this.work.spotted || 0) + 1;
     if (n.kind === 'coworker' && this.state.cw[n.index]) this.state.cw[n.index].sawYou = true;
     const pg = this.profile.player.gender;
     if (!n.coworkerEncounter && n.kind !== 'resident' && this.letsItSlide(n, pg)) {
@@ -2869,7 +2924,8 @@ export class Game {
       reason === 'report' ? REPORT_REASONS.report(who) :
       reason === 'complaints' ? REPORT_REASONS.complaints() :
       reason === 'late' ? REPORT_REASONS.late(who) :
-      reason === 'weekend' ? REPORT_REASONS.weekend(who) : REPORT_REASONS.manager();
+      reason === 'weekend' ? REPORT_REASONS.weekend(who) :
+      reason === 'commute' ? REPORT_REASONS.commute(who) : REPORT_REASONS.manager();
     if (this.player.borrow) this.endBorrow(true);
     this.transitioning = true;
     await ui.fade(true);
@@ -3428,8 +3484,31 @@ export class Game {
     n.coworkerEncounter = false;
     const cw = this.state.cw[n.index];
     const nm = n.name;
+    const resume = n.commuter ? n.steps.slice() : null;
     n.plan([]);
     n.state = 'talk';
+    if (n.commuter) {
+      // ran into each other on the way to or from work
+      const am = this.phase === 'commute_am';
+      if (cw.blessed || cw.joined) {
+        this.addShame(SHAME.encounterFriendly);
+        await this.dialog(`You ran into ${nm}!`, pick([`${nm} spots you on the sidewalk and gives a tiny, knowing nod. "...Commuting like this too, huh? Stay off the main streets."`, `"${this.profile.name}!" ${nm} hisses, tugging their own top down. "The bus is worse. Trust me."`]), undefined, { who: n, pose: 'cover', mood: { surprised: 0.6, happy: 0.2 } });
+      } else if (['friend', 'sympathetic', 'oddball'].includes(n.personality)) {
+        this.addShame(SHAME.encounterFriendly);
+        await this.dialog(`You ran into ${nm}!`, n.personality === 'oddball' ? `"Whoa! Pantsless ${am ? 'commute' : 'walk home'}? Hardcore. I respect it."` : `"${this.profile.name}?! You're walking ${am ? 'to work' : 'home'} like THAT?" ${nm} steps between you and the street until the coast is clear.`, undefined, { who: n, pose: n.personality === 'oddball' ? 'fist' : 'startled', mood: n.personality === 'oddball' ? { happy: 1 } : { surprised: 1 }, bg: 'speed' });
+        if (n.personality !== 'oddball') cw.ally = true;
+      } else {
+        this.addShame(SHAME.encounterHostile);
+        this.talkMood(n, { angry: 0.8, surprised: 0.6 }, 8);
+        this.state.pendingTalks.push({ reason: 'commute', who: nm });
+        await this.dialog(`You ran into ${nm}!`, `${nm} stops dead on the sidewalk. ${pronouns(n.gender).Their} eyes travel down... and back up. "Unbelievable. Out in the STREET?"\n\n"${this.profile.manager.name} is going to hear about this."`, undefined, { who: n, pose: 'point', mood: { angry: 0.9 }, bg: 'speed' });
+      }
+      if (!n.removed) {
+        n.state = 'idle';
+        n.plan(resume && resume.length ? resume : [{ t: 1 }]);
+      }
+      return;
+    }
     if (cw.blessed || cw.joined) {
       this.addShame(SHAME.encounterFriendly);
       await this.dialog(`You ran into ${nm}!`, `${nm} spots you, freezes, and gives a tiny, knowing nod. "...You too, huh. Let's pretend we never saw each other."`, undefined, { who: n, pose: 'cover', mood: { surprised: 0.6, happy: 0.2 } });
@@ -3441,7 +3520,7 @@ export class Game {
       this.addShame(SHAME.encounterHostile);
       this.talkMood(n, { angry: 0.8, surprised: 0.6 }, 8);
       this.state.pendingTalks.push({ reason: 'weekend', who: nm });
-      await this.dialog(`You ran into ${nm}!`, `${nm} stops dead. Their eyes travel down... and back up. "Unbelievable. Even in PUBLIC?"\n\n"I'll be mentioning this to ${this.profile.manager.name} on Monday."`, undefined, { who: n, pose: 'point', mood: { angry: 0.9 }, bg: 'speed' });
+      await this.dialog(`You ran into ${nm}!`, `${nm} stops dead. ${pronouns(n.gender).Their} eyes travel down... and back up. "Unbelievable. Even in PUBLIC?"\n\n"I'll be mentioning this to ${this.profile.manager.name} on Monday."`, undefined, { who: n, pose: 'point', mood: { angry: 0.9 }, bg: 'speed' });
     }
     if (!n.removed) {
       n.kind = 'pedestrian';
@@ -3915,12 +3994,12 @@ export class Game {
         if (ph === 'dayoff' && this.errands.some((e) => !e.done)) return { label: 'Finish your errands first', disabled: true };
         return { label: "Slip in through the residents' pool gate (back way)", time: 0, run: () => ((this.streetPhase = ph), this.enterPhase('pool', { dir: 'in', from: 'gate' })) };
       }
-      if (ph === 'commute_pm' && id === 'homedoor') return { label: 'Go into Maple Court Apartments', time: 0, run: () => ((this.streetPhase = 'commute_pm'), this.enterPhase('lobby', { dir: 'in' })) };
+      if (ph === 'commute_pm' && id === 'homedoor') return { label: `Go into ${this.homeApt.name}`, time: 0, run: () => ((this.streetPhase = 'commute_pm'), this.enterPhase('lobby', { dir: 'in' })) };
       if (ph === 'dayoff') {
         if (id === 'homedoor') {
           const left = this.errands.filter((e) => !e.done);
           if (left.length) return { label: `Errands left: ${left.map((e) => e.name).join(', ')}`, disabled: true };
-          return { label: 'Go into Maple Court Apartments', time: 0, run: () => ((this.streetPhase = 'dayoff'), this.enterPhase('lobby', { dir: 'in' })) };
+          return { label: `Go into ${this.homeApt.name}`, time: 0, run: () => ((this.streetPhase = 'dayoff'), this.enterPhase('lobby', { dir: 'in' })) };
         }
         if (id.startsWith('place:')) {
           const place = id.slice(6);
@@ -4601,6 +4680,112 @@ export class Game {
     this.enterPhase('morning');
   }
 
+  /** A walking route along the sidewalks (via the pedestrian graph) from a to b. */
+  pedRoute(a, b) {
+    const G = this.level.pedGraph;
+    if (!G) return [b];
+    const nearest = (p) => {
+      let bi = 0;
+      let bd = Infinity;
+      for (let k = 0; k < G.length; k++) {
+        const d = Math.hypot(G[k].x - p.x, G[k].z - p.z);
+        if (d < bd) ((bd = d), (bi = k));
+      }
+      return bi;
+    };
+    const s = nearest(a);
+    const t = nearest(b);
+    const prev = new Map([[s, -1]]);
+    const q = [s];
+    while (q.length) {
+      const u = q.shift();
+      if (u === t) break;
+      for (const v of G[u].n) if (!prev.has(v)) (prev.set(v, u), q.push(v));
+    }
+    const nodes = [];
+    for (let k = t; k !== -1 && k !== undefined; k = prev.get(k)) nodes.unshift(k);
+    return [...nodes.map((k) => ({ x: G[k].x, z: G[k].z })), { x: b.x, z: b.z }];
+  }
+
+  /**
+   * Workday commutes: coworkers walk from their apartment to work before their shift, and back home
+   * after it. Being seen by one on the way has consequences, just like at work.
+   */
+  updateCommuters(dt) {
+    if (!this.isWorkday || !['commute_am', 'commute_pm'].includes(this.phase)) return;
+    const L = this.level;
+    if (!L.apartments || !L.places.work) return;
+    this.commuteT = (this.commuteT || 0) - dt;
+    if (this.commuteT > 0) return;
+    this.commuteT = 1;
+    const am = this.phase === 'commute_am';
+    const tag = this.state.day + (am ? 'a' : 'p');
+    if (this.commuted?.tag !== tag) this.commuted = { tag };
+    const c = this.clock;
+    const work = L.places.work.out;
+    for (let i = 0; i < this.profile.coworkers.length; i++) {
+      const cw = this.state.cw[i];
+      if (!cw || cw.fired || !this.cwChars[i] || this.commuted[i]) continue;
+      const def = this.profile.coworkers[i];
+      const home = L.apartments[def.home] || L.apartments.maple;
+      if (!home) continue;
+      const sc = this.daySchedule(i);
+      const route = this.pedRoute(am ? home.out : work, am ? work : home.out);
+      let len = 0;
+      let px = am ? home.out.x : work.x;
+      let pz = am ? home.out.z : work.z;
+      for (const q of route) ((len += Math.hypot(q.x - px, q.z - pz)), (px = q.x), (pz = q.z));
+      const speed = 1.9;
+      const walkMin = (len / speed) * this.minPerSec;
+      const depart = am ? sc.start - walkMin - 4 : sc.end + 2;
+      if (c < depart) continue;
+      this.commuted[i] = true;
+      const done = (c - depart) / Math.max(1e-3, walkMin);
+      if (done > 0.95) continue; // already there
+      // start partway along if they set off a while ago
+      let target = len * Math.max(0, done);
+      let sx = am ? home.out.x : work.x;
+      let sz = am ? home.out.z : work.z;
+      let k = 0;
+      for (; k < route.length; k++) {
+        const seg = Math.hypot(route[k].x - sx, route[k].z - sz);
+        if (target <= seg) {
+          const f = seg ? target / seg : 0;
+          sx += (route[k].x - sx) * f;
+          sz += (route[k].z - sz) * f;
+          break;
+        }
+        target -= seg;
+        sx = route[k].x;
+        sz = route[k].z;
+      }
+      const ch = this.cwChars[i];
+      ch.setLegwear(!(cw.blessed || cw.playing));
+      ch.setProp(null);
+      const n = new NPC(this, ch, { kind: 'pedestrian', name: def.name, personality: def.personality, index: i, x: sx, z: sz, range: 14, speed, legwearType: ch.legwearType });
+      n.gender = def.gender;
+      n.coworkerEncounter = true;
+      n.commuter = true;
+      n.plan([...route.slice(k).map((q) => ({ go: q })), { call: () => this.removeNPC(n) }]);
+      this.npcs.push(n);
+    }
+  }
+
+  /** Today's hours for coworker i (shared by their commute and the workday). */
+  daySchedule(i) {
+    this.daySched = this.daySched || {};
+    if (this.daySched.day !== this.state.day) this.daySched = { day: this.state.day };
+    if (!this.daySched[i]) {
+      const r = Math.random();
+      this.daySched[i] = {
+        start: SHIFT.start + (Math.random() < 0.3 ? 5 + Math.random() * 40 : -15 + Math.random() * 15),
+        end: r < 0.15 ? 900 + Math.random() * 30 : r < 0.85 ? SHIFT.end + Math.random() * 10 : SHIFT.end + 25 + Math.random() * 40,
+        lunchOut: Math.random() < 0.4,
+      };
+    }
+    return this.daySched[i];
+  }
+
   /** Two days after someone is fired, a new hire takes the empty desk. */
   async hireReplacements() {
     const st = this.state;
@@ -4622,6 +4807,8 @@ export class Game {
         gender,
         personality: pers[Math.floor(Math.random() * pers.length)],
         outfits: [{ model: { asset: body.asset, title: body.title, tintable: true, legwearMaterials: null, underwearOverlay: false, wetMaterials: null }, legwearType: gender === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', colors: randomColors() }],
+        underwear: randomUnderwear(gender),
+        home: randomApartment(),
         hiredDay: st.day,
         replaced: old.name,
       };
@@ -4759,7 +4946,7 @@ export class Game {
       obj = this.celestiChar ? 'Someone is in the living room...' : !m.wash ? 'Wash up in the bathroom' : !m.eat ? 'Eat breakfast in the kitchen' : !m.dress ? 'Check the wardrobe' : this.isWorkday ? 'Leave for work' : 'Head out to run errands';
     } else if (p.bus) obj = 'Riding the bus. Get off near your destination (walk to the front door when it stops).';
     else if (ph === 'commute_am') obj = `Get to ${this.job.workplaceName}`;
-    else if (ph === 'commute_pm') obj = 'Get home to Maple Court Apartments';
+    else if (ph === 'commute_pm') obj = `Get home to ${this.homeApt.name}`;
     else if (ph === 'evening') obj = this.night?.stage === 'gather' ? 'Gather your laundry from the wardrobe' : this.night?.stage === 'carry' ? 'Take the laundry down to the basement' : 'Go to bed';
     else if (ph === 'hallway') obj = this.bldgDir === 'out' ? 'Head down: elevator to the lobby, or back stairs to the pool' : this.bldgDir === 'down' ? 'Take the elevator to the basement' : 'Get to your door (7F-05)';
     else if (ph === 'pool') obj = this.bldgDir === 'out' ? 'Out through the gate' : 'Take the back stairs up';

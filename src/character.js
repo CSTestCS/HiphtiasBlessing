@@ -306,6 +306,13 @@ export async function createCharacter(opts = {}) {
     try {
       const ch = opts.full || !opts.key ? await createFullVRM(opts) : await createClonedVRM(opts);
       if (opts.clothes && opts.clothes.vrm) await wearOtherClothes(ch, opts.clothes);
+      if (opts.underwear && opts.underwear.panty) {
+        try {
+          await applyUnderwear(ch, opts.underwear, opts.cfg || {}, opts.underwearRes || 1024);
+        } catch (e) {
+          console.warn('underwear failed', e);
+        }
+      }
       return ch;
     } catch (e) {
       console.warn('VRM load failed, using default model', e);
@@ -961,9 +968,15 @@ function setupVRMChar(ch, scene, hum, opts) {
     });
     if (isLeg) ch.legwearMeshes.push(o);
     o.userData.isLegwear = isLeg;
-    mats.forEach((m) => m && ch.mats.push({ m, leg: isLeg, name: cleanName(m.name) }));
+    mats.forEach((m) => m && ch.mats.push({ m, leg: isLeg, name: cleanName(m.name), base: m.color?.clone(), baseShade: m.shadeColorFactor?.clone() }));
+    // parts this model takes off at home and at the pool (shoes, jackets...)
+    if (opts.cfg?.homeHide?.length && mats.some((m) => m && opts.cfg.homeHide.includes(cleanName(m.name)))) (ch.homeHideMeshes ||= []).push(o);
   });
   if (ch.wetAuto) for (const e of ch.mats) if (/(tops|shirt|blouse|onepiece|dress)/i.test(e.name) && !e.leg) ch.wetSet.add(e.name);
+  ch.setHomeMode = (on) => {
+    ch.homeMode = on;
+    for (const m of ch.homeHideMeshes || []) m.visible = !on;
+  };
   ch.bone = (n) => hum.getNormalizedBoneNode(n);
   scene.updateMatrixWorld(true);
   const wp = (n) => {
@@ -1030,8 +1043,18 @@ function applyTints(ch, opts) {
   const rnd = opts.randomize ? randomCivilianTints() : null;
   const col = opts.tintable ? opts.colors || {} : {};
   const raw = !!(opts.tintable || opts.randomize);
+  const slots = opts.cfg?.slots || null;
+  const accent = rnd ? randomCivilianTints().top : null;
   for (const { m, leg, name } of ch.mats) {
     if (/outline/i.test(m.name || '')) continue;
+    const slot = slots && slots[name];
+    if (slot) {
+      // set by hand in the model settings
+      if (slot === 'none') continue;
+      const c = slot === 'bottom' ? opts.tintBottom || rnd?.bottom || col.bottom : slot === 'top' ? opts.tintTop || rnd?.top || col.top : slot === 'accent' ? accent : rnd?.[slot] || col[slot];
+      mulColor(m, c, raw && !(slot === 'top' && opts.tintTop) && !(slot === 'bottom' && opts.tintBottom));
+      continue;
+    }
     if (leg) mulColor(m, opts.tintBottom || rnd?.bottom || col.bottom, raw && !opts.tintBottom);
     else if (SKIN_RE.test(name)) mulColor(m, rnd?.skin || col.skin, raw);
     else if (HAIR_RE.test(name)) mulColor(m, rnd?.hair || col.hair, raw);
@@ -1836,4 +1859,161 @@ export function addAngelic(ch) {
     w.rotation.y = side * 0.5;
     chest?.add(w);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Underwear: tinted panty / bra designs painted into the body texture (or replacing a separate
+// underwear mesh's texture). The designs share the VRoid body texture layout.
+let UW_BASE = 'underwear/';
+export function setUnderwearBase(url) {
+  UW_BASE = url;
+}
+const uwImages = new Map();
+function loadOverlay(kind, name) {
+  const key = kind + '/' + name;
+  if (!uwImages.has(key)) {
+    uwImages.set(
+      key,
+      fetch(UW_BASE + key + '.png')
+        .then((r) => (r.ok ? r.blob() : Promise.reject(new Error('missing ' + key))))
+        .then((b) => createImageBitmap(b, { resizeWidth: 1024, resizeHeight: 1024, resizeQuality: 'high' }))
+    );
+  }
+  return uwImages.get(key);
+}
+const unionMasks = new Map();
+/** Everywhere any design can cover (where a model's own painted underwear would be), precomputed. */
+async function unionMask(R) {
+  if (unionMasks.has(R)) return unionMasks.get(R);
+  const p = (async () => {
+    const img = await fetch(UW_BASE + 'union.png').then((r) => r.blob()).then((b) => createImageBitmap(b));
+    const c = document.createElement('canvas');
+    c.width = c.height = R;
+    const g = c.getContext('2d');
+    g.drawImage(img, 0, 0, R, R);
+    const d = g.getImageData(0, 0, R, R).data;
+    const m = new Uint8Array(R * R);
+    for (let i = 0; i < R * R; i++) m[i] = d[i * 4] > 127 ? 1 : 0;
+    return m;
+  })();
+  unionMasks.set(R, p);
+  return p;
+}
+
+function tintedOverlay(img, color, R) {
+  const c = document.createElement('canvas');
+  c.width = c.height = R;
+  const g = c.getContext('2d');
+  g.drawImage(img, 0, 0, R, R);
+  if (color) {
+    g.globalCompositeOperation = 'multiply';
+    g.fillStyle = color;
+    g.fillRect(0, 0, R, R);
+    g.globalCompositeOperation = 'destination-in';
+    g.drawImage(img, 0, 0, R, R);
+  }
+  return c;
+}
+
+const uwTexCache = new Map();
+/**
+ * uw: { panty, bra, color }. cfg.underwear / cfg.bra: material names that hold the underwear (a body
+ * skin material is painted over; any other material is replaced outright). R: texture resolution.
+ */
+export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
+  if (!ch.mats || !uw?.panty) return;
+  const isSkin = (e) => SKIN_RE.test(e.name) && /body/i.test(e.name);
+  const find = (nm) => nm && ch.mats.find((e) => e.name === nm && !/outline/i.test(e.m.name || ''));
+  const body = ch.mats.find((e) => isSkin(e) && !/outline/i.test(e.m.name || '') && e.m.map);
+  const auto = ch.mats.find((e) => /(under|inner|panty|panties|lingerie|bikini)/i.test(e.name) && !/outline/i.test(e.m.name || '') && e.m.map);
+  const pantyMat = find(cfg.underwear) || auto || body;
+  const braMat = uw.bra ? find(cfg.bra) || (cfg.bra ? null : auto && /bra|top|inner|under/i.test(auto.name) ? auto : null) || pantyMat : null;
+  const targets = new Map();
+  if (pantyMat) targets.set(pantyMat, ['panty']);
+  if (braMat) targets.set(braMat, [...(targets.get(braMat) || []), 'bra']);
+  for (const [e, parts] of targets) {
+    const m = e.m;
+    const map = m.map;
+    if (!map || !map.image) continue;
+    const paint = isSkin(e); // painted on the skin: keep the skin, clear the old underwear
+    // the skin tint currently multiplied into the material color gets baked into the texture instead
+    const tint = new THREE.Color(1, 1, 1);
+    if (paint && e.base && m.color) tint.setRGB(m.color.r / Math.max(1e-3, e.base.r), m.color.g / Math.max(1e-3, e.base.g), m.color.b / Math.max(1e-3, e.base.b));
+    const key = [ch.tplKey || map.uuid, e.name, paint ? tint.getHexString() : '', parts.includes('panty') ? uw.panty : '', parts.includes('bra') ? uw.bra : '', uw.color || '', R].join('|');
+    let tex = uwTexCache.get(key);
+    if (!tex) {
+      const c = document.createElement('canvas');
+      c.width = c.height = R;
+      const g = c.getContext('2d');
+      if (paint) {
+        g.drawImage(map.image, 0, 0, R, R);
+        // clear the model's own painted underwear: anything in the underwear areas that isn't skin
+        const id = g.getImageData(0, 0, R, R);
+        const d = id.data;
+        const hist = new Map();
+        for (let i = 0; i < d.length; i += 4 * 97) {
+          if (d[i + 3] < 200) continue;
+          const k = ((d[i] >> 3) << 10) | ((d[i + 1] >> 3) << 5) | (d[i + 2] >> 3);
+          hist.set(k, (hist.get(k) || 0) + 1);
+        }
+        let best = 0;
+        let bk = 0;
+        for (const [k, v] of hist) if (v > best) ((best = v), (bk = k));
+        const sr = ((bk >> 10) & 31) * 8 + 4;
+        const sg = ((bk >> 5) & 31) * 8 + 4;
+        const sb = (bk & 31) * 8 + 4;
+        const mask = await unionMask(R);
+        for (let p = 0; p < R * R; p++) {
+          if (!mask[p]) continue;
+          const i = p * 4;
+          const diff = Math.abs(d[i] - sr) + Math.abs(d[i + 1] - sg) + Math.abs(d[i + 2] - sb);
+          if (diff > 60) {
+            d[i] = sr;
+            d[i + 1] = sg;
+            d[i + 2] = sb;
+          }
+        }
+        g.putImageData(id, 0, 0);
+        // bake the skin tone in
+        g.globalCompositeOperation = 'multiply';
+        g.fillStyle = '#' + tint.getHexString();
+        g.fillRect(0, 0, R, R);
+        g.globalCompositeOperation = 'destination-in';
+        g.drawImage(map.image, 0, 0, R, R);
+        g.globalCompositeOperation = 'source-over';
+      }
+      // a print keeps its own colors; plain designs take the chosen color
+      for (const part of parts) {
+        const name = part === 'panty' ? uw.panty : uw.bra;
+        const img = await loadOverlay(part === 'panty' ? 'panties' : 'bras', name);
+        g.drawImage(tintedOverlay(img, /LegoBlack$/.test(name) ? uw.color : null, R), 0, 0);
+      }
+      tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = map.colorSpace;
+      tex.flipY = map.flipY;
+      tex.wrapS = map.wrapS;
+      tex.wrapT = map.wrapT;
+      tex.anisotropy = 4;
+      uwTexCache.set(key, tex);
+      if (uwTexCache.size > 160) uwTexCache.delete(uwTexCache.keys().next().value);
+    }
+    const shadeSame = m.shadeMultiplyTexture && m.shadeMultiplyTexture === map;
+    for (const x of ch.mats) {
+      // the outline material shares the texture
+      if (x.m.map !== map) continue;
+      x.m.map = tex;
+      if (x.m.shadeMultiplyTexture === map) x.m.shadeMultiplyTexture = tex;
+      if (paint) {
+        if (x.base && x.m.color) x.m.color.copy(x.base);
+        if (shadeSame && x.baseShade && x.m.shadeColorFactor) x.m.shadeColorFactor.copy(x.baseShade);
+      } else {
+        // a separate underwear mesh: the design's own shape and alpha decide what shows
+        if (x.m.color) x.m.color.setRGB(1, 1, 1);
+        x.m.transparent = false;
+        x.m.alphaTest = 0.5;
+      }
+      x.m.needsUpdate = true;
+    }
+  }
+  ch.underwear = uw;
 }
