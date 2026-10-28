@@ -14,7 +14,7 @@ import { Rain } from './weather.js';
 import { Minimap } from './minimap.js';
 import { PICKUP_LABELS } from './props.js';
 import { modelBuffer, modelKey } from './assets.js';
-import { writeSave } from './saves.js';
+import { writeSave, writeProfile } from './saves.js';
 import {
   REACTIONS, randomTemperament, reactionFor, reactionLine, BUS_REACTIONS, EXCUSES, EXCUSE_OK, EXCUSE_FAIL, CHECK_ON_YOU, ODDBALL_LINES, DISTRACT_LINES,
   MAKESHIFT_FAILS, MAKESHIFT_SNAGS, RESIDENT_INTRO, RESIDENT_REPLIES, WARDROBE_RUIN, HOME_RUIN, MACHINE_ERRORS, FRIEND_CHECKS, FRIEND_FINE, FRIEND_COMFORT, BLESSED_FRIEND_CHECKS, ODDBALL_CHECKS, BLESSED_MEET, BLESSED_MEET_REPLIES, BLESSED_APOLOGY, BLESSED_BANTER } from './lines.js';
@@ -25,8 +25,7 @@ import { buildShop } from './levels/shop.js';
 import { BusSystem, DOOR } from './bus.js';
 import {
   JOBS, GENERIC_TASKS, STORY, REPORT_REASONS, ERRANDS, PLACES,
-  WEEKDAYS, weekday, isWorkday, CELESTI_DAY, ROLE_TASKS, mishapFor, SHAME, weatherFor, WEATHER, pronouns, BUNDLED,
-} from './data.js';
+  WEEKDAYS, weekday, isWorkday, CELESTI_DAY, ROLE_TASKS, mishapFor, SHAME, weatherFor, WEATHER, pronouns, BUNDLED, guessGender, guessModelGender, nameFor } from './data.js';
 
 const WALK = 2.0;
 const RUN = 4.3;
@@ -162,7 +161,7 @@ export class Game {
     }
     for (const t of this.settings.civilians || []) {
       const buf = await modelBuffer({ key: t.key });
-      if (buf) tpls.push({ key: t.key, buf, gender: t.gender, legwearMaterials: t.legwearMaterials });
+      if (buf) tpls.push({ key: t.key, buf, gender: t.gender === 'male' || t.gender === 'female' ? t.gender : guessModelGender(t.title), legwearMaterials: t.legwearMaterials });
     }
     this.civTemplates = tpls;
     // named townsfolk: coworkers from the player's other save slots
@@ -173,11 +172,11 @@ export class Game {
         const ch = await createCharacter({
           vrm: await modelBuffer(o.model), key: modelKey(o.model), legwearMaterials: o.model?.legwearMaterials || null,
           underwearOverlay: !!o.model?.underwearOverlay, colors: o.colors, tintable: !!o.model?.tintable || !!o.model?.asset,
-          legwearType: o.legwearType, gender: e.def.gender, wetMaterials: o.model?.wetMaterials,
+          legwearType: o.legwearType, gender: e.def.gender || guessGender(e.name), wetMaterials: o.model?.wetMaterials,
         });
         ch.civilian = true;
         ch.civName = e.name;
-        ch.gender = e.def.gender;
+        ch.gender = e.def.gender || guessGender(e.name);
         this.civPool.push(ch);
       } catch (err) {
         console.warn('extra civilian failed', err);
@@ -801,6 +800,7 @@ export class Game {
       await this.hooks.chooseOutfits(this);
       ui.showHUD(true);
     }
+    await this.hireReplacements();
     await this.loadDayChars();
     this.weather = weatherFor(this.state.day, (this.state.seed || 1) % 97);
     // the weather can turn during the day
@@ -833,6 +833,10 @@ export class Game {
       else
         text = `${wd} morning. ${name} wakes up and remembers the situation.\n\nGet ready, then head to work. You need to be there by 9:00 AM. The bus is faster than walking, but it doesn't go straight to ${this.job.workplaceName}.`;
       text += `\n\nWeather: ${WEATHER[this.weather].label}.${this.isRaining ? ' Getting soaked makes clothes cling... an umbrella keeps you dry.' : ''}`;
+      if (st.news?.length) {
+        text += `\n\nNews from work: ${st.news.join(' ')}`;
+        st.news = [];
+      }
       sound.play('alarm');
       await this.dialog(`Day ${st.day} — ${wd}`, text);
     } else if (phase === 'lobby') {
@@ -2685,6 +2689,7 @@ export class Game {
     const m = this.level.pois.manager;
     if (cw.writeups >= 3) {
       cw.fired = true;
+      cw.firedDay = this.state.day;
       ui.toast(`${s.name} has been FIRED.`, 'bad', 6000);
       const e = this.level.pois.entrance;
       s.plan([{ go: m.stand }, { t: 6, yaw: Math.PI }, { go: e }, { call: () => this.removeNPC(s) }]);
@@ -4596,11 +4601,45 @@ export class Game {
     this.enterPhase('morning');
   }
 
+  /** Two days after someone is fired, a new hire takes the empty desk. */
+  async hireReplacements() {
+    const st = this.state;
+    const p = this.profile;
+    let changed = false;
+    for (let i = 0; i < p.coworkers.length; i++) {
+      const cw = st.cw[i];
+      if (!cw?.fired) continue;
+      if (cw.firedDay == null) cw.firedDay = st.day - 2; // fired in an older version
+      if (st.day < cw.firedDay + 2) continue;
+      const old = p.coworkers[i];
+      const used = new Set([p.player.name, p.manager.name, ...p.coworkers.map((c) => c.name)]);
+      const gender = Math.random() < 0.5 ? 'female' : 'male';
+      const bodies = BUNDLED.bodies.filter((b) => b.gender === gender);
+      const body = bodies[Math.floor(Math.random() * bodies.length)];
+      const pers = ['friend', 'sympathetic', 'neutral', 'strict', 'distant', 'oddball'];
+      p.coworkers[i] = {
+        name: nameFor(gender, used),
+        gender,
+        personality: pers[Math.floor(Math.random() * pers.length)],
+        outfits: [{ model: { asset: body.asset, title: body.title, tintable: true, legwearMaterials: null, underwearOverlay: false, wetMaterials: null }, legwearType: gender === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', colors: randomColors() }],
+        hiredDay: st.day,
+        replaced: old.name,
+      };
+      st.cw[i] = { ally: false, warned: false, blessed: false, joined: false, playing: false, writeups: 0, fired: false };
+      if (this.cwRuntime[i]) this.cwRuntime[i] = { lendCd: 0, distractCd: 0, bond: 0, complaints: 0 };
+      delete st.daily['cw' + i];
+      st.news = st.news || [];
+      st.news.push(`${p.coworkers[i].name} starts today, taking over ${old.name}'s desk.`);
+      changed = true;
+    }
+    if (changed && this.slotId) await writeProfile(this.slotId, p);
+  }
+
   async saveGame() {
     const st = this.state;
     if (!this.slotId) return;
     await writeSave(this.slotId, JSON.parse(JSON.stringify({
-      day: st.day, shame: st.shame, writeups: st.writeups, cw: st.cw, pendingBless: st.pendingBless, pendingTalks: st.pendingTalks,
+      day: st.day, shame: st.shame, writeups: st.writeups, cw: st.cw, pendingBless: st.pendingBless, pendingTalks: st.pendingTalks, news: st.news || [],
       celestiMet: st.celestiMet, eveningShown: st.eveningShown, daily: st.daily, seed: st.seed, done: !!st.done, savedAt: Date.now(),
     })));
   }

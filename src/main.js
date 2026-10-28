@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { ui, esc } from './ui.js';
 import { storage, newId } from './storage.js';
-import { JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
+import { JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, FEMALE_NAMES, MALE_NAMES, nameFor, guessGender, guessModelGender, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
 import { createCharacter, inspectVRM, randomColors, addAngelic, clearTemplates } from './character.js';
 import { Game, controlsTable } from './game.js';
 import { listSlots, loadSlot, createSlot, writeProfile, deleteSlot, otherSlotPeople } from './saves.js';
@@ -50,7 +50,14 @@ const randGender = () => (Math.random() < 0.5 ? 'female' : 'male');
 function migrateProfile(p) {
   if (!p) return p;
   if (p.player) {
-    for (const d of [p.player, p.manager, ...(p.coworkers || [])]) if (d && !d.gender) d.gender = null;
+    // everyone has a gender now: guess from the name, and give them a matching bundled body
+    for (const d of [p.player, p.manager, ...(p.coworkers || [])]) {
+      if (!d) continue;
+      if (d.gender !== 'female' && d.gender !== 'male') {
+        d.gender = d === p.player ? 'female' : guessGender(d.name);
+        for (const o of d.outfits || []) if (o.model?.asset && BUNDLED.bodies.some((b) => b.asset === o.model.asset)) o.model = bundledBody(d.gender, /old/i.test(o.model.asset));
+      }
+    }
     return p;
   }
   const wrap = (src) => ({ model: src.model || null, legwearType: src.legwearType || 'pants', colors: src.colors || randomColors() });
@@ -413,7 +420,7 @@ async function showCivilians() {
               ? settings.civilians
                   .map(
                     (c, i) => `<div class="row" style="margin:6px 0"><span>${esc(c.title)}</span>
-                    <select data-cgen="${i}"><option value="">Any gender</option><option value="female" ${c.gender === 'female' ? 'selected' : ''}>Female</option><option value="male" ${c.gender === 'male' ? 'selected' : ''}>Male</option></select>
+                    <select data-cgen="${i}"><option value="female" ${c.gender !== 'male' ? 'selected' : ''}>Female</option><option value="male" ${c.gender === 'male' ? 'selected' : ''}>Male</option></select>
                     <button class="secondary" data-cprev="${i}">Preview</button><button class="danger" data-cdel="${i}">Remove</button></div>`
                   )
                   .join('')
@@ -442,7 +449,7 @@ async function showCivilians() {
   s.querySelectorAll('[data-cgen]').forEach(
     (b) =>
       (b.onchange = async () => {
-        settings.civilians[+b.dataset.cgen].gender = b.value || null;
+        settings.civilians[+b.dataset.cgen].gender = b.value === 'male' ? 'male' : 'female';
         await putSettings(settings);
       })
   );
@@ -463,7 +470,7 @@ async function showCivilians() {
       s.querySelector('#civ-status').textContent = 'Loading ' + f.name + '...';
       try {
         const m = await importVRM(f);
-        settings.civilians.push({ key: m.key, title: m.title, gender: null });
+        settings.civilians.push({ key: m.key, title: m.title, gender: guessModelGender(m.title) });
       } catch (e) {
         s.querySelector('#civ-status').textContent = `Could not load ${f.name}: ${e.message}`;
         await new Promise((r) => setTimeout(r, 1500));
@@ -540,10 +547,12 @@ let step = 0;
 let previewTarget = 'player'; // 'player' | 'mgr' | index
 
 function defaultDraft() {
-  const names = [...DEFAULT_COWORKER_NAMES].sort(() => Math.random() - 0.5);
+  const used = new Set();
   const cw = (i) => {
     const g = randGender();
-    return { name: names[i], gender: g, personality: DEFAULT_PERSONALITIES[i], outfits: [newOutfit(g === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', randomColors(), g, Math.random() < 0.25)] };
+    const name = nameFor(g, used);
+    used.add(name);
+    return { name, gender: g, personality: DEFAULT_PERSONALITIES[i], outfits: [newOutfit(g === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', randomColors(), g, Math.random() < 0.25)] };
   };
   return {
     name: 'Alex',
@@ -685,14 +694,24 @@ function outfitEditor(o, prefix, full) {
 }
 
 function genderSelect(def, attr) {
-  return `<label>Gender</label><select data-${attr}><option value="female" ${def.gender === 'female' ? 'selected' : ''}>Female</option><option value="male" ${def.gender === 'male' ? 'selected' : ''}>Male</option><option value="" ${!def.gender ? 'selected' : ''}>Unspecified (they/them)</option></select>`;
+  return `<label>Gender</label><select data-${attr}><option value="female" ${def.gender === 'female' ? 'selected' : ''}>Female</option><option value="male" ${def.gender === 'male' ? 'selected' : ''}>Male</option></select>`;
 }
 
 function bindGender(s, def, attr, target) {
   const el = s.querySelector(`[data-${attr}]`);
   if (!el) return;
   el.onchange = () => {
-    def.gender = el.value || null;
+    const was = def.gender;
+    def.gender = el.value === 'male' ? 'male' : 'female';
+    // a default name of the other gender gets swapped for a matching one; Ms./Mr. follow along
+    if (was !== def.gender && draft) {
+      const other = def.gender === 'male' ? FEMALE_NAMES : MALE_NAMES;
+      if (other.includes(def.name)) {
+        const used = new Set([draft.player, draft.manager, ...draft.coworkers].map((c) => c.name));
+        def.name = nameFor(def.gender, used);
+      }
+      if (def === draft.manager) def.name = def.name.replace(/^(Ms|Mrs|Miss|Mr)\.?(?=\s)/, def.gender === 'male' ? 'Mr.' : 'Ms.');
+    }
     // swap a bundled body to one of the matching gender
     for (const o of def.outfits) if (o.model?.asset && def.gender) o.model = bundledBody(def.gender, /old/i.test(o.model.asset));
     previewTarget = target;
@@ -838,8 +857,8 @@ function bindCreator(s) {
     const add = s.querySelector('#cw-add');
     add.onclick = () => {
       const used = new Set(draft.coworkers.map((c) => c.name));
-      const nm = DEFAULT_COWORKER_NAMES.find((n) => !used.has(n)) || 'Coworker ' + (draft.coworkers.length + 1);
       const g = randGender();
+      const nm = nameFor(g, used);
       draft.coworkers.push({ name: nm, gender: g, personality: DEFAULT_PERSONALITIES[draft.coworkers.length % DEFAULT_PERSONALITIES.length], outfits: [newOutfit(g === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', randomColors(), g, Math.random() < 0.25)] });
       previewTarget = draft.coworkers.length - 1;
       renderCreator();

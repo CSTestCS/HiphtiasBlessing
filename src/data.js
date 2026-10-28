@@ -245,7 +245,28 @@ export const PLACES = {
   bookstore: { name: 'Page Turner Books', color: '#a0522d' },
 };
 
-export const DEFAULT_COWORKER_NAMES = ['Mia', 'Daniel', 'Priya', 'Kenji', 'Sofia', 'Marcus', 'Hana', 'Leo', 'Aria', 'Felix', 'Nora', 'Theo', 'Yuki', 'Omar', 'Lena', 'Ravi'];
+export const FEMALE_NAMES = ['Mia', 'Priya', 'Sofia', 'Hana', 'Aria', 'Nora', 'Yuki', 'Lena', 'Chloe', 'Emma', 'Ines', 'Maya', 'Ruth', 'Zoe', 'Ivy', 'Clara', 'Amara', 'Elena', 'Rosa', 'Tess', 'Mei', 'Freya', 'Lucia', 'Naomi'];
+export const MALE_NAMES = ['Daniel', 'Kenji', 'Marcus', 'Leo', 'Felix', 'Theo', 'Omar', 'Ravi', 'Jonah', 'Mateo', 'Elliot', 'Samir', 'Hugo', 'Victor', 'Noah', 'Ethan', 'Diego', 'Kai', 'Ivan', 'Oscar', 'Tomas', 'Arjun', 'Liam', 'Rafael'];
+export const DEFAULT_COWORKER_NAMES = [...FEMALE_NAMES, ...MALE_NAMES];
+/** A first name that fits the gender and isn't taken yet. */
+export function nameFor(gender, used = new Set()) {
+  const list = (gender === 'male' ? MALE_NAMES : FEMALE_NAMES).filter((n) => !used.has(n));
+  return list.length ? list[Math.floor(Math.random() * list.length)] : (gender === 'male' ? 'Sam' : 'Sam') + ' ' + (used.size + 1);
+}
+/** Best guess at a gender from a name (for saves made before every character had one). */
+export function guessGender(name) {
+  const n = String(name || '').trim().replace(/^(mr|mrs|ms|miss)\.?\s+/i, (m) => m.toLowerCase());
+  if (/^mr\b/i.test(n)) return 'male';
+  if (/^(mrs|ms|miss)\b/i.test(n)) return 'female';
+  const first = n.split(/\s+/)[0];
+  if (FEMALE_NAMES.includes(first)) return 'female';
+  if (MALE_NAMES.includes(first)) return 'male';
+  return /[aeiy]$/i.test(first) ? 'female' : 'male';
+}
+/** Guess a model's gender from its title (for imported models with none set). */
+export function guessModelGender(title) {
+  return /\b(male|man|boy|guy|men)\b|(^|[^fe])male/i.test(title || '') && !/female|woman|girl/i.test(title || '') ? 'male' : 'female';
+}
 export const DEFAULT_PERSONALITIES = ['friend', 'strict', 'sympathetic', 'neutral', 'oddball', 'distant', 'sympathetic', 'neutral', 'friend', 'strict', 'oddball', 'neutral'];
 
 export const COLORS = {
