@@ -2354,11 +2354,29 @@ export class Game {
             pz = wp.z;
             if (left <= 0) break;
           }
+          const dest = s.cur.go;
+          s.avoid = (s.avoid || []).filter((a) => a.until > now);
+          const avoided = s.avoid.some((a) => Math.hypot(a.x - dest.x, a.z - dest.z) < 1.5);
           const spotter = obs.find((o) => near(o) < o.range + 2 && pts.some((q) => this.seesPoint(o, q.x, q.z, 0.15)));
+          // someone planted in place (the guard, a customer, a person at their desk) won't look away for
+          // long: don't wait them out, find something else to do somewhere they can't see
+          const planted = spotter && spotter.state !== 'walk' && (['guard', 'customer', 'clerk'].includes(spotter.kind) || spotter.working || spotter.sitting);
+          const destSeen = obs.some((o) => o.state !== 'walk' && this.seesPoint(o, dest.x, dest.z, 0.6));
           s.holdT = s.holdT || 0;
-          if (spotter && !s.carry && s.holdT < 14) {
+          if (avoided || ((planted || destSeen) && s.holdT > 2.5)) {
+            s.avoid.push({ x: dest.x, z: dest.z, until: now + 90000 });
+            s.holdT = 0;
+            const k = s.steps.findIndex((x) => x.go);
+            s.plan(k >= 0 ? s.steps.slice(k) : []);
+            continue;
+          }
+          if (spotter && s.holdT < 14) {
             // wait here (out of sight) for them to look away, then carry on
             s.holdT += step;
+            if (s.carry) {
+              // holding something: carry on, keeping it toward them (faceYaw), unless it's someone planted
+              if (!planted) continue;
+            }
             if (!s.cur.hold) {
               const resume = [s.cur, ...s.steps];
               s.plan([{ t: 1, hold: true, lowCover: true, yaw: Math.atan2(spotter.x - s.x, spotter.z - s.z) }, ...resume]);
@@ -2406,6 +2424,12 @@ export class Game {
         s.plan([{ go: c, run: cd > 1.5, lowCover: !c.tall, evade: true }, { t: 3 + Math.random() * 3, yaw: fy, lowCover: !c.tall, evade: true }, ...resume]);
       };
       const surrounded = threats.length >= 2 && spread > 1.6;
+      // 0) already behind something low? just duck right here
+      if (!carrying && this.coverSafe({ x: s.x, z: s.z }, threats, true)) {
+        mark({ x: s.x, z: s.z, low: true });
+        s.plan([{ t: 2.5 + Math.random() * 2, lowCover: true, yaw: Math.atan2(s.x - threats[0].x, s.z - threats[0].z), evade: true }, ...resume]);
+        continue;
+      }
       // 1) holding something: keep it between you and them; step into cover only if it's right there
       if (carrying && !surrounded) {
         if (c && cd < 2.5) toCover(true);
@@ -2475,19 +2499,42 @@ export class Game {
       const d = Math.hypot(h.x - s.x, h.z - s.z);
       if (d < 14) cands.push({ x: h.x, z: h.z, tall: true, d: d * 0.8, hide: true });
     }
+    // the nearest place that simply breaks line of sight: around a corner, behind a pillar
+    for (let k = 0; k < 16; k++) {
+      const a = (k / 16) * Math.PI * 2;
+      for (const r of [1.2, 2.2, 3.4]) {
+        const x = s.x + Math.sin(a) * r;
+        const z = s.z + Math.cos(a) * r;
+        if (L.blockedPoint(x, z, 0.3) || !L.segmentClear(s.x, s.z, x, z, 0.25)) break;
+        cands.push({ x, z, tall: true, d: r, brk: true });
+      }
+    }
     cands.sort((a, b) => a.d - b.d);
     let best = null;
     let bs = Infinity;
-    for (const c of cands.slice(0, 40)) {
+    const seenBy = (x, z, h) => threats.some((o) => this.level.lineOfSight(o.eye(), new THREE.Vector3(x, h, z)));
+    for (const c of cands.slice(0, 80)) {
       if (!this.coverSafe(c, threats, !c.tall)) continue;
-      // closer is better; don't run past a threat
-      let score = c.d;
+      // how far do you have to move in plain view before you're out of sight?
+      const steps = Math.max(1, Math.ceil(c.d / 0.5));
+      let exposed = c.d;
+      for (let k = 1; k <= steps; k++) {
+        const f = k / steps;
+        if (!seenBy(s.x + (c.x - s.x) * f, s.z + (c.z - s.z) * f, 0.85)) {
+          exposed = c.d * f;
+          break;
+        }
+      }
+      let score = exposed * 3 + c.d * 0.5;
       for (const o of threats) {
         const dt = Math.hypot(o.x - c.x, o.z - c.z);
         if (dt < 3) score += 12;
-        else score += 6 / dt;
-        // the dash over there: is it in plain view the whole way?
-        for (const f of [0.35, 0.7]) if (this.seesPoint(o, s.x + (c.x - s.x) * f, s.z + (c.z - s.z) * f, 0.3)) score += 4;
+        else score += 4 / dt;
+        // someone walking: don't hide where they're headed
+        if (o.state === 'walk' && o.path.length) {
+          const end = o.path[o.path.length - 1];
+          if (Math.hypot(end.x - c.x, end.z - c.z) < 3) score += 8;
+        }
       }
       // somewhere people nearby could also see is only half a hiding place
       for (const o of others) if (!threats.includes(o) && this.level.lineOfSight(o.eye(), new THREE.Vector3(c.x, c.tall ? 0.85 : 0.5, c.z))) score += 3;
