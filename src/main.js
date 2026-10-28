@@ -817,8 +817,8 @@ function underwearEditor(def, attr) {
     ${uw.panty ? '<div class="note">Plain designs take the color; printed ones keep their pattern. Only shows on .vrm models.</div>' : ''}`;
 }
 
-function bindUnderwear(s, def, attr, target) {
-  const re = () => ((previewTarget = target), renderCreator());
+function bindUnderwear(s, def, attr, target, rerender = null) {
+  const re = rerender || (() => ((previewTarget = target), renderCreator()));
   const p = s.querySelector(`[data-${attr}-p]`);
   if (!p) return;
   p.onchange = () => {
@@ -860,12 +860,14 @@ function bindGender(s, def, attr, target) {
   };
 }
 
-function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator) {
+function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator, onRefresh = null) {
   const q = (a) => s.querySelector(`[data-${prefix}${a}]`);
-  const refresh = () => {
-    previewTarget = target;
-    refreshPreview();
-  };
+  const refresh =
+    onRefresh ||
+    (() => {
+      previewTarget = target;
+      refreshPreview();
+    });
   q('lw').onchange = (e) => ((o.legwearType = e.target.value), refresh());
   q('body').onchange = (e) => {
     const v = e.target.value;
@@ -874,7 +876,7 @@ function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator) {
       const b = BUNDLED.bodies.find((x) => x.asset === v.slice(6));
       o.model = { asset: b.asset, title: b.title, tintable: true, legwearMaterials: null, underwearOverlay: false, wetMaterials: null };
     }
-    previewTarget = target;
+    if (!onRefresh) previewTarget = target;
     rerender();
   };
   q('imp').onclick = async () => {
@@ -883,7 +885,7 @@ function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator) {
     q('status').textContent = 'Loading ' + f.name + '...';
     try {
       o.model = await importVRM(f);
-      previewTarget = target;
+      if (!onRefresh) previewTarget = target;
       rerender();
     } catch (e) {
       q('status').textContent = 'Could not load that file: ' + e.message;
@@ -893,7 +895,7 @@ function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator) {
     q('parts').onclick = async () => {
       q('status').textContent = 'Reading model...';
       await ensureMaterials(o.model);
-      previewTarget = target;
+      if (!onRefresh) previewTarget = target;
       rerender();
     };
   if (q('rand')) q('rand').onclick = () => ((o.colors = { ...randomColors(), under: o.colors.under }), refresh());
@@ -1019,6 +1021,7 @@ async function beginNewGame() {
   profile.coworkers.forEach((c) => (c.name = c.name.trim()));
   // where everyone lives: picked fresh for each new game, then kept with the save
   profile.home = randomApartment();
+  profile.homeFloor = 2 + Math.floor(Math.random() * 11);
   for (const c of profile.coworkers) c.home = randomApartment();
   const id = await createSlot(profile, { day: 1, shame: 0, seed: profile.layoutSeed });
   startGame(id);
@@ -1036,6 +1039,8 @@ function chooseOutfits(g) {
       ...profile.coworkers.map((c, i) => ({ key: 'cw' + i, def: c, label: c.name, idx: i })).filter((e) => !g.state.cw[e.idx].fired),
     ];
     let sel = 'player';
+    let openEdit = null;
+    let view = 'normal';
     const tintList = COLORS.tint;
     const render = () => {
       killPreview();
@@ -1063,6 +1068,10 @@ function chooseOutfits(g) {
               : ''
           }
           <div class="row" style="margin-top:8px"><button class="secondary" data-oadd="${e.key}">+ Add outfit (.vrm)</button><button class="secondary" data-oaddd="${e.key}">+ Add outfit (same body)</button></div>
+          <details data-oedit="${e.key}" ${openEdit === e.key ? 'open' : ''}><summary class="note" style="cursor:pointer;margin-top:8px">Edit this outfit (model, colors, parts, underwear)</summary>
+            ${outfitEditor(e.def.outfits[d.outfit] || e.def.outfits[0], 'od' + e.key + 'x', e.key === 'player')}
+            ${underwearEditor(e.def, 'oduw' + e.key)}
+          </details>
         </div>`;
       };
       const s = ui.setScreen(`
@@ -1074,22 +1083,45 @@ function chooseOutfits(g) {
               <div class="row" style="margin-bottom:10px"><button class="secondary" id="o-rand">Randomize everyone's colors</button><button class="secondary" id="o-reset">Original colors for all</button></div>
               <div class="cw-grid">${entries.map(row).join('')}</div>
             </div>
-            <div><canvas class="preview" id="pv"></canvas><div class="note" id="o-status"></div></div>
+            <div><canvas class="preview" id="pv"></canvas>
+              <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">
+                <button class="${view === 'normal' ? '' : 'secondary'}" data-oview="normal">Normal</button>
+                <button class="${view === 'mishap' ? '' : 'secondary'}" data-oview="mishap">After a mishap</button>
+                <button class="${view === 'wet' ? '' : 'secondary'}" data-oview="wet">Soaked</button>
+                <button class="${view === 'both' ? '' : 'secondary'}" data-oview="both">Mishap + soaked</button>
+              </div>
+              <div class="note" id="o-status"></div></div>
           </div>
           <div class="footer"><span></span><button id="o-go">Start the day</button></div>
         </div>`);
       previewer = new Previewer(s.querySelector('#pv'));
       let homePrev = false;
+      // what a mishap (legwear gone) or a soaking would look like
+      const look = (ch) => {
+        if (view === 'wet' || view === 'both') ch.setWet?.(1);
+      };
       const show = async () => {
         const e = entries.find((x) => x.key === sel);
         const d = daily[e.key];
+        previewer.setLegwear(!(view === 'mishap' || view === 'both'));
         if (homePrev && e.key === 'player') {
           const o = e.def.outfits[d.home ?? e.def.homeOutfit ?? d.outfit] || e.def.outfits[0];
-          return previewer.show(await outfitOpts(o, { top: d.homeTop, bottom: null }, e.def.gender, e.def.underwear));
+          return previewer.show(await outfitOpts(o, { top: d.homeTop, bottom: null }, e.def.gender, e.def.underwear), look);
         }
         const o = e.def.outfits[d.outfit] || e.def.outfits[0];
-        previewer.show(await outfitOpts(o, d, e.def.gender, e.def.underwear));
+        previewer.show(await outfitOpts(o, d, e.def.gender, e.def.underwear), look);
       };
+      s.querySelectorAll('[data-oview]').forEach((b) => (b.onclick = () => ((view = b.dataset.oview), render())));
+      // the full outfit editor, same as when setting up
+      for (const e of entries) {
+        const d = daily[e.key];
+        const det = s.querySelector(`[data-oedit="${e.key}"]`);
+        if (det) det.ontoggle = () => (openEdit = det.open ? e.key : openEdit === e.key ? null : openEdit);
+        const o = e.def.outfits[d.outfit] || e.def.outfits[0];
+        const focus = () => ((sel = e.key), (openEdit = e.key), (homePrev = false));
+        bindOutfitEditor(s, o, 'od' + e.key + 'x', e.key, () => (focus(), render()), () => (focus(), show()));
+        bindUnderwear(s, e.def, 'oduw' + e.key, e.key, () => (focus(), render()));
+      }
       show();
       s.querySelectorAll('[data-osel]').forEach((b) => (b.onclick = () => ((sel = b.dataset.osel), render())));
       s.querySelectorAll('[data-ooutfit]').forEach((b) => (b.onchange = () => ((daily[b.dataset.ooutfit].outfit = +b.value), (daily[b.dataset.ooutfit].legwearType = null), (sel = b.dataset.ooutfit), (homePrev = false), render())));

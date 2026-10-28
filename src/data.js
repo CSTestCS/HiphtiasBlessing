@@ -248,12 +248,12 @@ export const PLACES = {
 
 // Apartment complexes around town. Each game the player lives in one, and every coworker in one too.
 export const APARTMENTS = [
-  { id: 'maple', name: 'Maple Court Apartments', short: 'Maple Court', color: '#5d4037', block: '0,3', side: 'e' },
-  { id: 'riverside', name: 'Riverside Towers', short: 'Riverside Towers', color: '#1e3799', block: '3,3', side: 'n' },
-  { id: 'oakwood', name: 'Oakwood Residences', short: 'Oakwood', color: '#6d4c41', block: '3,1', side: 'w' },
-  { id: 'cedar', name: 'Cedar Heights', short: 'Cedar Heights', color: '#2d6a4f', block: '0,2', side: 'e' },
-  { id: 'pine', name: 'Pine View Lofts', short: 'Pine View', color: '#00695c', block: '1,3', side: 's' },
-  { id: 'elm', name: 'Elm Garden Flats', short: 'Elm Garden', color: '#8e44ad', block: '2,0', side: 'n' },
+  { id: 'maple', name: 'Maple Court Apartments', short: 'Maple Court', color: '#5d4037', block: '0,3', side: 'e', wall: '#d9cbb8', carpet: '#6d5d4b', lobbyFloor: '#8d6e63', lobbyWall: '#e3d5c3' },
+  { id: 'riverside', name: 'Riverside Towers', short: 'Riverside Towers', color: '#1e3799', block: '3,3', side: 'n', wall: '#c8d6e5', carpet: '#34495e', lobbyFloor: '#576574', lobbyWall: '#dfe6e9' },
+  { id: 'oakwood', name: 'Oakwood Residences', short: 'Oakwood', color: '#6d4c41', block: '3,1', side: 'w', wall: '#e3c4a8', carpet: '#7b4f2c', lobbyFloor: '#6d4c41', lobbyWall: '#f0dcc3' },
+  { id: 'cedar', name: 'Cedar Heights', short: 'Cedar Heights', color: '#2d6a4f', block: '0,2', side: 'e', wall: '#cfe0d4', carpet: '#2d6a4f', lobbyFloor: '#52796f', lobbyWall: '#e5efe8' },
+  { id: 'pine', name: 'Pine View Lofts', short: 'Pine View', color: '#00695c', block: '1,3', side: 's', wall: '#d4e6e1', carpet: '#00695c', lobbyFloor: '#4f6f6a', lobbyWall: '#e7f2ef' },
+  { id: 'elm', name: 'Elm Garden Flats', short: 'Elm Garden', color: '#8e44ad', block: '2,0', side: 'n', wall: '#e2d4ea', carpet: '#5b3f73', lobbyFloor: '#7d6a8c', lobbyWall: '#efe6f3' },
 ];
 export const aptById = (id) => APARTMENTS.find((a) => a.id === id) || APARTMENTS[0];
 export const randomApartment = () => APARTMENTS[Math.floor(Math.random() * APARTMENTS.length)].id;

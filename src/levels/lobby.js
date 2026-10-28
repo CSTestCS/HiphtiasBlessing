@@ -1,11 +1,13 @@
-// The lobby of Maple Court Apartments, between your apartment and the street.
+// The lobby of your apartment building, between your apartment and the street.
+// Each complex has its own name sign and colors.
 import { Level } from '../level.js';
 
-export function buildLobby() {
+export function buildLobby(apt = null) {
   const L = new Level('lobby');
   L.bounds = { minX: -9, maxX: 9, minZ: -7, maxZ: 7 };
-  const W = '#e3d5c3';
-  L.floor(0, 0, 18, 14, '#8d6e63');
+  const W = apt?.lobbyWall || '#e3d5c3';
+  L.floor(0, 0, 18, 14, apt?.lobbyFloor || '#8d6e63');
+  if (apt) L.label(apt.name.toUpperCase(), 0, 2.85, -6.88, 0, { height: 0.42, bg: apt.color });
   L.floor(0, 1, 6, 8, '#a1887f', 0.006);
   L.wallX(-7, -9, 9, [{ c: -5, w: 2.2 }, { c: 5, w: 2.2 }], 3.4, W);
   L.wallZ(-9, -7, 7, [], 3.4, W);

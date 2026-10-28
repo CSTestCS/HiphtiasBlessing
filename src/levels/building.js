@@ -1,15 +1,18 @@
-// Inside Maple Court Apartments: your floor's hallway, the residents' pool
+// Inside your apartment building: your floor's hallway, the residents' pool
 // (a back way in and out of the building) and the basement laundry room.
 import * as THREE from 'three';
 import { Level } from '../level.js';
 
-const WALL = '#d9cbb8';
+const WALL = '#d9cbb8'; // default walls (laundry, pool)
 
-/** 7th floor hallway: elevator at the west end, back stairs (to the pool) at the east end. */
-export function buildHallway() {
+const ordinal = (n) => n + (n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th');
+
+/** Your floor's hallway: elevator at the west end, back stairs (to the pool) at the east end. */
+export function buildHallway(apt = null, floor = 7) {
   const L = new Level('hallway');
+  const WALL = apt?.wall || '#d9cbb8';
   L.bounds = { minX: -13, maxX: 13, minZ: -3.5, maxZ: 2 };
-  L.floor(0, 0, 26, 3.2, '#6d5d4b');
+  L.floor(0, 0, 26, 3.2, apt?.carpet || '#6d5d4b');
   L.floor(0, 0, 24, 1.2, '#8d6e63', 0.006); // runner rug
   L.wallX(-1.5, -12.5, 12.5, [{ c: -6, w: 1.6 }], 2.9, WALL);
   L.wallX(1.5, -12.5, 12.5, [], 2.9, WALL);
@@ -31,15 +34,16 @@ export function buildHallway() {
     L.box(x, 1.36, 1.0, 0.07, 2.1, '#4e342e', { collide: false, occlude: false });
     L.box(x + 0.38, -1.31, 0.06, 0.04, 0.06, '#f1c40f', { y: 1.0, collide: false, occlude: false });
     L.box(x - 0.38, 1.31, 0.06, 0.04, 0.06, '#f1c40f', { y: 1.0, collide: false, occlude: false });
-    L.label(`7F-0${i * 2 + 1}`, x, 2.3, -1.31, 0, { height: 0.14, bg: '#3e2723' });
-    L.label(`7F-0${i * 2 + 2}`, x, 2.3, 1.31, Math.PI, { height: 0.14, bg: '#3e2723' });
+    L.label(`${floor}F-0${i * 2 + 1}`, x, 2.3, -1.31, 0, { height: 0.14, bg: '#3e2723' });
+    L.label(`${floor}F-0${i * 2 + 2}`, x, 2.3, 1.31, Math.PI, { height: 0.14, bg: '#3e2723' });
   });
   L.pois.doors = [];
   doors.forEach((x, i) => {
-    if (i !== 2) L.pois.doors.push({ x, z: -0.95, yaw: 0, apt: `7F-0${i * 2 + 1}` });
-    L.pois.doors.push({ x, z: 0.95, yaw: Math.PI, apt: `7F-0${i * 2 + 2}` });
+    if (i !== 2) L.pois.doors.push({ x, z: -0.95, yaw: 0, apt: `${floor}F-0${i * 2 + 1}` });
+    L.pois.doors.push({ x, z: 0.95, yaw: Math.PI, apt: `${floor}F-0${i * 2 + 2}` });
   });
-  L.interactable('aptdoor', 2, -0.9, 'Your apartment (7F-05)', { r: 1.2 });
+  L.interactable('aptdoor', 2, -0.9, `Your apartment (${floor}F-05)`, { r: 1.2 });
+  if (apt) L.label(`${apt.short.toUpperCase()} · ${ordinal(floor).toUpperCase()} FLOOR`, -9, 2.5, -1.31, 0, { height: 0.16, bg: apt.color });
   L.label('HOME', 2, 2.55, -1.31, 0, { height: 0.16, bg: '#00b894' });
   L.pois.neighborDoor = { x: 2, z: 1.0, yaw: Math.PI };
   // elevator (west) and stairs (east)
@@ -73,7 +77,7 @@ export function buildHallway() {
 }
 
 /** Residents' pool courtyard behind the building. Open-air, so the rain gets in. */
-export function buildPool() {
+export function buildPool(apt = null, floor = 7) {
   const L = new Level('pool');
   L.bounds = { minX: -16, maxX: 16, minZ: -12, maxZ: 12 };
   L.floor(0, 0, 32, 24, '#9e9e9e');
@@ -83,9 +87,9 @@ export function buildPool() {
   L.wallX(11.2, -15.5, 15.5, [{ c: 0, w: 2 }], 2.2, '#5d6d7e');
   L.wallZ(-15.5, -11.2, 11.2, [], 2.2, '#5d6d7e');
   L.wallZ(15.5, -11.2, 11.2, [], 2.2, '#5d6d7e');
-  L.label('RESIDENTS\' POOL AREA', 2.4, 1.9, 11.05, Math.PI, { height: 0.28, bg: '#1e3799' });
+  L.label(apt ? `${apt.short.toUpperCase()} RESIDENTS' POOL` : 'RESIDENTS\' POOL AREA', 2.4, 1.9, 11.05, Math.PI, { height: 0.28, bg: apt?.color || '#1e3799' });
   L.label('POOL RULES: no running · keep gate closed', -3, 2.4, -11.05, 0, { height: 0.22, bg: '#2d3436' });
-  L.interactable('backstairs', 0, -10.3, 'Back stairs up to the 7th floor', { r: 1.3 });
+  L.interactable('backstairs', 0, -10.3, `Back stairs up to the ${ordinal(floor)} floor`, { r: 1.3 });
   L.interactable('poolgate', 0, 10.3, 'Gate out to the street', { r: 1.4 });
   // the pool (you can't walk into it)
   const water = new THREE.Mesh(new THREE.PlaneGeometry(14, 6), new THREE.MeshStandardMaterial({ color: '#1e90ff', roughness: 0.15, metalness: 0.2, transparent: true, opacity: 0.85, depthWrite: false }));

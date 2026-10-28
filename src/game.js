@@ -31,6 +31,7 @@ const WALK = 2.0;
 const RUN = 4.3;
 const CROUCH = 1.1;
 const LEND_TIME = 90; // seconds per turn in the borrowed legwear
+const ordinal = (n) => n + (n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th');
 const DISTRACT_TIME = 14;
 const DISTRACT_COOLDOWN = 120; // seconds before the same person will make another scene
 const LEND_COOLDOWN = 180; // seconds after giving their legwear back before they'll lend it again
@@ -137,9 +138,9 @@ export class Game {
     ui.setScreen('<div class="loading">Building the city...</div>');
     await new Promise((r) => setTimeout(r, 30));
     this.levels.apartment = buildApartment();
-    this.levels.lobby = buildLobby();
-    this.levels.hallway = buildHallway();
-    this.levels.pool = buildPool();
+    this.levels.lobby = buildLobby(this.homeApt);
+    this.levels.hallway = buildHallway(this.homeApt, this.homeFloor);
+    this.levels.pool = buildPool(this.homeApt, this.homeFloor);
     this.levels.laundry = buildLaundry();
     this.levels.city = buildCity({ workplaceName: this.job.workplaceName, jobColor: '#273c75', homeId: this.profile.home || 'maple' });
     ui.setScreen('<div class="loading">Building your workplace...</div>');
@@ -605,6 +606,10 @@ export class Game {
     return aptById(this.profile.home || 'maple');
   }
 
+  get homeFloor() {
+    return this.profile.homeFloor || 7;
+  }
+
   get openAir() {
     return this.outdoors || this.phase === 'pool';
   }
@@ -848,7 +853,7 @@ export class Game {
         return;
       }
       let text;
-      if (st.day === 1) text = STORY.intro(name);
+      if (st.day === 1) text = STORY.intro(name) + `\n\nHome: apartment ${this.homeFloor}F-05, ${this.homeApt.name}.`;
       else if (!this.isWorkday)
         text = `It's ${wd}! No work today.\n\nBut there are errands to run:\n${this.errands.map((e) => '• ' + e.name + ' — ' + PLACES[e.place].name).join('\n')}\n\nBeing seen in town won't get you fired, but it will add to your Shame. Buses can get you around faster.`;
       else
@@ -881,7 +886,7 @@ export class Game {
       const d = this.bldgDir;
       if (d === 'down') ui.toast('Quietly now. Take the elevator down to the basement.', '', 4500);
       else if (d === 'out') ui.toast('Elevator to the lobby, or the back stairs down to the pool and out the side gate.', '', 5000);
-      else ui.toast('Your door is 7F-05.', '', 3000);
+      else ui.toast(`Your door is ${this.homeFloor}F-05.`, '', 3000);
     } else if (phase === 'pool') {
       if (prev !== 'pool') ui.toast(this.bldgDir === 'in' ? "Almost nobody uses the pool at this hour. The back stairs lead up to your floor." : 'Out through the gate to the street.', '', 5000);
     } else if (phase === 'laundry') {
@@ -3937,7 +3942,7 @@ export class Game {
     if (ph === 'pool') {
       const out = this.bldgDir === 'out';
       if (id === 'backstairs') {
-        if (!out) return { label: 'Take the back stairs up to the 7th floor', time: 0, run: () => this.enterPhase('hallway', { dir: 'in', from: 'stairs' }) };
+        if (!out) return { label: `Take the back stairs up to the ${ordinal(this.homeFloor)} floor`, time: 0, run: () => this.enterPhase('hallway', { dir: 'in', from: 'stairs' }) };
         return { label: "You're on your way out", disabled: true };
       }
       if (id === 'poolgate') {
@@ -4926,7 +4931,7 @@ export class Game {
     const st = this.state;
     const ph = this.phase;
     const wd = WEEKDAYS[weekday(st.day)];
-    const titles = { hallway: '7th floor', pool: "Residents' pool", laundry: 'Basement laundry room', lobby: 'Building lobby', morning: 'Morning', commute_am: 'Commute to work', work: 'At work', commute_pm: 'Commute home', evening: 'Evening', dayoff: 'Day off', shop: 'Errands' };
+    const titles = { hallway: `${this.homeApt.short}, floor ${this.homeFloor}`, pool: "Residents' pool", laundry: 'Basement laundry room', lobby: 'Building lobby', morning: 'Morning', commute_am: 'Commute to work', work: 'At work', commute_pm: 'Commute home', evening: 'Evening', dayoff: 'Day off', shop: 'Errands' };
     ui.set('hud-day', `Day ${st.day} · ${wd} · ${esc(titles[ph] || '')}`);
     let time = fmtClock(this.clock);
     if (ph === 'work') {
