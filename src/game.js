@@ -1040,7 +1040,8 @@ export class Game {
       n.onLunch = true;
       const minsLeft = SHIFT.lunchEnd - c;
       const secs = minsLeft / this.minPerSec;
-      if (sc.lunchOut) {
+      // sneakers eat in: walking out past the front desk is asking for trouble
+      if (sc.lunchOut && !n.sneaking) {
         // out for lunch: walk out the front and come back at one
         n.plan([
           { go: L.pois.entrance },
@@ -2274,6 +2275,15 @@ export class Game {
       if (o.kind === 'coworker' && (this.complicit(o) || ['friend', 'sympathetic', 'oddball'].includes(o.personality))) return false;
       return o.kind === 'coworker' || o.kind === 'manager' || o.kind === 'customer' || o.kind === 'guard';
     });
+  }
+
+  /** Before a sneaker sets off somewhere: is it a spot someone planted in place can see (or one they're avoiding)? */
+  sneakDestBad(n, dest) {
+    if (!n.sneaking || n.char.legwearOn || !this.work?.clockedIn && this.phase !== 'work') return false;
+    if (n.cur?.evade || n.leaving) return false;
+    const now = performance.now();
+    if ((n.avoid || []).some((a) => a.until > now && Math.hypot(a.x - dest.x, a.z - dest.z) < 1.5)) return true;
+    return this.sneakObservers(n).some((o) => o.state !== 'walk' && (['guard', 'customer', 'clerk', 'manager'].includes(o.kind) || o.working || o.sitting) && this.seesPoint(o, dest.x, dest.z, 0.6));
   }
 
   /** Could observer o see a sneaker's hips at (x, z)? fovPad widens the cone for people about to turn. */

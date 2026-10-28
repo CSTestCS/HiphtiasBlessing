@@ -136,6 +136,15 @@ export class NPC {
       return;
     }
     const s = this.cur;
+    if (s.go && !s.evade && this.sneaking && this.game.sneakDestBad?.(this, s.go)) {
+      // somewhere a watcher would see: skip this errand (up to the next destination)
+      this.skips = (this.skips || 0) + 1;
+      if (this.skips < 4) {
+        const k = this.steps.findIndex((x) => x.go);
+        this.steps = k >= 0 ? this.steps.slice(k) : [];
+        return this.next();
+      }
+    } else if (s.go) this.skips = 0;
     if (s.go) {
       const path = this.game.level.findPath(this.x, this.z, s.go.x, s.go.z);
       if (!path) {
