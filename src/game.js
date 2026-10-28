@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { ui, esc } from './ui.js';
 import { NPC, angDiff, pick, propMesh } from './npc.js';
 import { drawPortrait } from './portrait.js';
+import { sound, reactionSound, applyVolumeSettings, volumeSlidersHTML, bindVolumeSliders } from './audio.js';
 import { createCharacter, createMannequin, randomColors, addAngelic, setExpressionMax, borrowLegwear, workKindFor } from './character.js';
 import { buildLobby } from './levels/lobby.js';
 import { buildHallway, buildPool, buildLaundry } from './levels/building.js';
@@ -371,6 +372,7 @@ export class Game {
     ui.showHUD(false);
     ui.borrow(null);
     ui.progress(null);
+    sound.stopAll();
     ui.tagLayer.innerHTML = '';
     try {
       this.rain.dispose(this.scene);
@@ -477,6 +479,7 @@ export class Game {
     const s = ui.setScreen(
       `<div class="panel" style="max-width:420px;text-align:center"><h2>Paused</h2>
         <div class="menu"><button id="p-resume">Resume</button><button id="p-controls" class="secondary">Controls</button>
+        <button id="p-sound" class="secondary">Sound</button>
         <button id="p-quit" class="danger">Quit to Title</button></div>
         <p class="note">Progress is saved to this save slot at the start of each day.</p></div>`,
       true
@@ -485,6 +488,11 @@ export class Game {
     s.querySelector('#p-controls').onclick = () => {
       const c = ui.setScreen(`<div class="panel" style="max-width:560px"><h2>Controls</h2>${controlsTable()}<div class="footer"><span></span><button id="c-back">Back</button></div></div>`, true);
       c.querySelector('#c-back').onclick = () => this.pause();
+    };
+    s.querySelector('#p-sound').onclick = () => {
+      const c = ui.setScreen(`<div class="panel" style="max-width:480px"><h2>Sound</h2>${volumeSlidersHTML(this.settings)}<div class="footer"><span></span><button id="v-back">Back</button></div></div>`, true);
+      bindVolumeSliders(c, this.settings, (st) => this.hooks?.saveSettings?.(st));
+      c.querySelector('#v-back').onclick = () => this.pause();
     };
     s.querySelector('#p-quit').onclick = () => {
       this.ended = true;
@@ -610,6 +618,13 @@ export class Game {
     const st = this.state;
     if (phase === 'morning') await this.prepareMorning();
     this.phase = phase;
+    // arriving somewhere: through a door, or out of the elevator
+    if (!opts.first) {
+      if (opts.from === 'elevator' || (phase === 'laundry' && prev === 'lobby') || (phase === 'lobby' && prev === 'hallway')) {
+        sound.play('ding');
+        setTimeout(() => sound.play('elevatorDoor'), 500);
+      } else if (!['commute_am', 'commute_pm'].includes(phase) || ['lobby', 'pool', 'work', 'shop'].includes(prev)) sound.play('door');
+    }
     const p = this.player;
     this.taskCarrying = null;
     p.carry = null;
@@ -755,6 +770,7 @@ export class Game {
 
   /** M: full-screen map of the current area. */
   toggleMap() {
+    sound.play('mapOpen');
     this.mapOpen = !this.mapOpen;
     const c = document.getElementById('fullmap');
     if (!c) return;
@@ -813,6 +829,7 @@ export class Game {
       else
         text = `${wd} morning. ${name} wakes up and remembers the situation.\n\nGet ready, then head to work. You need to be there by 9:00 AM. The bus is faster than walking, but it doesn't go straight to ${this.job.workplaceName}.`;
       text += `\n\nWeather: ${WEATHER[this.weather].label}.${this.isRaining ? ' Getting soaked makes clothes cling... an umbrella keeps you dry.' : ''}`;
+      sound.play('alarm');
       await this.dialog(`Day ${st.day} — ${wd}`, text);
     } else if (phase === 'lobby') {
       if (this.lobbyDir === 'out') ui.toast('The building lobby. The street door is to the south.', '', 4000);
@@ -843,6 +860,7 @@ export class Game {
     } else if (phase === 'evening') {
       if (this.homeRuin && !st.eveningShown) {
         st.eveningShown = true;
+        sound.play('shock');
         await this.dialog('Wardrobe Disaster', `You made it home! You head straight for the wardrobe to grab a fresh pair of ${this.lw}...\n\n${pick(HOME_RUIN)(this.lw)}\n\nPayday isn't for a while. Until then, you'll have to get by just like this.`);
       }
       if (this.night && this.night.stage === 'gather' && prev !== 'evening') {
@@ -1429,6 +1447,7 @@ export class Game {
       this.weatherChange = null;
       this.setLighting(this.phase);
       this.rain.set(this.openAir && this.isRaining);
+      if (this.isRaining) sound.play('thunder');
       ui.toast(this.isRaining ? (this.openAir ? 'Tap... tap tap... It starts to rain.' : 'You hear rain start drumming on the windows.') : 'The rain stops.', this.isRaining ? 'bad' : '', 4500);
     }
     if (this.timers && this.timers.length) {
@@ -1447,14 +1466,17 @@ export class Game {
     if (p.inter) {
       p.inter.t += dt;
       ui.progress(p.inter.t / p.inter.time);
+      this.workSound(p.inter, dt);
       if (p.inter.t >= p.inter.time) {
         const a = p.inter.action;
         p.inter = null;
         ui.progress(null);
+        this.actionSound(a);
         a.run();
       }
     }
     this.updateWetness(dt);
+    this.updateSound(dt);
     this.updateMakeshift(dt);
     this.restWhileHidden(dt);
     const exposed = this.playerExposed();
@@ -1552,6 +1574,7 @@ export class Game {
     if (!k || p.char.legwearOn || p.borrow || p.bus) return;
     const M = MAKESHIFT[k.kind];
     if (!M) return ui.toast(`You can't really wear a ${PICKUP_LABELS[k.kind] || k.kind}.`, '', 2500);
+    sound.play('rustle');
     p.pickup = null;
     p.carry = null;
     p.char.setProp(null);
@@ -1586,6 +1609,7 @@ export class Game {
     const p = this.player;
     const m = p.makeshift;
     if (!m) return;
+    sound.play(voluntary ? 'rustle' : ['box', 'basket', 'clipboard', 'menu', 'folder'].includes(m.kind) ? 'crash' : 'rip');
     m.mesh.removeFromParent();
     m.mesh.geometry.dispose();
     p.makeshift = null;
@@ -1788,6 +1812,7 @@ export class Game {
       if (nt.t <= 0 && !ui.dialogOpen) {
         nt.stage = 'done';
         this.state.eveningShown = true;
+        sound.play('shock');
         this.dialog('Wardrobe Disaster', `${nt.locks ? 'The lock finally clicks open.' : 'The wash finishes.'} You pull out the first piece... and freeze.\n\n${pick(WARDROBE_RUIN)(this.lw)}\n\nThat was the whole wardrobe. Payday isn't for a while. Until then, you'll have to get by just like this.`);
       }
     }
@@ -1923,6 +1948,7 @@ export class Game {
   // Riding the bus
   boardBus(bus) {
     const p = this.player;
+    sound.play('busDoor');
     this.cancelInteract();
     p.bus = bus;
     p.seat = null;
@@ -2392,7 +2418,13 @@ export class Game {
     return false;
   }
 
+  voicePitch(n) {
+    const g = n.gender || n.char?.gender;
+    return (g === 'female' ? 1.35 : g === 'male' ? 0.85 : 1.1) * (0.92 + ((n.id || 0) % 7) * 0.025);
+  }
+
   slideLine(o, nm) {
+    sound.play(Math.random() < 0.5 ? 'gasp' : 'hm', { x: o.x, z: o.z, pitch: this.voicePitch(o), vol: 0.6 });
     this.bubble(o, pick([`...I didn't see anything.`, `*turns bright red and looks at the ceiling*`, `Uh. Carry on, ${nm}.`, '*clears throat and suddenly finds the floor very interesting*']), 4);
     this.talkMood(o, { surprised: 0.6, happy: 0.2 }, 5);
     o.noticeCooldown = 40;
@@ -2468,6 +2500,7 @@ export class Game {
   }
 
   bubble(n, text, time = 3.5) {
+    if (!/^\*/.test(text)) sound.play('murmur', { x: n.x, z: n.z, pitch: this.voicePitch(n), vol: 0.55, range: 16 });
     n.bubbleText = text;
     n.bubbleT = time;
     this.say(this.speakerName(n), text);
@@ -2500,6 +2533,7 @@ export class Game {
       n.noticeCooldown = 25;
       n.temper = n.temper || randomTemperament();
       const kind = reactionFor(n.temper, n.gender && pg && n.gender !== pg);
+      sound.play(reactionSound(kind), { x: n.x, z: n.z, pitch: this.voicePitch(n) });
       this.bubble(n, reactionLine(kind));
       this.talkMood(n, REACTIONS[kind].mood, 4);
       this.addShame((n.kind === 'clerk' ? SHAME.clerk : SHAME.pedestrian) * REACTIONS[kind].shame);
@@ -2508,6 +2542,9 @@ export class Game {
     this.cancelInteract();
     n.plan([]);
     n.state = 'talk';
+    // a coworker, the manager or a customer: this is serious
+    sound.play('gasp', { x: n.x, z: n.z, pitch: this.voicePitch(n) });
+    sound.play('shock');
     if (n.kind === 'manager') {
       await this.managerTalk('manager');
       return;
@@ -2611,6 +2648,7 @@ export class Game {
     if (this.ended) return;
     const st = this.state;
     st.writeups++;
+    sound.play('writeup');
     const mgrName = this.profile.manager.name;
     const why =
       reason === 'report' ? REPORT_REASONS.report(who) :
@@ -3021,6 +3059,7 @@ export class Game {
   }
 
   makeScene(n, spot) {
+    sound.play(Math.random() < 0.5 ? 'crash' : 'papers', { x: spot.x, z: spot.z, range: 40 });
     this.bubble(n, pick(DISTRACT_LINES), 4);
     this.talkMood(n, { surprised: 0.9 }, DISTRACT_TIME);
     this.distraction = { x: spot.x, z: spot.z, t: DISTRACT_TIME + 8 };
@@ -3226,6 +3265,7 @@ export class Game {
     errand.done = false;
     errand.stolen = true;
     ui.toast('A stray dog snatches your shopping bag and bolts! Catch it!', 'bad', 6000);
+    sound.play('bark', { x: p.x + 1.5, z: p.z + 1.5 });
   }
 
   updateDog(dt) {
@@ -3293,6 +3333,7 @@ export class Game {
       if (d > it.r + (p.sitAt ? 0.4 : 0)) continue;
       const a = this.actionFor(it);
       if (a && !a.anim) a.anim = workKindFor(it.station?.tag || it.id) || 'press';
+      if (a && !a.sid) a.sid = it.station?.tag || it.id;
       if (a && (d < bd || (best && best.disabled && !a.disabled))) {
         bd = d;
         best = a;
@@ -3366,6 +3407,7 @@ export class Game {
       ui.toast(`No room to get behind the ${m.kind} from this side.`, 'bad', 2500);
       return;
     }
+    sound.play(m.kind === 'whiteboard' ? 'squeak' : 'wheels');
     m.holder = 'player';
     m.pushExt = gr.ext;
     m.pushOff = gr.off;
@@ -3388,6 +3430,7 @@ export class Game {
     this.cancelInteract();
     p.sitAt = s;
     s.taken = 'player';
+    sound.play('sit');
     p.standFrom = { x: p.x, z: p.z };
     p.x = s.x;
     p.z = s.z;
@@ -3427,6 +3470,7 @@ export class Game {
     this.cancelInteract();
     p.hidden = h;
     p.restNoted = false;
+    sound.play('hide');
     p.hideFrom = { x: p.x, z: p.z };
     p.x = h.x;
     p.z = h.z;
@@ -3438,11 +3482,13 @@ export class Game {
     const p = this.player;
     if (!p.hidden) return;
     p.hidden = null;
+    if (!silent) sound.play('rustle');
     void silent;
   }
 
   pickUp(k) {
     const p = this.player;
+    sound.play('pickup');
     if (p.pickup) this.dropItem(false);
     k.taken = true;
     k.mesh.visible = false;
@@ -3466,6 +3512,7 @@ export class Game {
     const p = this.player;
     const k = p.pickup;
     if (!k) return;
+    if (!home) sound.play('drop');
     p.pickup = null;
     if (!this.taskCarrying) {
       p.carry = null;
@@ -3733,7 +3780,10 @@ export class Game {
     const a = this.curAction;
     if (!a || a.disabled || this.player.inter) return;
     if (a.time > 0) this.player.inter = { action: a, t: 0, time: a.time };
-    else a.run();
+    else {
+      this.actionSound(a);
+      a.run();
+    }
   }
 
   /** What kind of hand motion fits the station or fixture nearest to (x, z). */
@@ -3753,6 +3803,103 @@ export class Game {
       }
     }
     return best;
+  }
+
+  surface() {
+    const ph = this.phase;
+    if (this.player.wet > 0.4 || (this.openAir && this.isRaining) || ph === 'pool') return 'wet';
+    if (['morning', 'evening', 'hallway'].includes(ph)) return 'carpet';
+    if (ph === 'lobby' || ph === 'laundry') return 'tile';
+    if (this.outdoors) return 'outdoor';
+    return 'floor';
+  }
+
+  /** Footsteps, the rolling cart, the heartbeat when someone's noticing you, and each area's ambience. */
+  updateSound(dt) {
+    const p = this.player;
+    sound.setListener(p.x, p.z, this.cam.yaw);
+    if (!sound.ok) return;
+    const surf = this.surface();
+    const moved = Math.hypot(p.x - (this._sx ?? p.x), p.z - (this._sz ?? p.z));
+    this._sx = p.x;
+    this._sz = p.z;
+    if (!p.bus && moved > 0 && moved < 1) {
+      p.stepAcc = (p.stepAcc || 0) + moved;
+      const stride = p.running ? 1.0 : p.crouching ? 0.55 : 0.72;
+      if (p.stepAcc > stride) {
+        p.stepAcc = 0;
+        sound.play('step', { surface: surf, run: p.running, vol: p.crouching ? 0.3 : 0.85 });
+      }
+    }
+    // other people's footsteps: you can hear someone coming before you see them
+    if (!p.bus) {
+      for (const n of this.npcs) {
+        if (n.away || !n.curSpeed || n.curSpeed < 0.2) continue;
+        if (Math.abs(n.x - p.x) > 13 || Math.abs(n.z - p.z) > 13) continue;
+        n.stepAcc = (n.stepAcc || 0) + n.curSpeed * dt;
+        if (n.stepAcc > 0.75) {
+          n.stepAcc = 0;
+          sound.play('step', { x: n.x, z: n.z, surface: surf, vol: n.crouch ? 0.2 : 0.55, range: 13 });
+        }
+      }
+    }
+    sound.loop('pushing', p.pushing && p.speed > 0.1 ? 1 : 0);
+    let maxS = 0;
+    if (this.stealthActive()) for (const n of this.npcs) if (n.suspicion > maxS) maxS = n.suspicion;
+    sound.loop('tension', maxS > 0.12 ? 0.35 + maxS * 0.65 : 0, { level: maxS });
+    if (maxS > 0.55 && !this._noticedSting) {
+      this._noticedSting = true;
+      sound.play('noticed');
+    }
+    if (maxS < 0.2) this._noticedSting = false;
+    // ambience for wherever you are
+    const ph = this.phase;
+    const amb = { work: 'office', morning: 'apartment', evening: 'apartment', hallway: 'hallway', lobby: 'hallway', pool: 'pool', laundry: 'laundry', shop: 'shop' }[ph] || (this.outdoors ? 'city' : null);
+    const day = (this.clock || 0) > 360 && (this.clock || 0) < 1170;
+    const keep = ['pushing', 'tension'];
+    if (amb) {
+      sound.loop(amb, p.bus ? 0.5 : 1, { day, rain: this.isRaining });
+      keep.push(amb);
+    }
+    if (this.isRaining && ph !== 'laundry') {
+      sound.loop('rain', this.openAir && !p.bus ? 1 : 0.4, { inside: !this.openAir || !!p.bus });
+      keep.push('rain');
+    }
+    if (p.bus) {
+      sound.loop('bus', 1, { speed: p.bus.speed || 0 });
+      keep.push('bus');
+    }
+    sound.only(keep);
+  }
+
+  /** Hands busy at a station: the matching noises while the progress bar fills. */
+  workSound(inter, dt) {
+    const k = inter.action.anim;
+    if (!k) return;
+    inter.sndT = (inter.sndT ?? 0) - dt;
+    if (inter.sndT > 0) return;
+    const once = { press: 'buttons', pour: 'pour', wash: 'water', feed: 'shred', water: 'pour' };
+    const rep = { type: ['typing', 0.6], write: ['writing', 0.55], sort: ['papers', 0.9], mop: ['mop', 0.7], lift: ['thump', 1.2], low: ['rustle', 0.9], high: ['rustle', 1.1], tinker: ['buttons', 0.8], wipe: ['mop', 0.8] };
+    if (once[k]) {
+      sound.play(once[k]);
+      inter.sndT = 99;
+    } else if (rep[k]) {
+      sound.play(rep[k][0], { vol: 0.7 });
+      inter.sndT = rep[k][1] * (0.8 + Math.random() * 0.4);
+    } else inter.sndT = 99;
+  }
+
+  /** The sound of finishing something: doors, elevators, machines, the bed... */
+  actionSound(a) {
+    const id = String(a.sid || '').replace(/#.*$/, '').replace(/[0-9]+$/, '');
+    const map = {
+      door: 'door', aptdoor: 'door', lobbydoor: 'door', exit: 'door', poolgate: 'door', backstairs: 'door', stairs: 'door', mailbox: 'door', wardrobe: 'door',
+      elevator: 'ding', timeclock: 'beep', copier: 'copier', printer: 'copier', microwave: 'microwave', shredder: 'shred', washer: 'thump', dryer: 'thump',
+      sink: 'water', shower: 'water', kitchen: 'pour', coffee: 'pour', soda: 'thump', fridge: 'door', bed: null, spill: 'mop', mop: 'mop', trash: 'thump', dumpster: 'thump',
+    };
+    const n = map[id];
+    if (n) sound.play(n);
+    if (id === 'elevator') setTimeout(() => sound.play('elevatorDoor'), 600);
   }
 
   cancelInteract() {
@@ -3784,6 +3931,7 @@ export class Game {
       const n = this.cwNPC(i);
       if (cw && !cw.fired && !cw.blessed) {
         cw.blessed = true;
+        sound.play('choir');
         cw.playing = false;
         const nm = this.profile.coworkers[i].name;
         const lw = n ? n.legwearType : 'pants';
@@ -3895,6 +4043,7 @@ export class Game {
     if (!task) return;
     const req = { task, step: 0, from, how };
     w.requests.push(req);
+    if (!this.introRequest) sound.play(how === 'phone' ? 'phone' : 'request');
     const lower = tpl.name.charAt(0).toLowerCase() + tpl.name.slice(1);
     const via = { note: `A sticky note from ${from}: "${tpl.name}, please!"`, phone: `${this.requestVia()}: ${tpl.name}.`, ask: `${from} asked you to ${lower}.`, left: `${from} left a note on your things: "${tpl.name}?"` }[how];
     ui.toast(via, '', 4500);
@@ -4125,7 +4274,7 @@ export class Game {
     if (w.active) w.active.step = w.step;
     if (w.step >= w.task.steps.length) {
       w.done++;
-      ui.toast(`Done: ${w.task.name}${w.active?.from ? ` (for ${w.active.from})` : ''}`, 'good');
+      ui.toast(`Done: ${w.task.name}${w.active?.from ? ` (for ${w.active.from})` : ''}`, 'good', 3500, 'taskDone');
       if (this.taskCarrying) this.clearTaskCarry();
       w.requests = w.requests.filter((r) => r !== w.active);
       this.activateRequest(w.requests[0] || null);
@@ -4135,6 +4284,8 @@ export class Game {
   /** Day 1: the wardrobe disaster strikes during the first task, caused by what you're doing. */
   async firstTaskMishap(step) {
     const p = this.player;
+    sound.play('rip');
+    setTimeout(() => sound.play('shock'), 350);
     const mh = mishapFor(step.station?.tag);
     p.char.setMood({ surprised: 1, sad: 0.5 });
     if (mh.wet) {
@@ -4165,6 +4316,7 @@ export class Game {
 
   /** Day after the third shift: Celesti is waiting in the living room. Walk over and talk to her. */
   async celestiAppear() {
+    sound.play('choir');
     const L = this.levels.apartment;
     const ch = await this.makeCelesti();
     ch.setMood({ happy: 0.5 });
@@ -4203,6 +4355,7 @@ export class Game {
 
   async win() {
     if (this.ended) return;
+    sound.play('fanfare');
     const L = this.levels.apartment;
     const ch = await this.makeCelesti();
     ch.setMood({ happy: 0.5 });
@@ -4221,6 +4374,7 @@ export class Game {
   // =====================================================================
   async sleep() {
     const st = this.state;
+    sound.play('sleep');
     st.day++;
     if (this.settings.sleepRecovery !== false) st.shame = Math.max(0, st.shame - SHAME.sleep);
     this.night = null;
@@ -4241,6 +4395,8 @@ export class Game {
   lose(title, text) {
     if (this.ended) return;
     this.ended = true;
+    sound.stopAll();
+    sound.play('sadTrombone');
     if (document.pointerLockElement) document.exitPointerLock();
     this.onEnd({ type: 'lose', title, text, day: this.state.day });
   }

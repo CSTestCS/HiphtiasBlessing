@@ -54,8 +54,9 @@ export function buildApartment() {
   L.box(0.8, 0.0, 2.6, 0.9, 0.75, '#3d5a80'); // sofa
   L.seat(0.8, 0.5, 0, 'sofa');
   L.box(0.8, -0.38, 2.6, 0.2, 1.0, '#3d5a80', { collide: false });
-  L.box(0.8, 3.9, 1.8, 0.4, 0.5, '#2d3436'); // tv stand
-  L.box(0.8, 3.95, 1.5, 0.08, 0.85, '#111111', { y: 0.5, collide: false });
+  // TV against the front wall, clear of the door
+  L.box(2.2, 4.68, 1.8, 0.4, 0.5, '#2d3436'); // tv stand
+  L.box(2.2, 4.73, 1.5, 0.08, 0.85, '#111111', { y: 0.5, collide: false });
   L.plant(-1.0, 4.4);
 
   L.interactable('bed', -3.0, -3.0, 'Sleep', { r: 1.6 });

@@ -9,6 +9,7 @@ import { Game, controlsTable } from './game.js';
 import { listSlots, loadSlot, createSlot, writeProfile, deleteSlot, otherSlotPeople } from './saves.js';
 import { modelBuffer, modelKey } from './assets.js';
 import { startTitleScene, stopTitleScene } from './title.js';
+import { sound, applyVolumeSettings, volumeSlidersHTML, bindVolumeSliders } from './audio.js';
 
 const blobCache = new Map();
 let game = null;
@@ -321,6 +322,8 @@ async function showSettings() {
       <p class="note">Maximum weight of VRoid facial expressions (blend shapes) used to show how characters feel.</p>
       <label><input type="checkbox" id="s-map" ${st.minimap ? 'checked' : ''}/> Show minimap and compass (toggle in game with M)</label>
       <label><input type="checkbox" id="s-civ" ${st.useBundledCivilians ? 'checked' : ''}/> Use the bundled townsperson models for civilians</label>
+      <h3 style="margin:18px 0 6px">Sound</h3>
+      ${volumeSlidersHTML(st)}
       <div class="footer"><button class="secondary" id="s-reset">Defaults</button><button id="s-back">Done</button></div>
     </div>`);
   const fmt = () => {
@@ -341,9 +344,12 @@ async function showSettings() {
     st.useBundledCivilians = s.querySelector('#s-civ').checked;
     await putSettings(st);
   };
-  s.querySelectorAll('input').forEach((el) => (el.oninput = el.onchange = () => (fmt(), save())));
+  s.querySelectorAll('input:not([id^="s-vol"])').forEach((el) => (el.oninput = el.onchange = () => (fmt(), save())));
+  bindVolumeSliders(s, st, () => putSettings(st));
   s.querySelector('#s-reset').onclick = async () => {
     Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, detectScale: 1, sleepRecovery: true, minimap: true, useBundledCivilians: true });
+    for (const k of ['volMaster', 'volSfx', 'volVoice', 'volAmbient', 'volUi']) st[k] = DEFAULT_SETTINGS[k];
+    applyVolumeSettings(st);
     await putSettings(st);
     showSettings();
   };
@@ -1005,7 +1011,7 @@ async function startGame(slotId) {
     await writeProfile(slotId, profile);
     const extraCivs = await otherSlotPeople(slotId);
     ui.clearChat();
-    game = new Game(canvas, { profile, settings, hooks: { chooseOutfits }, slotId, extraCivs }, save, onGameEnd);
+    game = new Game(canvas, { profile, settings, hooks: { chooseOutfits, saveSettings: putSettings }, slotId, extraCivs }, save, onGameEnd);
     await game.init();
     game.start();
   } catch (e) {
@@ -1049,5 +1055,22 @@ async function onGameEnd(r) {
   if (save) s.querySelector('#e-retry').onclick = () => startGame(slotId);
   s.querySelector('#e-title').onclick = showTitle;
 }
+
+// sound: browsers only allow audio after the first click or key press
+getSettings().then(applyVolumeSettings).catch(() => {});
+const unlockAudio = () => sound.unlock();
+window.__sound = sound;
+window.addEventListener('pointerdown', unlockAudio, true);
+window.addEventListener('keydown', unlockAudio, true);
+// menu buttons click; hovering ticks quietly
+document.addEventListener('click', (e) => {
+  if (e.target.closest && e.target.closest('button')) sound.play('click');
+}, true);
+let hoverEl = null;
+document.addEventListener('mouseover', (e) => {
+  const b = e.target.closest && e.target.closest('button');
+  if (b && b !== hoverEl && !b.disabled) sound.play('hover', { minGap: 40 });
+  hoverEl = b || null;
+});
 
 showTitle();

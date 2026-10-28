@@ -1,6 +1,7 @@
 // Buses: follow their line's loop, stop at every stop, passengers get on and off.
 // Passengers are only spawned as 3D characters when the bus is near the player.
 import * as THREE from 'three';
+import { sound } from './audio.js';
 import { mat } from './level.js';
 import { angDiff } from './npc.js';
 
@@ -179,6 +180,7 @@ export class Bus {
       }
       const busy = this.passengers.some((p) => p.walk.length);
       if (this.dwell <= 0 && !busy) {
+        sound.play('busDoor', { x: this.x, z: this.z });
         this.state = 'drive';
         this.nextStop = (this.nextStop + 1) % this.line.stops.length;
       }
@@ -246,6 +248,8 @@ export class Bus {
   }
 
   arrive() {
+    sound.play('busBrake', { x: this.x, z: this.z });
+    sound.play('busDoor', { x: this.x, z: this.z });
     this.state = 'dwell';
     this.dwell = 5 + Math.random() * 2;
     this.dwellHeld = 0;

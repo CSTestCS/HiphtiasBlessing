@@ -3,6 +3,7 @@
 // itself down as soon as the title menu goes away.
 import * as THREE from 'three';
 import { createCharacter, addAngelic } from './character.js';
+import { sound } from './audio.js';
 
 let active = null;
 
@@ -149,6 +150,7 @@ export async function startTitleScene({ celesti, player, isTitleUp }) {
       return;
     }
     requestAnimationFrame(loop);
+    sound.loop('title', 1);
     const now = performance.now();
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
@@ -185,6 +187,7 @@ export function stopTitleScene() {
   if (!me) return;
   active = null;
   me.running = false;
+  sound.loop('title', 0);
   window.removeEventListener('resize', me.onResize);
   for (const c of me.chars) {
     try {

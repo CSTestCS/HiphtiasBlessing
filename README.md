@@ -17,7 +17,7 @@ The week runs Monday to Friday at work. Saturdays and Sundays are **days off wit
 The title screen shows Celesti floating in, and the main character of your last played save looking very startled about it.
 - **Continue / Load Game**: multiple save slots, each its own game. Coworkers from your other saves walk around town as named townsfolk.
 - **New Game**: create your character (name, gender, body, legwear, colors or your own .vrm), pick one of 7 jobs, and set up 4–12 coworkers plus a manager.
-- **Settings**: length of an in-game hour (default 4 real minutes), shame buildup intensity, how fast people notice you, whether sleep reduces shame, facial expression strength, minimap on/off, bundled townsfolk on/off.
+- **Settings**: length of an in-game hour (default 4 real minutes), shame buildup intensity, how fast people notice you, whether sleep reduces shame, facial expression strength, minimap on/off, bundled townsfolk on/off, and volume for master, effects, voices, ambience and interface (also in the pause menu).
 - **Civilian Models**: 4 bundled townsperson models are used by default. Import more .vrm templates (with a gender). Every NPC gets random skin, hair, eye and clothing colors.
 - **Celesti's Model**: the bundled Celesti model is used by default. Import your own .vrm (a halo and wings are added) and set her name.
 
@@ -43,6 +43,8 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 **People in on the secret.** Friends who know drop by now and then to check you're okay (and can cause a distraction or lend you their pants). Oddballs who joined in come over to compare how many times each of you has been spotted. Coworkers who only see you after they've been blessed themselves have their own moment of recognition, and might team up with you; ones who saw you before apologize. After that, blessed coworkers trade a quick word when you pass.
 
 **Dialog** is laid out like a manga panel: the speaker posed for the moment (startled, pointing, arms crossed, covering up, floating...), quotes in speech bubbles and narration in caption boxes.
+
+**Sound.** Everything is synthesized live (no audio files): footsteps that change with the floor (and other people's, so you can hear someone coming), doors, elevators, office machines, phones, buses, rain and thunder, a heartbeat that quickens as someone starts to notice you, manga-style stingers when you're caught, wordless voices for reactions (gasps, giggles, wolf whistles, tutting), and ambience for every area.
 
 ## Rules
 - **Shame** rises when people outside work see you and when you're caught at work. Fill it and you lose. Sleeping lowers it. The Settings screen scales how fast it builds.
@@ -127,6 +129,7 @@ The `.exe` is portable: no installer, just double-click it. It isn't code-signed
 - `src/character.js`: VRM loading and cloning, recoloring, procedural animation, built-in figures, Celesti's halo and wings
 - `src/portrait.js`: posed character snapshots for the manga-style dialog panels
 - `src/title.js`: the 3D title screen backdrop
+- `src/audio.js`: synthesized sound effects, ambience loops and volume settings
 - `assets/fonts/`: Comic Neue (SIL Open Font License) for speech bubbles
 - `src/level.js`: level building, collision, sight lines, navigation
 - `src/levels/`: apartment, lobby, city, workplace generator, shops

@@ -26,10 +26,13 @@ export function buildHallway() {
   // apartment doors on both sides
   const doors = [-9, -3, 2, 7, 10.5];
   doors.forEach((x, i) => {
-    L.box(x, -1.43, 1.0, 0.06, 2.1, '#4e342e', { collide: false, occlude: false });
-    L.box(x, 1.43, 1.0, 0.06, 2.1, '#4e342e', { collide: false, occlude: false });
-    L.label(`7F-0${i * 2 + 1}`, x, 2.3, -1.38, 0, { height: 0.14, bg: '#3e2723' });
-    L.label(`7F-0${i * 2 + 2}`, x, 2.3, 1.38, Math.PI, { height: 0.14, bg: '#3e2723' });
+    // doors stand slightly proud of the wall face (z = ±1.4) so they don't flicker into it
+    L.box(x, -1.36, 1.0, 0.07, 2.1, '#4e342e', { collide: false, occlude: false });
+    L.box(x, 1.36, 1.0, 0.07, 2.1, '#4e342e', { collide: false, occlude: false });
+    L.box(x + 0.38, -1.31, 0.06, 0.04, 0.06, '#f1c40f', { y: 1.0, collide: false, occlude: false });
+    L.box(x - 0.38, 1.31, 0.06, 0.04, 0.06, '#f1c40f', { y: 1.0, collide: false, occlude: false });
+    L.label(`7F-0${i * 2 + 1}`, x, 2.3, -1.31, 0, { height: 0.14, bg: '#3e2723' });
+    L.label(`7F-0${i * 2 + 2}`, x, 2.3, 1.31, Math.PI, { height: 0.14, bg: '#3e2723' });
   });
   L.pois.doors = [];
   doors.forEach((x, i) => {
@@ -37,7 +40,7 @@ export function buildHallway() {
     L.pois.doors.push({ x, z: 0.95, yaw: Math.PI, apt: `7F-0${i * 2 + 2}` });
   });
   L.interactable('aptdoor', 2, -0.9, 'Your apartment (7F-05)', { r: 1.2 });
-  L.label('HOME', 2, 2.55, -1.36, 0, { height: 0.16, bg: '#00b894' });
+  L.label('HOME', 2, 2.55, -1.31, 0, { height: 0.16, bg: '#00b894' });
   L.pois.neighborDoor = { x: 2, z: 1.0, yaw: Math.PI };
   // elevator (west) and stairs (east)
   L.box(-12.42, 0, 0.1, 1.6, 2.3, '#b2bec3', { collide: false, occlude: false });

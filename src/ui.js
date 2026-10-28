@@ -1,3 +1,4 @@
+import { sound } from './audio.js';
 // HUD and dialog helpers.
 const $ = (id) => document.getElementById(id);
 
@@ -27,7 +28,8 @@ export const ui = {
     this.screen.classList.add('hidden');
   },
 
-  toast(msg, kind = '', ms = 3500) {
+  toast(msg, kind = '', ms = 3500, sfx) {
+    if (sfx !== null) sound.play(sfx || (kind === 'good' ? 'toastGood' : kind === 'bad' ? 'toastBad' : 'toast'), { minGap: 150 });
     const el = document.createElement('div');
     el.className = 'toast ' + kind;
     el.textContent = msg;
@@ -73,6 +75,7 @@ export const ui = {
         if (i === 0) setTimeout(() => b.focus(), 50);
       });
       $('dialog').classList.remove('hidden');
+      sound.play('panel');
     });
   },
 

@@ -429,6 +429,11 @@ export const DEFAULT_SETTINGS = {
   sleepRecovery: true,
   exprMax: 0.7,
   minimap: true,
+  volMaster: 0.8,
+  volSfx: 1,
+  volVoice: 0.9,
+  volAmbient: 0.6,
+  volUi: 0.8,
 };
 
 export const BUNDLED = {
