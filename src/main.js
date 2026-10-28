@@ -8,6 +8,7 @@ import { createCharacter, inspectVRM, randomColors, addAngelic, clearTemplates }
 import { Game, controlsTable } from './game.js';
 import { listSlots, loadSlot, createSlot, writeProfile, deleteSlot, otherSlotPeople } from './saves.js';
 import { modelBuffer, modelKey } from './assets.js';
+import { startTitleScene, stopTitleScene } from './title.js';
 
 const blobCache = new Map();
 let game = null;
@@ -246,6 +247,29 @@ async function showTitle() {
   s.querySelector('#t-cel').onclick = showCelesti;
   s.querySelector('#t-controls').onclick = showHowTo;
   s.querySelector('#t-quit').onclick = () => (window.gameAPI ? window.gameAPI.quit() : window.close());
+  s.classList.add('titlebg');
+  showTitleScene(slots[0] || null).catch((e) => console.warn('title scene', e));
+}
+
+/** The backdrop: Celesti floating in, and the main character of the last played save, startled. */
+async function showTitleScene(lastSlot) {
+  const settings = await getSettings();
+  const cm = settings.celesti && settings.celesti.key ? settings.celesti : { asset: BUNDLED.celesti };
+  const celesti = { vrm: await getModel(cm), full: true, legwearMaterials: cm.legwearMaterials || null, underwearOverlay: false, gender: 'female' };
+  let player = null;
+  try {
+    if (lastSlot) {
+      const { profile: raw } = await loadSlot(lastSlot.id);
+      const profile = migrateProfile(raw);
+      const o = profile?.player?.outfits?.[0];
+      if (o) player = await outfitOpts(o, {}, profile.player.gender);
+    }
+  } catch (e) {
+    console.warn('title: could not load last save', e);
+  }
+  if (!player) player = await outfitOpts(newOutfit('skirt', randomColors(), 'female'), {}, 'female');
+  if (!document.querySelector('.title-wrap')) return;
+  await startTitleScene({ celesti, player, isTitleUp: () => !!document.querySelector('.title-wrap') });
 }
 
 async function showLoad() {
@@ -962,6 +986,7 @@ function chooseOutfits(g) {
 // Game
 async function startGame(slotId) {
   killPreview();
+  stopTitleScene();
   if (game) {
     game.destroy();
     game = null;

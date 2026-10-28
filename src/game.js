@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { ui, esc } from './ui.js';
 import { NPC, angDiff, pick, propMesh } from './npc.js';
+import { drawPortrait } from './portrait.js';
 import { createCharacter, createMannequin, randomColors, addAngelic, setExpressionMax, borrowLegwear, workKindFor } from './character.js';
 import { buildLobby } from './levels/lobby.js';
 import { buildHallway, buildPool, buildLaundry } from './levels/building.js';
@@ -15,8 +16,7 @@ import { modelBuffer, modelKey } from './assets.js';
 import { writeSave } from './saves.js';
 import {
   REACTIONS, randomTemperament, reactionFor, reactionLine, BUS_REACTIONS, EXCUSES, EXCUSE_OK, EXCUSE_FAIL, CHECK_ON_YOU, ODDBALL_LINES, DISTRACT_LINES,
-  MAKESHIFT_FAILS, MAKESHIFT_SNAGS, RESIDENT_INTRO, RESIDENT_REPLIES, WARDROBE_RUIN, HOME_RUIN, MACHINE_ERRORS,
-} from './lines.js';
+  MAKESHIFT_FAILS, MAKESHIFT_SNAGS, RESIDENT_INTRO, RESIDENT_REPLIES, WARDROBE_RUIN, HOME_RUIN, MACHINE_ERRORS, FRIEND_CHECKS, FRIEND_FINE, FRIEND_COMFORT, BLESSED_FRIEND_CHECKS, ODDBALL_CHECKS, BLESSED_MEET, BLESSED_MEET_REPLIES, BLESSED_APOLOGY, BLESSED_BANTER } from './lines.js';
 import { buildApartment } from './levels/apartment.js';
 import { buildCity } from './levels/city.js';
 import { buildWorkplace } from './levels/workplace.js';
@@ -498,16 +498,56 @@ export class Game {
     this.last = performance.now();
   }
 
-  async dialog(title, text, options) {
+  /**
+   * look: who's in the panel and how they're posed.
+   * { who: npc | 'player' | 'celesti', pose, mood, frame: 'bust'|'full', bg: 'plain'|'speed'|'tone'|'holy'|'dark' }
+   * Leave it out to show the player reacting to whatever is happening; pass false for text only.
+   */
+  async dialog(title, text, options, look) {
     this.keys.clear();
     this.cancelInteract();
     ui.chat(null, `${title}: ${text}`, { time: this.chatTime() });
-    const v = await ui.dialog(title, text, options);
+    const lk = look === false ? null : this.resolveLook(title, text, look);
+    const v = await ui.dialog(title, text, options, lk && { name: lk.name, draw: (cv) => this.drawLook(cv, lk) });
     // log what you picked when it's something you say
     const picked = (options || []).find((o) => o.value === v);
     if (picked && /^["“*]/.test(picked.label)) ui.chat(this.profile.name, picked.label.replace(/^"|"$/g, ''), { you: true, time: this.chatTime() });
     this.last = performance.now();
     return v;
+  }
+
+  resolveLook(title, text, look) {
+    const p = this.player;
+    let lk = look ? { ...look } : null;
+    if (!lk) {
+      // the player reacting: guess the moment from the title
+      const t = title + ' ' + (text || '').slice(0, 80);
+      if (/disaster|malfunction|ruin/i.test(t)) lk = { who: 'player', pose: 'startled', mood: { surprised: 1, sad: 0.4 }, bg: 'speed', frame: 'full' };
+      else if (/uh oh|caught|noticed|saw you|office|fired|write-up/i.test(t)) lk = { who: 'player', pose: 'cover', mood: { sad: 0.7, surprised: 0.5 }, bg: 'dark', frame: 'full' };
+      else if (/^day \d/i.test(title)) lk = { who: 'player', pose: null, mood: { relaxed: 0.3 }, bg: 'tone', frame: 'bust' };
+      else lk = { who: 'player', pose: this.playerExposed?.() ? 'cover' : 'clasp', mood: { sad: 0.3, surprised: 0.3 }, bg: 'tone', frame: 'bust' };
+    }
+    const w = lk.who || 'player';
+    if (w === 'player') {
+      lk.char = p.char;
+      lk.name = this.profile.name;
+    } else if (w === 'celesti') {
+      lk.char = this.celestiChar;
+      lk.name = this.celestiName();
+      lk.bg = lk.bg || 'holy';
+    } else if (w.char) {
+      lk.char = w.char;
+      lk.name = this.speakerName(w);
+    }
+    if (!lk.char) return null;
+    lk.bg = lk.bg || 'plain';
+    lk.frame = lk.frame || 'bust';
+    return lk;
+  }
+
+  drawLook(canvas, lk) {
+    if (!this.renderer) return false;
+    return drawPortrait(this.renderer, lk.char, lk, canvas, () => this.render());
   }
 
   chatTime() {
@@ -806,7 +846,7 @@ export class Game {
         await this.dialog('Wardrobe Disaster', `You made it home! You head straight for the wardrobe to grab a fresh pair of ${this.lw}...\n\n${pick(HOME_RUIN)(this.lw)}\n\nPayday isn't for a while. Until then, you'll have to get by just like this.`);
       }
       if (this.night && this.night.stage === 'gather' && prev !== 'evening') {
-        await this.dialog('Home at last', STORY.day1Home(this.lw));
+        await this.dialog('Home at last', STORY.day1Home(this.lw), undefined, { who: 'player', pose: 'clasp', mood: { relaxed: 0.5, sad: 0.3 }, bg: 'tone', frame: 'full' });
         return;
       }
       if (this.night && this.night.stage !== 'done') return;
@@ -1484,6 +1524,7 @@ export class Game {
     }
     if (this.phase === 'work') {
       this.updateBuddies(dt);
+      this.updateCheckIns(dt);
       this.detectSneakers(dt);
       this.updateSneakers(dt);
       this.updateBonding(dt);
@@ -1696,7 +1737,7 @@ export class Game {
     opts.push({ label: '"Perfectly fine, thanks."', value: 'fine' }, { label: '"Long story."', value: 'story' });
     p.char.setMood({ surprised: 1, sad: 0.4 });
     this.talkMood(n, { surprised: 0.8 }, 6);
-    const v = await this.dialog(n.apt ? `Resident of ${n.apt}` : 'A resident', intro, opts.slice(0, 4));
+    const v = await this.dialog(n.apt ? `Resident of ${n.apt}` : 'A resident', intro, opts.slice(0, 4), { who: n, pose: 'startled', mood: { surprised: 1 }, bg: 'speed' });
     // does it fly? depends on the excuse and how it looks
     const wet = p.wet > 0.3 || this.sayswam;
     const good = { swim: wet, laundry: this.phase === 'laundry', locked: true, fine: Math.random() < 0.4, evening: Math.random() < 0.6, story: Math.random() < 0.6 }[v];
@@ -1705,7 +1746,7 @@ export class Game {
     let shame = SHAME.pedestrian * (good ? 0.5 : 1.2) * (again ? 0.7 : 1);
     if (n.apt) met[n.apt] = (met[n.apt] || 0) + 1;
     this.addShame(shame);
-    await this.dialog(n.apt ? `Resident of ${n.apt}` : 'A resident', reply);
+    await this.dialog(n.apt ? `Resident of ${n.apt}` : 'A resident', reply, undefined, { who: n, pose: 'shrug', mood: { surprised: 0.4, happy: 0.3 } });
     if (!n.removed) {
       n.state = 'idle';
       n.plan([{ t: 1.5 }, ...(this.level.pois.entrance ? [{ go: this.level.pois.entrance }] : []), { call: () => this.removeNPC(n) }]);
@@ -2111,6 +2152,11 @@ export class Game {
       if (seated && p.sitAt.underTable && !ownChair) covered = true;
       if (ownChair && seesBody && !seesHip && dist < 4) seesHip = true; // they come right up to their chair
       const canNotice = seesHip && !covered && !this.complicit(n) && n.noticeCooldown <= 0;
+      // a coworker who's been blessed sees you exposed for the first time since: a moment of recognition
+      if (seesHip && !covered && dist < 7 && n.kind === 'coworker' && this.phase === 'work' && !ui.dialogOpen) {
+        const ncw = this.state.cw[n.index];
+        if (ncw?.blessed && !ncw.blessedMet && !n.checkingIn && !['talk', 'hiding'].includes(n.state)) this.blessedMeet(n);
+      }
       if (canNotice) {
         seenBy++;
         let rate = 0.5 * (1.5 - dist / range);
@@ -2355,6 +2401,7 @@ export class Game {
   npcCaught(o, s) {
     const cw = this.state.cw[s.index];
     const rt = this.cwRuntime[s.index];
+    this.spottedToday(rt, 1);
     s.graceT = performance.now() + 20000; // a moment to get away before anyone else piles on
     if (this.letsItSlide(o, s.gender)) {
       this.slideLine(o, s.name);
@@ -2428,7 +2475,7 @@ export class Game {
 
   addShame(v, silent = false) {
     v *= this.settings.shameScale ?? 1;
-    this.state.shame = Math.min(100, this.state.shame + v);
+    this.state.shame = Math.max(0, Math.min(100, this.state.shame + v));
     if (!silent && v >= 0.5) ui.toast(`Shame +${Math.round(v * 10) / 10}`, 'bad', 2200);
     if (this.state.shame >= 100 && !this.ended) {
       this.lose('Overwhelmed', `It's all too much. ${this.profile.name}'s face burns bright red, and they flee home, vowing never to leave the apartment again.\n\nToo much shame.`);
@@ -2439,6 +2486,8 @@ export class Game {
   // Getting caught
   async caught(n) {
     const name = this.profile.name;
+    this.work.spotted = (this.work.spotted || 0) + 1;
+    if (n.kind === 'coworker' && this.state.cw[n.index]) this.state.cw[n.index].sawYou = true;
     const pg = this.profile.player.gender;
     if (!n.coworkerEncounter && n.kind !== 'resident' && this.letsItSlide(n, pg)) {
       this.slideLine(n, name);
@@ -2470,10 +2519,10 @@ export class Game {
       if (this.ended) return;
       const c = this.complaints;
       if (n.kind === 'guard') {
-        await this.dialog('Security noticed!', `The security guard's radio crackles. ${pick(['"Uh... management? We have a... dress code situation by the entrance."', '"Ma\'am? Sir? I\'m going to have to write this up."', '"I\'ve seen a lot on this job. Not this, though."'])}\n\nThat goes on record as a complaint. (${c}/3 complaints today)`);
+        await this.dialog('Security noticed!', `The security guard's radio crackles. ${pick(['"Uh... management? We have a... dress code situation by the entrance."', '"Ma\'am? Sir? I\'m going to have to write this up."', '"I\'ve seen a lot on this job. Not this, though."'])}\n\nThat goes on record as a complaint. (${c}/3 complaints today)`, undefined, { who: n, pose: 'point', mood: { angry: 0.8, surprised: 0.5 }, bg: 'speed' });
         if (!n.removed) n.plan([{ t: 6 }]);
       } else {
-        await this.dialog(`A ${this.job.customerWord} noticed!`, `"${pick(['Excuse me?! Is that... your UNDERWEAR?! I want to speak to a manager!', 'Is this some kind of joke? Where is your manager?', 'Unbelievable. I\'m reporting this.', 'I came here to shop, not to see THAT.'])}"\n\nThe ${this.job.customerWord} storms off to complain. (${c}/3 complaints today)`);
+        await this.dialog(`A ${this.job.customerWord} noticed!`, `"${pick(['Excuse me?! Is that... your UNDERWEAR?! I want to speak to a manager!', 'Is this some kind of joke? Where is your manager?', 'Unbelievable. I\'m reporting this.', 'I came here to shop, not to see THAT.'])}"\n\nThe ${this.job.customerWord} storms off to complain. (${c}/3 complaints today)`, undefined, { who: n, pose: 'point', mood: { angry: 0.8, surprised: 0.5 }, bg: 'speed' });
       }
       if (this.ended || n.removed || this.phase !== 'work') return;
       if (n.kind === 'guard') return;
@@ -2500,7 +2549,7 @@ export class Game {
       cw.playing = true;
       this.addShame(SHAME.oddball);
       this.talkMood(n, { happy: 1 }, 8);
-      await this.dialog(`${nm} saw you!`, `${nm} stares at you, then breaks into a huge grin.\n\n"${pick(ODDBALL_LINES)}"\n\nBefore you can stop ${pr.them}, ${nm} winks and slips off to find somewhere private to "get ready".\n\n(${nm} will be sneaking around without ${pr.their} ${n.legwearType} too. If ${pr.they} get${pr.they === 'they' ? '' : 's'} caught, ${pr.theyre} the one in trouble.)`);
+      await this.dialog(`${nm} saw you!`, `${nm} stares at you, then breaks into a huge grin.\n\n"${pick(ODDBALL_LINES)}"\n\nBefore you can stop ${pr.them}, ${nm} winks and slips off to find somewhere private to "get ready".\n\n(${nm} will be sneaking around without ${pr.their} ${n.legwearType} too. If ${pr.they} get${pr.they === 'they' ? '' : 's'} caught, ${pr.theyre} the one in trouble.)`, undefined, { who: n, pose: 'fist', mood: { happy: 1 }, bg: 'speed' });
       if (!n.removed) {
         n.state = 'idle';
         this.stripPrivately(n);
@@ -2519,8 +2568,7 @@ export class Game {
           { label: `Borrow ${nm}'s ${n.legwearType} for a while`, value: 'lend' },
           { label: 'Ask for a distraction', value: 'distract' },
           { label: 'Just ask them to keep quiet', value: null, cls: 'secondary' },
-        ]
-      );
+        ], { who: n, pose: 'startled', mood: { surprised: 0.9, sad: 0.3 }, bg: 'speed' });
       after();
       if (v === 'lend') this.startLend(n);
       else if (v === 'distract') this.startDistraction(n);
@@ -2531,7 +2579,7 @@ export class Game {
       this.addShame(SHAME.sympathetic);
       this.talkMood(n, { surprised: 0.6, sad: 0.5 }, 8);
       if (this.ended) return;
-      await this.dialog(`${nm} saw you!`, `${nm} blinks, then politely looks away. "I... didn't see anything. That must be awful. Here, let me pull everyone's attention away — go!"\n\n(${nm} is now an ally and can create distractions when you ask.)`);
+      await this.dialog(`${nm} saw you!`, `${nm} blinks, then politely looks away. "I... didn't see anything. That must be awful. Here, let me pull everyone's attention away — go!"\n\n(${nm} is now an ally and can create distractions when you ask.)`, undefined, { who: n, pose: 'clasp', mood: { sad: 0.5, surprised: 0.5 } });
       after();
       this.startDistraction(n);
       return;
@@ -2541,7 +2589,7 @@ export class Game {
       this.addShame(SHAME.neutralWarn);
       this.talkMood(n, { surprised: 1 }, 8);
       if (this.ended) return;
-      await this.dialog(`${nm} saw you!`, `${nm} stares for a long, awkward moment. "Uh. Wow. Okay. I'm going to pretend I didn't see that..."\n\n"But if I see it again, I'm going to the manager."`);
+      await this.dialog(`${nm} saw you!`, `${nm} stares for a long, awkward moment. "Uh. Wow. Okay. I'm going to pretend I didn't see that..."\n\n"But if I see it again, I'm going to the manager."`, undefined, { who: n, pose: 'shrug', mood: { surprised: 0.8 } });
       n.noticeCooldown = 15;
       after();
       return;
@@ -2554,7 +2602,7 @@ export class Game {
     this.addShame(SHAME.report);
     this.talkMood(n, pers === 'distant' ? { relaxed: 0.2 } : { angry: 0.9 }, 8);
     if (this.ended) return;
-    await this.dialog(`${nm} saw you!`, lines[pers] || lines.strict);
+    await this.dialog(`${nm} saw you!`, lines[pers] || lines.strict, undefined, { who: n, pose: pers === 'distant' ? 'arms' : 'point', mood: pers === 'distant' ? { relaxed: 0.2 } : { angry: 0.9 }, bg: 'dark' });
     after();
     await this.managerTalk('report', nm);
   }
@@ -2596,7 +2644,7 @@ export class Game {
     await ui.fade(false);
     this.transitioning = false;
     this.addShame(SHAME.managerTalk, true);
-    await this.dialog(`${mgrName}'s Office`, STORY.managerTalk(mgrName, this.profile.name, this.lw, Math.min(3, st.writeups), why));
+    await this.dialog(`${mgrName}'s Office`, STORY.managerTalk(mgrName, this.profile.name, this.lw, Math.min(3, st.writeups), why), undefined, { who: this.manager || 'player', pose: st.writeups >= 3 ? 'facepalm' : 'arms', mood: { angry: 0.6 }, bg: 'dark' });
     if (st.writeups >= 3) {
       this.lose('Fired!', `${this.profile.name} is escorted out of ${this.job.workplaceName} by security, holding a cardboard box of belongings strategically in front of them.\n\nThree write-ups. Fired.`);
       return;
@@ -2670,7 +2718,7 @@ export class Game {
     const who = n.kind === 'customer' ? `A ${n.name}` : n.name;
     const q = n.kind === 'customer' ? '"Excuse me, are you alright? You look... odd."' : `"${this.profile.name}, ${pick(CHECK_ON_YOU)}"`;
     const opts = [...EXCUSES].sort(() => Math.random() - 0.5).slice(0, 3).map((t) => ({ label: `"${t}"`, value: t }));
-    const v = await this.dialog(`${who} came to check on you`, q, opts);
+    const v = await this.dialog(`${who} came to check on you`, q, opts, { who: n, pose: 'hips', mood: { surprised: 0.4, angry: 0.3 } });
     const chance = { friend: 0.85, sympathetic: 0.8, oddball: 0.9, distant: 0.7, neutral: 0.6, strict: 0.4 }[n.personality] ?? (n.kind === 'manager' ? 0.4 : 0.6);
     if (Math.random() < chance) {
       this.bubble(n, pick(EXCUSE_OK), 3);
@@ -2747,6 +2795,213 @@ export class Game {
   }
 
   /** The ally heads somewhere away from you and makes a scene; everyone nearby goes over to look. */
+  spottedToday(rt, add = 0) {
+    const day = this.state.day;
+    if (rt.spottedDay !== day) {
+      rt.spottedDay = day;
+      rt.spotted = 0;
+    }
+    rt.spotted += add;
+    return rt.spotted;
+  }
+
+  /**
+   * Friends and oddballs in on the secret come looking for you now and then: friends to see if
+   * you're okay, oddballs to compare scores. Blessed coworkers you've already met trade quick banter.
+   */
+  updateCheckIns(dt) {
+    const w = this.work;
+    const p = this.player;
+    if (!w.clockedIn || w.clockedOut || ui.dialogOpen) return;
+    this.checkInT = (this.checkInT || 0) - dt;
+    const tick = this.checkInT <= 0;
+    if (tick) this.checkInT = 0.5;
+    const situation = this.playerExposed() || !!p.makeshift;
+    for (const n of this.npcs) {
+      if (n.kind !== 'coworker' || n.index < 0) continue;
+      const cw = this.state.cw[n.index];
+      const rt = this.cwRuntime[n.index];
+      const ci = n.checkingIn;
+      if (ci) {
+        // on the way over
+        if (['talk'].includes(n.state)) continue;
+        ci.t += dt;
+        const d = Math.hypot(n.x - p.x, n.z - p.z);
+        const sees = !p.hidden && d < 12 && this.level.lineOfSight(n.eye(), new THREE.Vector3(p.x, 1.3, p.z));
+        if (sees && d < 2.6) {
+          n.checkingIn = null;
+          this.checkInTalk(n);
+          return;
+        }
+        if (p.hidden && d < 2.2) {
+          n.checkingIn = null;
+          this.bubble(n, ci.odd ? pick(["Hiding? That's cheating. ...Smart, though.", 'Ooh, good spot. I\'m stealing it later.']) : pick(['*whispers* You okay in there? Knock once for yes.', "*whispers* Just checking. I'll keep watch for a bit."]), 4);
+          if (!ci.odd) this.composure = Math.min(100, this.composure + 10);
+          this.coworkerResume(n);
+          continue;
+        }
+        if (ci.t > 60 || !situation) {
+          n.checkingIn = null;
+          this.coworkerResume(n);
+          continue;
+        }
+        if (tick && (!n.cur || !n.cur.checkin || (sees && ci.target && Math.hypot(ci.target.x - p.x, ci.target.z - p.z) > 2))) {
+          const where = p.hidden ? ci.lastSeen : { x: p.x, z: p.z };
+          if (sees) ci.lastSeen = { x: p.x, z: p.z };
+          ci.target = { ...where };
+          const pt = this.approachPoint(n, where.x, where.z);
+          if (pt) n.plan([{ go: pt, checkin: true }, { t: 1.2, checkin: true, yaw: Math.atan2(where.x - pt.x, where.z - pt.z) }]);
+          else n.plan([{ t: 1, checkin: true }]);
+        }
+        continue;
+      }
+      if (!tick || !cw || cw.fired) continue;
+      const friend = cw.ally && n.personality === 'friend';
+      const odd = cw.joined && n.personality === 'oddball';
+      if (friend || odd) {
+        if (!situation) continue;
+        rt.checkT = (rt.checkT ?? 50 + Math.random() * 60) - 0.5;
+        if (rt.checkT > 0) continue;
+        rt.checkT = 120 + Math.random() * 120;
+        if (n.delivering || n.lending || n.stripping || n.leaving || n.away || n.onLunch || ['talk', 'hiding'].includes(n.state)) continue;
+        if (p.borrow?.npc === n || this.distraction) continue;
+        if (Math.hypot(n.x - p.x, n.z - p.z) > 45) continue;
+        n.checkingIn = { t: 0, odd, lastSeen: { x: p.x, z: p.z }, target: null };
+        n.speedMul = 1;
+        this.bubble(n, odd ? pick(['Score check time!', "Let's see how they're doing...", '*grins and heads off*']) : pick(['I should check on them...', 'Be right back.', 'Hmm. Better make sure they\'re okay.']), 2.5);
+        continue;
+      }
+      // blessed coworkers you've already shared the secret with: a quick word in passing
+      if (cw.blessed && cw.blessedMet && situation && !['talk', 'hiding'].includes(n.state)) {
+        if ((rt.banterCd || 0) > performance.now()) continue;
+        const d = Math.hypot(n.x - p.x, n.z - p.z);
+        if (d < 4 && this.level.segmentClear(p.x, p.z, n.x, n.z, 0.05)) {
+          rt.banterCd = performance.now() + 60000 + Math.random() * 60000;
+          this.bubble(n, pick(BLESSED_BANTER), 3.5);
+          this.composure = Math.min(100, this.composure + 4);
+        }
+      }
+    }
+  }
+
+  async checkInTalk(n) {
+    const cw = this.state.cw[n.index];
+    const rt = this.cwRuntime[n.index];
+    const nm = n.name;
+    const you = this.profile.name;
+    n.plan([]);
+    n.state = 'talk';
+    n.yaw = Math.atan2(this.player.x - n.x, this.player.z - n.z);
+    const done = () => {
+      if (!n.removed && n.state === 'talk') n.state = 'idle';
+      this.coworkerResume(n);
+    };
+    if (n.personality === 'oddball') {
+      const them = this.spottedToday(rt);
+      const mine = this.work.spotted || 0;
+      const verdict = mine < them ? `"WHAT? How are you this good at this?!" ${nm} throws ${pronouns(n.gender).their} hands up.` : mine === them ? `"Tied! Ooh, this is getting intense."` : `"Ha! I'm WINNING! Loser buys lunch!"`;
+      const text = `${pick(ODDBALL_CHECKS)(nm)}\n\n"I've been spotted ${them} time${them === 1 ? '' : 's'} today. You?"\n\nYou've been spotted ${mine} time${mine === 1 ? '' : 's'}.\n\n${verdict}`;
+      this.talkMood(n, { happy: 1 }, 6);
+      const v = await this.dialog(`${nm} wants the score`, text, [
+        { label: '"Rematch. Most tasks finished by five wins."', value: 'rematch' },
+        { label: '"Want to team up instead?"', value: 'team' },
+        { label: '"Shh! People will see us together!"', value: 'shoo' },
+      ], { who: n, pose: mine > them ? 'fist' : 'shrug', mood: { happy: 1 }, bg: 'speed' });
+      if (v === 'rematch') {
+        this.bubble(n, pick(["You're ON.", 'Deal! Prepare to lose. Pantslessly.']), 3);
+        this.composure = Math.min(100, this.composure + 10);
+      } else if (v === 'team') {
+        n.buddyUntil = performance.now() + 60000;
+        this.bubble(n, pick(["Team No-Pants, assemble!", "I'll watch your six. And your three. And your nine."]), 3);
+      } else {
+        this.bubble(n, pick(['Fine, fine! Going!', '*tiptoes away dramatically*']), 2.5);
+        if (n.sneaking && this.level.pois.hideSpots.length) {
+          n.plan([{ go: this.nearest(this.level.pois.hideSpots, n), run: true }, { hide: true, t: 6 }]);
+          return;
+        }
+      }
+      done();
+      return;
+    }
+    // a friend checking on you
+    if (cw.blessed) {
+      this.talkMood(n, { sad: 0.5, surprised: 0.3 }, 6);
+      const v = await this.dialog(`${nm} checks on you`, pick(BLESSED_FRIEND_CHECKS)(nm), [
+        { label: '"You get used to it. Sort of."', value: 'used' },
+        { label: '"Stick with me. We\'ll cover each other."', value: 'stick' },
+      ], { who: n, pose: 'cover', mood: { sad: 0.5, surprised: 0.3 }, bg: 'tone' });
+      if (v === 'stick') cw.buddy = true;
+      this.composure = Math.min(100, this.composure + 15);
+      ui.toast('Composure restored a little.', 'good', 2500);
+      done();
+      return;
+    }
+    this.talkMood(n, { sad: 0.4, surprised: 0.2 }, 6);
+    const opts = [
+      { label: '"I\'m fine. Totally fine."', value: 'fine' },
+      { label: '"Honestly? Barely surviving."', value: 'honest' },
+      { label: '"Could you cause a distraction?"', value: 'distract', disabled: rt.distractCd > 0 },
+    ];
+    if (!this.player.borrow && !n.lending) opts.push({ label: `"Could I borrow your ${n.legwearType} for a bit?"`, value: 'lend', disabled: rt.lendCd > 0 });
+    const v = await this.dialog(`${nm} checks on you`, pick(FRIEND_CHECKS)(nm, you, this.profile.manager.name), opts, { who: n, pose: 'clasp', mood: { sad: 0.4, surprised: 0.2 }, bg: 'tone' });
+    rt.bond += 3;
+    if (v === 'fine') {
+      this.bubble(n, pick(FRIEND_FINE).replace(/"/g, ''), 3);
+      this.composure = Math.min(100, this.composure + 10);
+    } else if (v === 'honest') {
+      this.bubble(n, pick(FRIEND_COMFORT).replace(/"/g, ''), 3.5);
+      this.composure = Math.min(100, this.composure + 25);
+      this.addShame(-2, true);
+      ui.toast('A friend in your corner. Composure restored.', 'good', 3000);
+    }
+    if (n.state === 'talk') n.state = 'idle';
+    if (v === 'distract') return this.startDistraction(n);
+    if (v === 'lend') return this.startLend(n);
+    done();
+  }
+
+  /** A blessed coworker sees you exposed for the first time since they were blessed. */
+  async blessedMeet(n) {
+    const cw = this.state.cw[n.index];
+    cw.blessedMet = true;
+    const nm = n.name;
+    const pr = pronouns(n.gender);
+    this.cancelInteract();
+    n.plan([]);
+    n.state = 'talk';
+    n.yaw = Math.atan2(this.player.x - n.x, this.player.z - n.z);
+    const resume = () => {
+      if (!n.removed && n.state === 'talk') n.state = 'idle';
+      this.coworkerResume(n);
+    };
+    if (cw.sawYou) {
+      // they saw you before (maybe even reported you), and now they know what it's like
+      this.talkMood(n, { sad: 0.6, surprised: 0.3 }, 6);
+      await this.dialog(`${nm} understands now`, pick(BLESSED_APOLOGY)(nm), [
+        { label: '"Welcome to the club."', value: 1 },
+        { label: '"Apology accepted. Now hide!"', value: 2 },
+      ], { who: n, pose: 'bow', mood: { sad: 0.6 }, bg: 'tone' });
+      this.composure = Math.min(100, this.composure + 15);
+      resume();
+      return;
+    }
+    cw.sawYou = true;
+    const m = pick(BLESSED_MEET);
+    this.talkMood(n, { surprised: 1, angry: 0.3 }, 8);
+    const v = await this.dialog(`${nm} spots you!`, `${m.intro(nm, pr)}\n\n"${m.line}"`, [
+      { label: '"I was busy surviving!"', value: 'surviving' },
+      { label: '"Welcome to the club."', value: 'club' },
+      { label: '"Want to stick together?"', value: 'stick' },
+    ], { who: n, pose: 'point', mood: { surprised: 0.8, angry: 0.4 }, bg: 'speed' });
+    const reply = pick(BLESSED_MEET_REPLIES[v] || BLESSED_MEET_REPLIES.club);
+    await this.dialog(nm, reply, undefined, { who: n, pose: v === 'stick' ? 'fist' : 'shrug', mood: v === 'stick' ? { happy: 0.6 } : { surprised: 0.5, sad: 0.3 } });
+    if (v === 'stick') cw.buddy = true;
+    this.composure = Math.min(100, this.composure + 20);
+    this.addShame(-3, true);
+    ui.toast(`${nm} is in the same boat now.${v === 'stick' ? ' They\'ll tag along and warn you sometimes.' : ''}`, 'good', 4000);
+    resume();
+  }
+
   startDistraction(n) {
     const L = this.level;
     const p = this.player;
@@ -2814,7 +3069,8 @@ export class Game {
     this.buddyT = 0.6;
     const p = this.player;
     for (const b of this.npcs) {
-      if (b.kind !== 'coworker' || !b.sneaking || b.away || b.leaving || !this.state.cw[b.index]?.playing) continue;
+      const bcw = this.state.cw[b.index];
+      if (b.kind !== 'coworker' || !b.sneaking || b.away || b.leaving || !(bcw?.playing || bcw?.buddy)) continue;
       const d = Math.hypot(b.x - p.x, b.z - p.z);
       if (d > 14) continue;
       // tag along now and then
@@ -2852,7 +3108,7 @@ export class Game {
       n.plan([]);
       n.state = 'talk';
       this.talkMood(n, { sad: 0.8 }, 5);
-      await this.dialog(n.name, `"I'd love to help, but..." ${n.name} glances down at ${pronouns(n.gender).their} own bare legs and turns red. "I can barely keep MYSELF hidden now. Sorry!"`);
+      await this.dialog(n.name, `"I'd love to help, but..." ${n.name} glances down at ${pronouns(n.gender).their} own bare legs and turns red. "I can barely keep MYSELF hidden now. Sorry!"`, undefined, { who: n, pose: 'cover', mood: { sad: 0.6, surprised: 0.4 }, bg: 'tone' });
       n.plan([{ t: 1 }]);
       return;
     }
@@ -2868,7 +3124,7 @@ export class Game {
     opts.push({ label: 'Never mind', value: null, cls: 'secondary' });
     n.plan([]);
     n.state = 'talk';
-    const v = await this.dialog(n.name, `"Need a hand, ${this.profile.name}?" ${n.name} whispers.`, opts);
+    const v = await this.dialog(n.name, `"Need a hand, ${this.profile.name}?" ${n.name} whispers.`, opts, { who: n, pose: 'wave', mood: { happy: 0.6 } });
     n.plan([{ t: 1 }]);
     if (v === 'lend') this.startLend(n);
     else if (v === 'distract') this.startDistraction(n);
@@ -2920,16 +3176,16 @@ export class Game {
     n.state = 'talk';
     if (cw.blessed || cw.joined) {
       this.addShame(SHAME.encounterFriendly);
-      await this.dialog(`You ran into ${nm}!`, `${nm} spots you, freezes, and gives a tiny, knowing nod. "...You too, huh. Let's pretend we never saw each other."`);
+      await this.dialog(`You ran into ${nm}!`, `${nm} spots you, freezes, and gives a tiny, knowing nod. "...You too, huh. Let's pretend we never saw each other."`, undefined, { who: n, pose: 'cover', mood: { surprised: 0.6, happy: 0.2 } });
     } else if (['friend', 'sympathetic', 'oddball'].includes(n.personality)) {
       this.addShame(SHAME.encounterFriendly);
-      await this.dialog(`You ran into ${nm}!`, n.personality === 'oddball' ? `"Whoa, you're playing the no-pants game on your day off too? Dedication! Respect."` : `"${this.profile.name}?! Oh no, even on the weekend?" ${nm} gives you an awkward hug and hurries on, making sure nobody else is looking.`);
+      await this.dialog(`You ran into ${nm}!`, n.personality === 'oddball' ? `"Whoa, you're playing the no-pants game on your day off too? Dedication! Respect."` : `"${this.profile.name}?! Oh no, even on the weekend?" ${nm} gives you an awkward hug and hurries on, making sure nobody else is looking.`, undefined, { who: n, pose: n.personality === 'oddball' ? 'fist' : 'startled', mood: n.personality === 'oddball' ? { happy: 1 } : { surprised: 1 }, bg: 'speed' });
       if (n.personality !== 'oddball') cw.ally = true;
     } else {
       this.addShame(SHAME.encounterHostile);
       this.talkMood(n, { angry: 0.8, surprised: 0.6 }, 8);
       this.state.pendingTalks.push({ reason: 'weekend', who: nm });
-      await this.dialog(`You ran into ${nm}!`, `${nm} stops dead. Their eyes travel down... and back up. "Unbelievable. Even in PUBLIC?"\n\n"I'll be mentioning this to ${this.profile.manager.name} on Monday."`);
+      await this.dialog(`You ran into ${nm}!`, `${nm} stops dead. Their eyes travel down... and back up. "Unbelievable. Even in PUBLIC?"\n\n"I'll be mentioning this to ${this.profile.manager.name} on Monday."`, undefined, { who: n, pose: 'point', mood: { angry: 0.9 }, bg: 'speed' });
     }
     if (!n.removed) {
       n.kind = 'pedestrian';
@@ -3100,8 +3356,13 @@ export class Game {
     if (m.holder) return;
     // step behind the right side of it (the board's face, the cart's end)
     const L = this.level;
-    const gr = L.pushGrip(m, p.x, p.z);
-    if (L.blockedPoint(gr.x, gr.z, 0.28) || !L.segmentClear(p.x, p.z, gr.x, gr.z, 0.2)) {
+    const bad = (g) => L.blockedPoint(g.x, g.z, 0.28) || !L.segmentClear(p.x, p.z, g.x, g.z, 0.1);
+    // the usual side first; if that's against something, the other side; carts wedged in lengthwise
+    // can be pushed from their long side as a last resort
+    const tries = [L.pushGrip(m, p.x, p.z), L.pushGrip(m, 2 * m.x - p.x, 2 * m.z - p.z)];
+    if (m.kind !== 'whiteboard') tries.push(L.pushGrip(m, p.x, p.z, true), L.pushGrip(m, 2 * m.x - p.x, 2 * m.z - p.z, true));
+    const gr = tries.find((g) => !bad(g)) || tries[0];
+    if (bad(gr)) {
       ui.toast(`No room to get behind the ${m.kind} from this side.`, 'bad', 2500);
       return;
     }
@@ -3290,7 +3551,7 @@ export class Game {
           run: async () => {
             m.dress = true;
             this.wear('out', false);
-            await this.dialog('The Wardrobe', STORY.morningNoClothes);
+            await this.dialog('The Wardrobe', STORY.morningNoClothes, undefined, { who: 'player', pose: 'startled', mood: { surprised: 1, sad: 0.4 }, bg: 'speed', frame: 'full' });
           },
         };
       }
@@ -3512,7 +3773,7 @@ export class Game {
     if (this.lateMins > 10) st.pendingTalks.unshift({ reason: 'late', who: this.lateMins });
     while (st.pendingTalks.length && !this.ended) {
       const t = st.pendingTalks.shift();
-      await this.dialog('Uh oh', `"${this.profile.name}! My office, please." ${this.profile.manager.name} is waiting at the locker room door.`);
+      await this.dialog('Uh oh', `"${this.profile.name}! My office, please." ${this.profile.manager.name} is waiting at the locker room door.`, undefined, { who: this.manager || 'player', pose: 'point', mood: { angry: 0.7 } });
       await this.managerTalk(t.reason, t.who);
     }
     if (this.ended) return;
@@ -3533,7 +3794,7 @@ export class Game {
           if (mh.wet) n.char.setWet(1);
           this.talkMood(n, { surprised: 1, sad: 0.6 }, 10);
         }
-        await this.dialog(`Hiphtia's Blessing spreads!`, `A faint golden sparkle drifts through the building...\n\n${mh.fn(nm, lw)}\n\n${nm} has been blessed by Hiphtia! From now on ${pr.theyre} sneaking around without ${lw}, just like you.${['strict', 'distant', 'neutral'].includes(this.profile.coworkers[i].personality) ? ` ${nm} won't dare report you anymore... ${pr.they}'d be caught ${pr.them}sel${pr.they === 'they' ? 'ves' : 'f'}.` : ''}`);
+        await this.dialog(`Hiphtia's Blessing spreads!`, `A faint golden sparkle drifts through the building...\n\n${mh.fn(nm, lw)}\n\n${nm} has been blessed by Hiphtia! From now on ${pr.theyre} sneaking around without ${lw}, just like you.${['strict', 'distant', 'neutral'].includes(this.profile.coworkers[i].personality) ? ` ${nm} won't dare report you anymore... ${pr.they}'d be caught ${pr.them}sel${pr.they === 'they' ? 'ves' : 'f'}.` : ''}`, undefined, n ? { who: n, pose: 'cover', mood: { surprised: 1, sad: 0.5 }, bg: 'holy', frame: 'full' } : undefined);
         ui.toast(`Blessed coworkers: ${this.blessedCount()}/${this.activeCoworkers().length}`, 'good', 5000);
       }
     }
@@ -3683,7 +3944,7 @@ export class Game {
     if (this.schedT <= 0) {
       this.schedT = 1;
       for (const n of this.npcs) {
-        if (n.kind !== 'coworker' || !n.sched || n.leaving || n.away || n.delivering || n.stripping || n.lending || ['talk', 'hiding'].includes(n.state)) continue;
+        if (n.kind !== 'coworker' || !n.sched || n.leaving || n.away || n.delivering || n.checkingIn || n.stripping || n.lending || ['talk', 'hiding'].includes(n.state)) continue;
         const lunchNow = c >= SHIFT.lunch && c < SHIFT.lunchEnd - 10 && !n.onLunch;
         if (c >= n.sched.end || lunchNow) this.scheduleBrain(n);
       }
@@ -3696,7 +3957,7 @@ export class Game {
     if (w.reqT > 0 || w.requests.length >= 3) return;
     w.reqT = 35 + Math.random() * 45;
     const r = Math.random();
-    const staff = this.npcs.filter((n) => (n.kind === 'coworker' && !n.sneaking && !n.lending && !n.stripping && !n.onLunch && !n.leaving) || n.kind === 'manager').filter((n) => !['talk', 'hiding'].includes(n.state) && !n.delivering);
+    const staff = this.npcs.filter((n) => (n.kind === 'coworker' && !n.sneaking && !n.lending && !n.stripping && !n.onLunch && !n.leaving) || n.kind === 'manager').filter((n) => !['talk', 'hiding'].includes(n.state) && !n.delivering && !n.checkingIn);
     const cws = staff.filter((n) => n.kind === 'coworker');
     const asker = r < 0.6 ? pick(cws) : r < 0.75 ? staff.find((n) => n.kind === 'manager') : null;
     const tpl = this.pickTaskFor(asker);
@@ -3914,7 +4175,7 @@ export class Game {
     this.celestiChar = ch;
     L.interactable('celesti', s.x, s.z, this.celestiName(), { r: 2.2 });
     const [title, text] = STORY.celesti(this.profile.name, this.celestiName())[0];
-    await this.dialog(title, text + `\n\n(Go and see who it is.)`);
+    await this.dialog(title, text + `\n\n(Go and see who it is.)`, undefined, { who: 'player', pose: 'startled', mood: { surprised: 1 }, bg: 'speed', frame: 'full' });
   }
 
   async celestiTalk() {
@@ -3927,7 +4188,7 @@ export class Game {
     this.cam.pitch = 0.15;
     p.char.setMood({ surprised: 1 });
     for (const [title, text] of STORY.celesti(this.profile.name, this.celestiName()).slice(1)) {
-      await this.dialog(title, text);
+      await this.dialog(title, text, undefined, { who: 'celesti', pose: 'bless', mood: { happy: 0.6 }, bg: 'holy', frame: 'full' });
     }
     await ui.fade(true);
     if (ch) {
@@ -3949,7 +4210,7 @@ export class Game {
     ch.root.position.set(s.x, 0.15, s.z);
     ch.root.rotation.y = s.yaw;
     this.scene.add(ch.root);
-    await this.dialog(this.celestiName(), STORY.win(this.profile.name, this.celestiName()));
+    await this.dialog(this.celestiName(), STORY.win(this.profile.name, this.celestiName()), undefined, { who: 'celesti', pose: 'float', mood: { happy: 1 }, bg: 'holy', frame: 'full' });
     this.state.done = true;
     await this.saveGame();
     this.ended = true;

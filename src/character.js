@@ -402,7 +402,7 @@ class CharacterBase {
     const put = (n, x = 0, y = 0, z = 0) => (T[n] = [x, y, z]);
 
     // ---- pick an idle behavior now and then (only standing still with free hands)
-    const idleOK = speed < 0.15 && sit < 0.5 && !a.work && !a.talk && !a.carry && c < 0.5;
+    const idleOK = !a.pose && speed < 0.15 && sit < 0.5 && !a.work && !a.talk && !a.carry && c < 0.5;
     if (!this.idle || (this.idle.t -= dt) <= 0) {
       const kinds = ['breathe', 'breathe', 'shift', 'look', 'phone', 'armsCross', 'clasp', 'scratch', 'stretch', 'fidget', 'look', 'shift'];
       const k = idleOK ? kinds[Math.floor(Math.random() * kinds.length)] : 'breathe';
@@ -509,7 +509,7 @@ class CharacterBase {
           T.__head = 0.05;
         } else if (cyc < 0.7) {
           // waiting on the machine: hand on hip, tapping a foot
-          L(0.15, -0.9, 0.45, 1.6);
+          L(0.6, -0.6, 0.55, 1.5);
           T.__tap = Math.max(0, Math.sin(t * 6)) * 0.25;
         } else {
           L(-0.35, -0.95, 0.2, 1.75);
@@ -572,7 +572,7 @@ class CharacterBase {
         const v = Math.floor(seed * 3) % 3;
         if (v === 0) { L(-0.35, -0.95, 0.2, 1.75); R(-0.35, -0.95, 0.2, 1.75); }
         else if (v === 1) { R(-1.5, -0.4, 0.3, 2.1); L(-0.35, -0.9, 0.2, 1.7); }
-        else { L(0.15, -0.9, 0.45, 1.6); R(0.15, -0.9, 0.45, 1.6); }
+        else { L(0.6, -0.6, 0.55, 1.5); R(0.6, -0.6, 0.55, 1.5); }
       }
     }
     // sitting: hands on the lap or knees
@@ -663,8 +663,8 @@ class CharacterBase {
         rla = [0, 1.3, 0];
         T.__shrug = 0.15 * sh;
       } else if (tk === 'hips') {
-        lua = [0.15, -0.9, -down + 0.45];
-        lla = [0, -1.6, 0];
+        lua = [0.6, -0.6, -down + 0.55];
+        lla = [0, -1.5, 0];
         rua = [-0.5 + g * 0.2, -0.3, down - 0.35];
         rla = [0, 1.2 + Math.sin(t * 4.3) * 0.3, 0];
       }
@@ -682,6 +682,95 @@ class CharacterBase {
       lla = [0, -1.0, 0];
       rla = [0, 1.0, 0];
     }
+    // posed moments (dialog portraits, title screen): these override everything above
+    if (a.pose) {
+      const L = (x, y, lift, e) => { lua = [x, y, -down + lift]; lla = [0, -e, 0]; };
+      const R = (x, y, lift, e) => { rua = [x, -y, down - lift]; rla = [0, e, 0]; };
+      const hipL = () => L(0.6, -0.6, 0.55, 1.5);
+      const hipR = () => R(0.6, -0.6, 0.55, 1.5);
+      L(0, 0, 0.05, 0.15);
+      R(0, 0, 0.05, 0.15);
+      const P = (T.__pose = {});
+      switch (a.pose) {
+        case 'startled':
+          L(-0.9, -0.3, 0.6, 1.75);
+          R(-0.9, -0.3, 0.6, 1.75);
+          Object.assign(P, { spine: -0.2, head: -0.12, shrug: 0.15, stepBack: 0.25 });
+          break;
+        case 'cover':
+          L(-0.35, -0.6, -0.25, 0.6);
+          R(-0.35, -0.6, -0.25, 0.6);
+          Object.assign(P, { spine: 0.15, head: 0.3, knees: 0.3, shrug: 0.1 });
+          break;
+        case 'point':
+          R(-1.45, -0.1, 0.25, 0.1);
+          hipL();
+          Object.assign(P, { spine: 0.06, twist: -0.12 });
+          break;
+        case 'hips':
+          hipL();
+          hipR();
+          Object.assign(P, { spine: -0.05, head: -0.05 });
+          break;
+        case 'shrug':
+          L(-0.3, 0.4, 0.6, 1.3);
+          R(-0.3, 0.4, 0.6, 1.3);
+          Object.assign(P, { shrug: 0.18, tilt: 0.12 });
+          break;
+        case 'chin':
+          rua = [-1.3, 0.5, down - 0.5];
+          rla = [0, 2.3, 0];
+          L(-0.35, -0.9, 0.2, 1.75);
+          Object.assign(P, { head: 0.05, tilt: 0.1 });
+          break;
+        case 'wave':
+          rua = [-0.2, 0, -0.6];
+          rla = [0, 1.2, 0];
+          Object.assign(P, { tilt: -0.1 });
+          break;
+        case 'fist':
+          rua = [-1.0, 0.3, down - 0.6];
+          rla = [0, 2.0, 0];
+          hipL();
+          Object.assign(P, { spine: -0.08, head: -0.08, stepBack: -0.15 });
+          break;
+        case 'clasp':
+          L(-0.65, -0.6, 0.3, 1.8);
+          R(-0.65, -0.6, 0.3, 1.8);
+          Object.assign(P, { head: 0.12, tilt: 0.12, shrug: 0.06 });
+          break;
+        case 'arms':
+          L(-0.35, -0.95, 0.2, 1.75);
+          R(-0.35, -0.95, 0.2, 1.75);
+          Object.assign(P, { spine: -0.06, head: -0.04 });
+          break;
+        case 'facepalm':
+          rua = [-2.0, 0.3, down - 0.8];
+          rla = [0, 2.3, 0];
+          hipL();
+          Object.assign(P, { head: 0.25, spine: 0.1 });
+          break;
+        case 'bow':
+          L(-0.25, -0.4, 0.15, 0.3);
+          R(-0.25, -0.4, 0.15, 0.3);
+          Object.assign(P, { spine: 0.55, head: 0.2 });
+          break;
+        case 'float':
+          L(-0.25, 0.25, 0.6, 0.35);
+          R(-0.25, 0.25, 0.6, 0.35);
+          Object.assign(P, { head: -0.05, tilt: 0.1, float: 1 });
+          break;
+        case 'bless':
+          // one hand raised in blessing, the other open at the side
+          rua = [-1.6, 0.2, down - 0.4];
+          rla = [0, 0.5, 0];
+          L(-0.25, 0.25, 0.6, 0.35);
+          Object.assign(P, { head: -0.08, tilt: -0.08, float: 1 });
+          break;
+        default:
+          break;
+      }
+    }
     put('leftUpperArm', ...lua);
     put('rightUpperArm', ...rua);
     put('leftLowerArm', ...lla);
@@ -695,7 +784,28 @@ class CharacterBase {
     if (T.__tiptoe) { T.leftFoot[0] += T.__tiptoe; T.rightFoot[0] += T.__tiptoe; }
     if (T.__shrug) { T.leftShoulder[2] += T.__shrug; T.rightShoulder[2] -= T.__shrug; }
     if (T.__tap) T.rightFoot[0] -= T.__tap;
-    for (const k of ['__wrist', '__bend', '__twist', '__head', '__tiptoe', '__shrug', '__tap']) delete T[k];
+    const PO = T.__pose;
+    if (PO) {
+      if (PO.spine) T.spine[0] += PO.spine;
+      if (PO.twist) T.chest[1] += PO.twist;
+      if (PO.head) { T.head[0] += PO.head * 0.7; T.neck[0] += PO.head * 0.3; }
+      if (PO.tilt) T.head[2] += PO.tilt;
+      if (PO.shrug) { T.leftShoulder[2] += PO.shrug; T.rightShoulder[2] -= PO.shrug; }
+      if (PO.stepBack) { T.rightUpperLeg[0] += PO.stepBack; T.rightLowerLeg[0] += Math.abs(PO.stepBack) * 0.4; }
+      if (PO.knees) {
+        // knock-kneed and shy: thighs turn in, knees bend a little
+        T.leftUpperLeg[1] -= PO.knees * 0.5; T.rightUpperLeg[1] += PO.knees * 0.5;
+        T.leftUpperLeg[0] -= PO.knees * 0.3; T.rightUpperLeg[0] -= PO.knees * 0.3;
+        T.leftLowerLeg[0] += PO.knees * 0.6; T.rightLowerLeg[0] += PO.knees * 0.6;
+      }
+      if (PO.float) {
+        // hovering: toes pointed, one knee drawn back
+        T.leftFoot[0] += 0.6; T.rightFoot[0] += 0.6;
+        T.leftLowerLeg[0] += 0.55; T.leftUpperLeg[0] -= 0.1;
+        T.rightUpperLeg[0] -= 0.05; T.rightLowerLeg[0] += 0.12;
+      }
+    }
+    for (const k of ['__wrist', '__bend', '__twist', '__head', '__tiptoe', '__shrug', '__tap', '__pose']) delete T[k];
 
     // ---- apply, blended
     const P = (this.poseS ||= {});

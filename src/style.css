@@ -13,6 +13,13 @@ label { display: block; font-size: 13px; color: #b8bdd6; margin: 10px 0 4px; }
 /* ---- screens ---- */
 .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at top, #3b2a4f, #141421 70%); z-index: 20; overflow: auto; }
 .screen.transparent { background: rgba(10,10,20,.72); }
+.screen.titlebg { background: transparent; }
+@media (min-aspect-ratio: 6/5) { .screen.titlebg { justify-content: flex-start; padding-left: 4vw; } }
+.titlebg .title-wrap { max-width: 400px; }
+.titlebg .title-wrap h1 { font-size: 50px; line-height: 1.05; }
+#title-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; z-index: 19; background: radial-gradient(ellipse at 68% 28%, #fff3cf 0%, #f6c3d9 30%, #7a5096 62%, #241a3d 100%); }
+.titlebg .title-wrap { background: rgba(22,15,40,.62); padding: 24px 32px 28px; border-radius: 18px; backdrop-filter: blur(3px); box-shadow: 0 10px 40px rgba(0,0,0,.35); }
+.titlebg .title-wrap h1 { filter: drop-shadow(0 3px 0 #2a1840); }
 .title-wrap { text-align: center; }
 .title-wrap h1 { font-size: 64px; margin: 0; letter-spacing: 1px; background: linear-gradient(90deg,#ff7eb6,#ffd36e); -webkit-background-clip: text; color: transparent; }
 .title-wrap .sub { color: #c8c8e0; margin: 6px 0 36px; font-size: 18px; }
@@ -85,11 +92,37 @@ label { display: block; font-size: 13px; color: #b8bdd6; margin: 10px 0 4px; }
 .npc-tag .bubble { display: block; font-size: 14px; font-weight: 600; background: #fff; color: #222; padding: 4px 10px; border-radius: 10px; margin-bottom: 4px; text-shadow: none; }
 
 /* ---- dialog ---- */
+/* manga page: a panel with the speaker's portrait, speech bubbles and narration boxes */
+@font-face { font-family: 'Comic Neue'; font-weight: 400; src: url('fonts/comic-neue-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Comic Neue'; font-weight: 700; src: url('fonts/comic-neue-latin-700-normal.woff2') format('woff2'); }
 #dialog { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; background: rgba(5,5,15,.55); }
-.dialog-box { background: #1f2036; border: 2px solid #ff7eb6; border-radius: 16px; padding: 22px 26px; max-width: 640px; width: calc(100% - 40px); box-shadow: 0 10px 40px rgba(0,0,0,.6); }
-.dialog-box h2 { margin: 0 0 10px; color: #ffd36e; }
-#dialog-text { white-space: pre-wrap; line-height: 1.55; font-size: 16px; }
-#dialog-options { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
+.dialog-box { background: #fbfaf6; color: #111; border: 4px solid #111; border-radius: 3px; padding: 12px; max-width: 940px; width: calc(100% - 40px); box-shadow: 0 12px 40px rgba(0,0,0,.65); font-family: 'Comic Neue', 'Comic Sans MS', 'Segoe UI', sans-serif; animation: mpop .18s ease-out; }
+@keyframes mpop { from { transform: scale(.96); opacity: 0; } }
+.mpanel { display: flex; border: 3px solid #111; background: #fff; min-height: 300px; }
+.mpanel.noportrait .mportrait { display: none; }
+.mportrait { position: relative; flex: 0 0 300px; height: 400px; border-right: 3px solid #111; overflow: hidden; background: #fbfaf6; }
+.mportrait canvas { width: 100%; height: 100%; display: block; }
+#dialog-who { position: absolute; left: 8px; bottom: 8px; background: #111; color: #fff; font-weight: 700; font-size: 15px; padding: 3px 12px; transform: skew(-8deg); }
+#dialog-who:empty { display: none; }
+.mflow { flex: 1; padding: 14px 18px 18px; display: flex; flex-direction: column; gap: 12px; max-height: 400px; overflow-y: auto; }
+#dialog-text { display: flex; flex-direction: column; gap: 12px; }
+.mcap { align-self: flex-start; max-width: 94%; background: #fff; border: 2px solid #111; box-shadow: 3px 3px 0 #111; padding: 8px 12px; font-size: 16px; line-height: 1.4; }
+.mtitle { background: #111; color: #fff; font-weight: 700; font-size: 17px; letter-spacing: .5px; box-shadow: 3px 3px 0 #ff7eb6; }
+.mbub { position: relative; align-self: flex-start; margin-left: 20px; max-width: 86%; background: #fff; border: 2.5px solid #111; border-radius: 50% / 46%; padding: 18px 28px; text-align: center; font-weight: 700; font-size: 18px; line-height: 1.3; }
+.mbub.long { border-radius: 38px; padding: 16px 24px; }
+.mbub.shout { border-width: 3.5px; font-size: 20px; letter-spacing: .3px; }
+.mbub::before, .mbub::after { content: ''; position: absolute; top: 46%; width: 0; height: 0; border-style: solid; }
+.mbub::before { left: -22px; border-width: 9px 24px 9px 0; border-color: transparent #111 transparent transparent; transform: rotate(-14deg); }
+.mbub::after { left: -16px; border-width: 6px 19px 6px 0; border-color: transparent #fff transparent transparent; transform: rotate(-14deg); margin-top: 3px; }
+.mpanel.noportrait .mbub::before, .mpanel.noportrait .mbub::after { display: none; }
+.mhint { align-self: flex-start; font-size: 14px; color: #555; border: 1.5px dashed #888; padding: 6px 10px; background: #f6f5f0; font-style: italic; }
+#dialog-options { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+#dialog-options button { font-family: inherit; font-weight: 700; font-size: 16px; background: #fff; color: #111; border: 2.5px solid #111; border-radius: 3px; box-shadow: 3px 3px 0 #111; text-align: left; padding: 9px 14px; }
+#dialog-options button:hover, #dialog-options button:focus { background: #ffe3f0; outline: none; }
+#dialog-options button.say { border-radius: 26px; text-align: center; }
+#dialog-options button.secondary { background: #eee; color: #333; }
+#dialog-options button:disabled { opacity: .45; }
+@media (max-width: 760px) { .mpanel { flex-direction: column; } .mportrait { flex-basis: auto; height: 240px; border-right: none; border-bottom: 3px solid #111; } .mbub::before, .mbub::after { display: none; } }
 #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; z-index: 40; transition: opacity .4s; }
 #fade.on { opacity: 1; }
 .loading { font-size: 22px; color: #ccc; }

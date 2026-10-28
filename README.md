@@ -13,6 +13,8 @@ Events play out differently every time: people's reactions (concern, flirting, c
 The week runs Monday to Friday at work. Saturdays and Sundays are **days off with errands** around town.
 
 ## Main menu
+
+The title screen shows Celesti floating in, and the main character of your last played save looking very startled about it.
 - **Continue / Load Game**: multiple save slots, each its own game. Coworkers from your other saves walk around town as named townsfolk.
 - **New Game**: create your character (name, gender, body, legwear, colors or your own .vrm), pick one of 7 jobs, and set up 4–12 coworkers plus a manager.
 - **Settings**: length of an in-game hour (default 4 real minutes), shame buildup intensity, how fast people notice you, whether sleep reduces shame, facial expression strength, minimap on/off, bundled townsfolk on/off.
@@ -37,6 +39,10 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 **Animation.** Each item has its own grip (boxes hugged, trays carried like a waiter, bags and buckets at your side, folders against your chest, newspapers held up to read), and covering items are held low in front of you instead. Each station has its own motion: typing, writing, sorting, pressing buttons, pouring, reaching up to shelves, bending down, lifting, wiping, washing, mopping, watering, feeding the shredder, fixing things. People also talk with different gestures.
 
 **Pushable cover**: whiteboards and carts can be pushed around (E). Keep one between you and anyone looking. Coworkers move carts around too.
+
+**People in on the secret.** Friends who know drop by now and then to check you're okay (and can cause a distraction or lend you their pants). Oddballs who joined in come over to compare how many times each of you has been spotted. Coworkers who only see you after they've been blessed themselves have their own moment of recognition, and might team up with you; ones who saw you before apologize. After that, blessed coworkers trade a quick word when you pass.
+
+**Dialog** is laid out like a manga panel: the speaker posed for the moment (startled, pointing, arms crossed, covering up, floating...), quotes in speech bubbles and narration in caption boxes.
 
 ## Rules
 - **Shame** rises when people outside work see you and when you're caught at work. Fill it and you lose. Sleeping lowers it. The Settings screen scales how fast it builds.
@@ -119,6 +125,9 @@ The `.exe` is portable: no installer, just double-click it. It isn't code-signed
 - `src/npc.js`: NPC activity queues, sight cones, carried props
 - `src/bus.js`: bus lines, stops, passengers
 - `src/character.js`: VRM loading and cloning, recoloring, procedural animation, built-in figures, Celesti's halo and wings
+- `src/portrait.js`: posed character snapshots for the manga-style dialog panels
+- `src/title.js`: the 3D title screen backdrop
+- `assets/fonts/`: Comic Neue (SIL Open Font License) for speech bubbles
 - `src/level.js`: level building, collision, sight lines, navigation
 - `src/levels/`: apartment, lobby, city, workplace generator, shops
 - `src/saves.js`: save slots; `src/assets.js`: bundled models in `assets/models`

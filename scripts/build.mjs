@@ -23,3 +23,7 @@ for (const f of readdirSync('assets/models')) {
   const dst = 'dist/models/' + f;
   if (!existsSync(dst) || statSync(dst).size !== statSync(src).size) copyFileSync(src, dst);
 }
+
+// fonts (Comic Neue, SIL Open Font License)
+mkdirSync('dist/fonts', { recursive: true });
+for (const f of readdirSync('assets/fonts')) copyFileSync('assets/fonts/' + f, 'dist/fonts/' + f);

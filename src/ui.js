@@ -18,6 +18,7 @@ export const ui = {
     this.screen.innerHTML = html;
     this.screen.classList.toggle('hidden', !html);
     this.screen.classList.toggle('transparent', transparent);
+    this.screen.classList.remove('titlebg');
     return this.screen;
   },
 
@@ -35,19 +36,33 @@ export const ui = {
     setTimeout(() => el.remove(), ms);
   },
 
-  /** Show a modal dialog. options: [{label, value, cls}] -> resolves to value. */
-  dialog(title, text, options = [{ label: 'Continue', value: true }]) {
+  /**
+   * Show a modal dialog laid out like a manga panel. options: [{label, value, cls}] -> resolves to value.
+   * look: { name, draw(canvas) -> bool } draws the speaker's portrait; without it the panel is text only.
+   */
+  dialog(title, text, options = [{ label: 'Continue', value: true }], look = null) {
     return new Promise((resolve) => {
       this.dialogOpen = true;
       if (document.pointerLockElement) document.exitPointerLock();
       $('dialog-title').textContent = title;
-      $('dialog-text').textContent = text;
+      this.mangaText($('dialog-text'), text || '');
+      let drawn = false;
+      if (look && look.draw) {
+        try {
+          drawn = look.draw($('dialog-portrait'));
+        } catch (e) {
+          console.warn(e);
+        }
+      }
+      $('dialog-panel').classList.toggle('noportrait', !drawn);
+      $('dialog-who').textContent = drawn && look.name ? look.name : '';
       const box = $('dialog-options');
       box.innerHTML = '';
+      if (!options || !options.length) options = [{ label: 'Continue', value: true }];
       options.forEach((o, i) => {
         const b = document.createElement('button');
         b.textContent = o.label;
-        if (o.cls) b.className = o.cls;
+        b.className = (o.cls || '') + (/^["“*]/.test(o.label) ? ' say' : '');
         if (o.disabled) b.disabled = true;
         b.onclick = () => {
           $('dialog').classList.add('hidden');
@@ -75,6 +90,43 @@ export const ui = {
     const n = box.children.length;
     for (let i = Math.max(0, n - 12); i < n; i++) box.children[i].classList.toggle('old', i < n - 4);
     if ($('chatlog').classList.contains('open')) box.scrollTop = box.scrollHeight;
+  },
+
+  /** Split text into narration boxes, speech bubbles (quoted lines) and hints (parenthesized). */
+  mangaText(el, text) {
+    el.innerHTML = '';
+    const add = (cls, t) => {
+      t = t.trim();
+      if (!t) return;
+      const d = document.createElement('div');
+      d.className = cls;
+      d.textContent = t;
+      if (cls.startsWith('mbub')) {
+        if (t.length > 70) d.classList.add('long');
+        if (/!\W*$/.test(t) && (t.match(/[A-Z]{3,}/) || t.split('!').length > 2)) d.classList.add('shout');
+      }
+      el.appendChild(d);
+    };
+    for (const para of text.split(/\n\s*\n/)) {
+      const p = para.trim();
+      if (!p) continue;
+      if (/^\(.*\)$/s.test(p)) {
+        add('mhint', p.slice(1, -1));
+        continue;
+      }
+      let last = 0;
+      const re = /“([^”]+)”|"([^"]+)"/g;
+      let m;
+      let narr = '';
+      while ((m = re.exec(p))) {
+        narr += p.slice(last, m.index);
+        add('mcap', narr);
+        narr = '';
+        add('mbub', m[1] || m[2]);
+        last = re.lastIndex;
+      }
+      add('mcap', narr + p.slice(last));
+    }
   },
 
   clearChat() {

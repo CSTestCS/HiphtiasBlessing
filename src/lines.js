@@ -134,3 +134,46 @@ export const HOME_RUIN = [
 export const MACHINE_ERRORS = ['E03', 'E21', 'F05', 'Err 7', 'DOOR LOCK', 'E44'];
 
 export { pick };
+
+// ---- Friends and oddballs who know your secret drop by now and then
+export const FRIEND_CHECKS = [
+  (nm, you) => `${nm} sidles up and keeps their voice low. "Hey. How are you holding up?"`,
+  (nm, you) => `"Psst! ${you}! Still in one piece?" ${nm} glances around nervously.`,
+  (nm, you) => `${nm} pretends to study a file right next to you. "Doing okay? You look a little pale. And... a LOT pale."`,
+  (nm, you) => `${nm} slips a coffee into your hand without looking down. "Moral support. How's it going?"`,
+  (nm, you, mgr) => `"I've been keeping an eye on ${mgr}. Coast is clear... ish." ${nm} lowers their voice. "You alright?"`,
+  (nm, you) => `${nm} drifts past, then doubles back. "Just making sure nobody's cornered you. You good?"`,
+];
+export const FRIEND_FINE = ['"Uh huh. Sure you are."', '"That\'s the spirit. Terrifying, but the spirit."', '"Okay. Shout if you need me. Quietly."'];
+export const FRIEND_COMFORT = ['"Hang in there. You\'re doing great. Weirdly great."', '"Hey. Breathe. Nobody\'s noticed a thing, I promise."', '"You\'ve made it this far. Only a few more hours."'];
+export const BLESSED_FRIEND_CHECKS = [
+  (nm) => `${nm} shuffles over, tugging their shirt down as far as it goes. "Okay. NOW I get it. How do you do this all day?"`,
+  (nm) => `"Psst. Is it just me, or is the air conditioning aimed directly at us?" ${nm} whispers.`,
+  (nm) => `${nm} crouches behind the nearest cover with you. "Support group meeting. Population: us."`,
+];
+export const ODDBALL_CHECKS = [
+  (nm) => `${nm} slides in next to you with a huge grin. "Scoreboard update!"`,
+  (nm) => `"Hey! Hey! Time-out! Score check!" ${nm} pops up from behind the nearest desk.`,
+  (nm) => `${nm} strolls over like nothing's wrong at all. "So. Who's winning?"`,
+];
+
+// ---- Coworkers who only see you after they've been blessed themselves
+export const BLESSED_MEET = [
+  { intro: (nm, pr) => `${nm} stops dead, looks you up and down, then down at ${pr.their} own bare legs... then back at you.`, line: 'So THIS is what you\'ve been doing all along?!' },
+  { intro: (nm) => `${nm} rounds the corner and nearly walks into you. You both freeze.`, line: 'You too?! How long has THIS been going on?' },
+  { intro: (nm, pr) => `${nm}'s eyes go wide. ${pr.They} point${pr.they === 'they' ? '' : 's'} at you with a trembling finger.`, line: 'You KNEW! You knew this could happen and you didn\'t warn anyone!' },
+];
+export const BLESSED_MEET_REPLIES = {
+  surviving: ['"You could have TOLD me!" "I was busy SURVIVING!"', '"Some warning would\'ve been nice!" "Warning about WHAT? \'Watch out, the goddess of hips might get you\'?"'],
+  club: ['"...Fine. What are the rules?" "Rule one: never stand in the middle of a room."', '"I didn\'t want to join this club." "Nobody does."'],
+  stick: ['"Deal. Two of us means twice the eyes." They give a determined nod.', '"Buddy system. Yes. Please. I\'m begging you."'],
+};
+export const BLESSED_APOLOGY = [
+  (nm) => `${nm} spots you and winces. "Okay. I get it now. I'm sorry for... everything earlier."`,
+  (nm) => `"Not a word," ${nm} mutters, edging past you. "...And I'm sorry. I had no idea it was like this."`,
+  (nm) => `${nm} sighs. "I judged you. Then this happened to me. Lesson learned."`,
+];
+export const BLESSED_BANTER = [
+  'Still alive?', "Is it just me or is the AC on full blast?", 'We should start a support group.', 'Did you know the copier room has a blind spot? Life-changing.',
+  'Hips. Of course it\'s hips.', 'I\'ve never walked sideways this much in my life.', 'Three more hours. We can do this.', '*mouths* "Manager. Two o\'clock."',
+];

@@ -170,12 +170,12 @@ export class Level {
    * Whiteboards are pushed flat side first; carts from either short end (the handle end is nicest).
    * Also records on m how it stays oriented relative to the pusher.
    */
-  pushGrip(m, fromX, fromZ) {
-    const board = m.kind === 'whiteboard';
+  pushGrip(m, fromX, fromZ, flipAxis = false) {
+    const board = (m.kind === 'whiteboard') !== flipAxis;
     // push axis in world space: the board's facing (local z) or the cart's length (local x)
     const ax = board ? Math.sin(m.yaw) : Math.cos(m.yaw);
     const az = board ? Math.cos(m.yaw) : -Math.sin(m.yaw);
-    const ext = board ? m.hd : m.hw;
+    const ext = (m.kind === 'whiteboard') !== flipAxis ? m.hd : m.hw;
     const side = (fromX - m.x) * ax + (fromZ - m.z) * az >= 0 ? 1 : -1;
     const fx = -side * ax;
     const fz = -side * az;

@@ -176,6 +176,7 @@ export class NPC {
     const L = g.level;
     // carrying a request to the player: the game's delivery logic decides the next move
     if (this.delivering && !(this.delivering.waitT > 0)) return this.plan([{ t: 0.1 }]);
+    if (this.checkingIn) return this.plan([{ t: 0.1 }]);
     if (this.kind === 'coworker') return g.coworkerBrain(this);
     if (this.kind === 'manager') return g.managerBrain(this);
     if (this.kind === 'customer') {

@@ -37,7 +37,13 @@
   </div>
 
   <div id="screen" class="screen"></div>
-  <div id="dialog" class="hidden"><div class="dialog-box"><h2 id="dialog-title"></h2><div id="dialog-text"></div><div id="dialog-options"></div></div></div>
+  <div id="dialog" class="hidden"><div class="dialog-box">
+    <div class="mpanel" id="dialog-panel">
+      <div class="mportrait"><canvas id="dialog-portrait" width="384" height="512"></canvas><div id="dialog-who"></div></div>
+      <div class="mflow"><div id="dialog-title" class="mcap mtitle"></div><div id="dialog-text"></div></div>
+    </div>
+    <div id="dialog-options"></div>
+  </div></div>
   <div id="fade"></div>
   <script src="bundle.js"></script>
 </body>
