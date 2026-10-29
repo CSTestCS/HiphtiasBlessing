@@ -165,26 +165,28 @@ export const ROLE_NAMES = {
   cafe: ['Fellow Barista', 'Baker', 'Shift Lead', 'Cashier', 'Roaster', 'Barista', 'Dishwasher', 'Barista', 'Baker', 'Cashier', 'Barista', 'Runner'],
 };
 
+// mishap lines take (name, legwear type, gender)
+const W = (f) => (n, lw, g) => f(n, lwWords(lw), pronouns(g));
 export const MISHAPS = [
-  (n, lw) => `${n}'s ${lw} snag on a sharp corner. One step later there is a long, loud RRRRIP. The ${lw} are torn beyond saving.`,
-  (n, lw) => `A whole pot of soup lands on ${n}'s ${lw}. They have to peel them off before they burn, and they are soaked and unwearable.`,
-  (n, lw) => `${n}'s ${lw} catch on a loose strap of a rolling cart, which happily rolls away with them. They're gone.`,
-  (n, lw) => `${n}'s zipper and button give out at the same moment. The ${lw} simply slide down to the floor... and refuse to stay up.`,
-  (n, lw) => `A sudden gust from the air vent sends ${n}'s ${lw} flying into the shredder. Somehow.`,
-  (n, lw) => `${n} sits on a freshly painted bench. By the time they notice, the ${lw} are glued to it.`,
+  W((n, L) => `${n}'s ${L.n} snag${L.s} on a sharp corner. One step later there is a long, loud RRRRIP. The ${L.n} ${L.are} torn beyond saving.`),
+  W((n, L, P) => `A whole pot of soup lands on ${n}'s ${L.n}. ${P.They} ${P.have} to peel ${L.them} off before ${L.they} burn${L.s}, and ${L.theyre} soaked and unwearable.`),
+  W((n, L) => `${n}'s ${L.n} catch${L.es} on a loose strap of a rolling cart, which happily rolls away with ${L.them}. ${L.Theyre} gone.`),
+  W((n, L) => `${n}'s zipper and button give out at the same moment. The ${L.n} simply slide${L.s} down to the floor... and refuse${L.s} to stay up.`),
+  W((n, L) => `A sudden gust from the air vent sends ${n}'s ${L.n} flying into the shredder. Somehow.`),
+  W((n, L, P) => `${n} sits on a freshly painted bench. By the time ${P.they} notice${P.s}, the ${L.n} ${L.are} glued to it.`),
 ];
 
 export const STORY = {
   intro: (name) => `${name}'s alarm blares. Another ordinary Monday... or so it seems.\n\nGet ready for work, then head out the front door.`,
   day1Evening: (lw) =>
-    `You made it home! You head straight for the wardrobe to grab a fresh pair of ${lw}...\n\n` +
+    `You made it home! You head straight for the wardrobe to grab ${/skirt/.test(lw) ? 'a fresh skirt' : 'a fresh pair of pants'}...\n\n` +
     `...and find a puddle. The washing machine leaked overnight and flooded the closet. Every last pair of pants and every skirt you own is soaked, mildewed and ruined.\n\n` +
     `Payday isn't for a while. Until then, you'll have to get by just like this.`,
   day1Home: (lw) =>
     `You made it home. Every scrap of clothing from today is going straight in the wash, along with the rest of the hamper.\n\n` +
     `The laundry room is in the basement. It's late. Nobody will be down there at this hour... right?`,
   day1Laundry: (lw) =>
-    `BEEP. The door finally releases.\n\nYou pull out the first shirt... and freeze. Something blue went in with everything else. Every blouse is blotched, and every last pair of ${lw} has shrunk to doll size, tangled into one hopeless knot.\n\n` +
+    `BEEP. The door finally releases.\n\nYou pull out the first shirt... and freeze. Something blue went in with everything else. Every blouse is blotched, and every last ${/skirt/.test(lw) ? 'skirt' : 'pair of pants'} has shrunk to doll size, tangled into one hopeless knot.\n\n` +
     `That was the whole wardrobe. Payday isn't for a while. Until then, you'll have to get by just like this.`,
   morningNoClothes: `The wardrobe still holds nothing for your legs. Tops, yes. Pants or skirts? Not a single one.\n\nDeep breath. You can do this.`,
   celesti: (name, celestiName) => [
@@ -198,32 +200,86 @@ export const STORY = {
   win: (name, celestiName) =>
     `That night, ${celestiName} appears once more, beaming from ear to ear.\n\n"Hiphtia is delighted! Every single one of your coworkers now shares the blessing. She's finally satisfied, ${name}."\n\n` +
     `The next morning, your wardrobe is full of pants and skirts again... and everyone at work quietly agrees never to speak of these weeks. You win!`,
-  managerTalk: (mgr, name, lw, n, reason) => {
-    const open = `${mgr} closes the office door and points at the chair. You stay standing, because sitting would be worse. ${mgr} keeps their eyes locked firmly on the ceiling.\n\n"${name}. ${reason}"\n\n`;
-    if (n === 1)
-      return (
-        open +
-        `"Let me be very clear. Underwear. Is. Not. Uniform." A long, painful silence. You can hear the wall clock ticking. ${mgr} clears their throat about six times.\n\n` +
-        `"I'm writing you up. This is going in your file. Please... please find some ${lw}." They slide the form across the desk without looking up.\n\n(Write-up 1 of 3)`
-      );
-    if (n === 2)
-      return (
-        open +
-        `"Again?! Do you have ANY idea how many emails I've received about you today?" ${mgr} rubs their temples. A coworker walks past the glass, does a double take, and keeps walking very fast.\n\n` +
-        `"This is your final warning. One more and you're done here." They hand you the form by holding it out at arm's length, face turned to the wall.\n\n(Write-up 2 of 3 — final warning)`
-      );
-    return open + `"That's it. Three strikes. I'm sorry, but I can't have this in my workplace anymore. Please collect your things... and maybe a coat."\n\nYou're fired.`;
+  /**
+   * A write-up talk, written separately for every manager personality (which the player never sees
+   * named, only hears). n: write-up number (3 = fired). phone: the talk happens over the phone.
+   */
+  managerTalk: (mgr, name, lw, n, reason, personality = 'neutral', mgrGender = null, phone = false) => {
+    const P = pronouns(mgrGender);
+    const L = lwWords(lw);
+    const k = n >= 3 ? 2 : n - 1;
+    const T = MANAGER_TALKS[personality] || MANAGER_TALKS.neutral;
+    const open = (phone ? T.phone : T.office)(mgr, name, P, L);
+    return `${open}\n\n"${name}. ${reason}"\n\n${T.talk[k](mgr, name, P, L)}${n >= 3 ? '\n\nYou\'re fired.' : n === 2 ? '\n\n(Write-up 2 of 3 — final warning)' : '\n\n(Write-up 1 of 3)'}`;
+  },
+};
+
+// The manager's side of a write-up, one full set per personality.
+const MANAGER_TALKS = {
+  friend: {
+    office: (m, you, P) => `${m} closes the office door gently and sinks into ${P.their} chair, looking like ${P.they} might cry. ${P.They} can't quite look at you.`,
+    phone: (m, you, P) => `Your phone buzzes. It's ${m}, and ${P.they} sound${P.s} miserable before ${P.they}'${P.they === 'they' ? 're' : 's'} said a word.`,
+    talk: [
+      (m, you, P, L) => `"I hate this. I really, truly hate this." ${m} rubs ${P.their} eyes. "You know I'm on your side, right? But HR reads every report, and if I sit on this one it's both our jobs." ${P.They} fill${P.s} in the form as slowly as humanly possible. "Please. Just... find ${L.some}. Borrow mine if you have to. I mean it."`,
+      (m, you, P, L) => `"Again? Oh, ${you}..." ${m} slumps. "I begged them to let me handle this quietly. They said no. This one's the final warning, and I couldn't talk them down." ${P.They} squeeze${P.s} your hand across the desk. "Whatever's going on, tell me. I'll help however I can. Just don't make me write a third one."`,
+      (m, you, P) => `${m} is already crying when the form comes out. "I fought for you. I really did. Three reports and it's out of my hands." ${P.They} hug${P.s} you, very carefully, keeping ${P.their} eyes on the ceiling. "Call me, okay? Whatever happens, we're still friends."`,
+    ],
+  },
+  sympathetic: {
+    office: (m, you, P) => `${m} closes the blinds before closing the door, then sits down across from you instead of behind the desk. ${P.Their} voice is soft.`,
+    phone: (m, you, P) => `Your phone rings. ${m} speaks quietly, like ${P.they}'${P.they === 'they' ? 're' : 's'} trying not to be overheard.`,
+    talk: [
+      (m, you, P, L) => `"I can tell this isn't easy for you, and I'm not going to pretend it's funny." ${m} slides a box of tissues and a spare jacket across the desk. "I do have to file this. But it's going in as quietly as I can manage. Take a minute here before you go back out, alright? And if you can find ${L.some}... that would make this a lot easier for both of us."`,
+      (m, you, P) => `"Second time." ${m} sighs, more worried than angry. "I'm not judging you. Something's clearly going on, and if you ever want to talk about it, my door's open. But I can't keep shielding you. This one's the final warning. I'm so sorry."`,
+      (m, you, P) => `"I kept hoping it wouldn't come to this." ${m} folds ${P.their} hands. "Three write-ups. The rules don't leave me any room, even though I wish they did. I'll write you the best reference I can. Take care of yourself, ${you}."`,
+    ],
+  },
+  neutral: {
+    office: (m, you, P) => `${m} closes the office door and points at the chair. You stay standing, because sitting would be worse. ${m} keeps ${P.their} eyes locked firmly on the ceiling.`,
+    phone: (m, you, P) => `Your phone rings. It's ${m}, sounding like ${P.they}'d rather be doing literally anything else.`,
+    talk: [
+      (m, you, P, L) => `"Let me be very clear. Underwear. Is. Not. Uniform." A long, painful silence. You can hear the wall clock ticking. ${m} clears ${P.their} throat about six times. "I'm writing you up. This is going in your file. Please... please find ${L.some}." ${P.They} slide${P.s} the form across the desk without looking up.`,
+      (m, you, P) => `"Again?! Do you have ANY idea how many emails I've received about you today?" ${m} rubs ${P.their} temples. A coworker walks past the glass, does a double take, and keeps walking very fast. "This is your final warning. One more and you're done here." ${P.They} hand${P.s} you the form at arm's length, face turned to the wall.`,
+      (m, you, P) => `"That's it. Three strikes." ${m} doesn't even sound angry anymore, just tired. "I'm sorry, but I can't have this in my workplace. Please collect your things... and maybe a coat."`,
+    ],
+  },
+  strict: {
+    office: (m, you, P) => `${m} doesn't close the door so much as slam it. ${P.They} stay${P.s} standing, arms folded, and look${P.s} you dead in the eye. ${P.They} do${P.es} not look away.`,
+    phone: (m, you, P) => `Your phone rings exactly once before you answer. ${m}'s voice is clipped and cold.`,
+    talk: [
+      (m, you, P, L) => `"Section four of the employee handbook. Dress code. I trust you've read it." ${P.They} tap${P.s} the binder on ${P.their} desk. "Rules exist for a reason, and I enforce them. No exceptions. Not for anyone. This is a formal write-up. Tomorrow you will arrive in full uniform, which includes ${L.some}. Dismissed."`,
+      (m, you, P) => `"I don't repeat myself, ${you}, and yet here we are." ${m} sets the second form down with surgical precision. "This is your final warning. I am documenting everything. One more incident and you will be escorted from the premises. Do I make myself clear?" ${P.They} wait${P.s} for an answer.`,
+      (m, you, P) => `"Three violations." ${m} is already holding your termination letter. "I warned you. Twice, in writing. Security will see you out. Hand over your badge on the way."`,
+    ],
+  },
+  distant: {
+    office: (m, you, P) => `${m} waves you in without looking up from ${P.their} screen. The door drifts shut on its own.`,
+    phone: (m, you, P) => `${m} calls. You can hear typing the whole time. ${P.They} never quite stop${P.s}.`,
+    talk: [
+      (m, you, P, L) => `"Mm-hm. Yes. Got the report." Click, click. "Policy says I write you up, so... done." ${P.They} hit${P.s} print without glancing at you. "Wear ${L.some} next time, I guess. Close the door on your way out."`,
+      (m, you, P) => `"You again." ${m} sighs without looking away from the screen. "Second one. Final warning, it says here. I've got a budget meeting in five minutes, so let's just... not do this again."`,
+      (m, you, P) => `"Third report. That's automatic termination." ${m} still hasn't looked up. "HR will email you the paperwork. Leave your badge on the desk."`,
+    ],
+  },
+  oddball: {
+    office: (m, you, P) => `${m} swivels around in ${P.their} chair, steeples ${P.their} fingers like a movie villain, and gestures grandly at the empty seat.`,
+    phone: (m, you, P) => `Your phone rings. ${m} is humming dramatic music before you even say hello.`,
+    talk: [
+      (m, you, P, L) => `${m} is fighting a grin and losing. "Okay. Honestly? Kind of iconic. Bold move. Love the confidence." ${P.They} sigh${P.s} and pull${P.s} out a form. "Unfortunately I'm legally required to be horrified, so: I am horrified. Write-up. Maybe bring ${L.some} tomorrow, just so HR stops sending me all-caps emails."`,
+      (m, you, P) => `"Round two!" ${m} slaps the desk, then remembers ${P.they}'${P.they === 'they' ? 're' : 's'} supposed to be upset. "Ahem. I mean. Shocking. Appalling. This is your final warning, which is the official phrase, and I'm told I have to say it with a straight face." ${P.They} can't.`,
+      (m, you, P) => `"Three. The legendary hat trick." ${m} stands and gives you a slow, solemn round of applause. "I'd keep you if it were up to me. It's not. Go out in style, ${you}."`,
+    ],
   },
 };
 
 export const REPORT_REASONS = {
   report: (who) => `${who} came to me with a complaint. About your... attire.`,
-  complaints: () => `I've had THREE customer complaints today. All of them about the same thing.`,
+  complaints: (n = 3) => `I've had ${n === 3 ? 'THREE' : n === 5 ? 'FIVE' : n} complaints about you today. All of them about the same thing.`,
   manager: () => `I saw you. With my own eyes. I can't unsee it.`,
   late: (mins) => `You were ${mins} minutes late this morning. And then you show up... like that.`,
   slacking: (n) => `Yesterday you left ${n} requests unfinished. People noticed. And then there's... the other thing.`,
-  weekend: (who) => `${who} told me they saw you around town over the weekend. Dressed like... that. People talk, you know.`,
-  commute: (who) => `${who} says they passed you in the street on the way to or from work. Dressed like... that. In broad daylight.`,
+  weekend: (who, g) => `${who} told me ${pronouns(g).they} saw you around town over the weekend. Dressed like... that. People talk, you know.`,
+  commute: (who, g) => `${who} says ${pronouns(g).they} passed you in the street on the way to or from work. Dressed like... that. In broad daylight.`,
   absent: () => `You didn't show up yesterday. No call, nothing. I had to cover your work myself.`,
   walkout: () => `You clocked in yesterday and then just... left. In the middle of your shift. Explain that.`,
 };
@@ -418,48 +474,48 @@ export const ROLE_TASKS = {
 // Mishaps that fit what you were doing when it happened (by station tag).
 const M = (wet, fn) => ({ wet, fn });
 export const MISHAP_BY_TAG = {
-  printer: M(false, (n, lw) => `The printer jams, and when ${n} reaches in to clear it, the paper feed grabs the hem of their ${lw} and eats them, inch by inch, with a horrible grinding noise.`),
-  copier: M(false, (n, lw) => `${n} leans on the copier lid. The lid snaps shut on their ${lw}, and when they pull away... RRRIP. The copier now has a fabric souvenir.`),
-  scanner: M(false, (n, lw) => `${n} leans on the scanner lid. It snaps shut on their ${lw}, and when they pull away... RRRIP.`),
-  shredder: M(false, (n, lw) => `${n}'s ${lw} drift a little too close to the shredder. It does not hesitate.`),
-  cabinet: M(false, (n, lw) => `${n} slams the filing cabinet drawer shut with their ${lw} caught inside, then steps away. RRRRIP.`),
-  archivebox: M(false, (n, lw) => `A shelf of heavy archive boxes topples. ${n} leaps clear, but their ${lw} stay pinned under the boxes... and tear right off.`),
-  supply: M(false, (n, lw) => `${n} snags their ${lw} on a nail sticking out of the supply shelf. One step later there is a long, loud RRRRIP.`),
-  stockbox: M(false, (n, lw) => `${n}'s ${lw} hook on a loose pallet strap. The pallet jack rolls off with them, straight into the compactor.`),
-  shelf: M(false, (n, lw) => `${n} climbs the bottom shelf to reach the top. Their ${lw} catch on a price tag hook, and when they hop down, the ${lw} stay up there.`),
-  rack: M(false, (n, lw) => `${n}'s ${lw} catch on the edge of a steel rack. One step later, RRRRIP. There's not much left of them.`),
-  dock: M(false, (n, lw) => `A delivery truck pulls away from the dock with the hem of ${n}'s ${lw} caught in its door. ${n} stays. The ${lw} do not.`),
-  pallet: M(false, (n, lw) => `${n}'s ${lw} snag on a splintered pallet. One step later there is a long, loud RRRRIP.`),
-  conveyor: M(false, (n, lw) => `${n}'s ${lw} catch on the conveyor belt, which happily carries them off to the shipping area.`),
-  packing: M(false, (n, lw) => `${n} accidentally tapes their ${lw} into a shipping box. By the time they notice, the box has shipped.`),
-  coffee: M(true, (n, lw) => `The coffee pot slips. A full pot of coffee pours down ${n}'s ${lw}. They peel them off before they burn, and they're soaked and stained beyond saving.`),
-  espresso: M(true, (n, lw) => `The steam wand sputters and blasts ${n}'s ${lw} with scalding milk. They have to take them off right away, and they're ruined.`),
-  soda: M(true, (n, lw) => `The soda fountain nozzle breaks off and sprays ${n}'s ${lw} with sticky cola. Soaked, sticky and ruined.`),
-  bar: M(true, (n, lw) => `A bottle of syrup shatters and drenches ${n}'s ${lw}. They have to come off, and they're ruined.`),
-  table: M(true, (n, lw) => `A diner knocks over a bowl of tomato soup, right onto ${n}'s ${lw}. They peel them off before they stain, but they're soaked and unwearable.`),
-  cafetable: M(true, (n, lw) => `A customer's iced coffee tips over straight onto ${n}'s ${lw}. Soaked, sticky and ruined.`),
-  pass: M(true, (n, lw) => `A tray of soup bowls tips over at the pass, right onto ${n}'s ${lw}. They're soaked, scalding and unwearable.`),
-  stove: M(true, (n, lw) => `A pot of pasta water boils over onto ${n}'s ${lw}. They have to come off immediately, and they're soaked and ruined.`),
-  prep: M(false, (n, lw) => `${n}'s ${lw} catch on the meat slicer's handle. The slicer makes short work of them.`),
-  oven: M(false, (n, lw) => `${n} backs into the hot oven door, and their ${lw} scorch and melt right off.`),
-  roaster: M(false, (n, lw) => `${n} stands too close to the roaster vent. The ${lw} singe, smoke, and fall apart.`),
-  dish: M(true, (n, lw) => `The dish sprayer slips out of its holder and blasts ${n}'s ${lw} with soapy water. They're drenched and see-through, so off they come.`),
-  sink: M(true, (n, lw) => `The faucet handle snaps off and a geyser of water drenches ${n}'s ${lw}. Soaked through and ruined.`),
-  washer: M(true, (n, lw) => `A washing machine door pops open mid-cycle, flooding ${n}'s ${lw} with soapy water. They're soaked and ruined.`),
-  mop: M(true, (n, lw) => `${n} knocks over the mop bucket, dousing their ${lw} in dirty mop water. They have to come off right now.`),
-  spill: M(true, (n, lw) => `${n} slips in the spill and lands right in it. Their ${lw} are soaked through and ruined.`),
-  trash: M(false, (n, lw) => `The trash bag splits open over ${n}'s ${lw}. They're covered in something unspeakable, and there's no saving them.`),
-  dumpster: M(false, (n, lw) => `${n}'s ${lw} catch on the dumpster lid as it slams shut. One step later: RRRRIP.`),
-  fridge: M(false, (n, lw) => `${n}'s ${lw} get caught in the fridge door, and when they turn away... RRRIP.`),
-  freezer: M(false, (n, lw) => `${n}'s ${lw} freeze to the walk-in freezer shelf. When they pull free, the ${lw} stay behind.`),
-  guestbed: M(false, (n, lw) => `${n} trips over the bedsheets and their ${lw} tangle in the bed frame. RRRRIP.`),
-  luggage: M(false, (n, lw) => `${n}'s ${lw} catch in a suitcase zipper, and the luggage cart rolls away with them.`),
-  bookshelf: M(false, (n, lw) => `${n} climbs the library ladder; their ${lw} catch on a shelf bracket and stay behind on the way down.`),
-  returncart: M(false, (n, lw) => `${n}'s ${lw} tangle in the book cart wheel. The cart wins.`),
-  repair: M(false, (n, lw) => `${n} sits on the book repair bench, right on the fresh glue. The ${lw} are glued in place when they stand up. They stand up anyway.`),
-  plant: M(true, (n, lw) => `The watering can spout pops off and the whole can empties onto ${n}'s ${lw}. Soaked and muddy.`),
+  printer: M(false, W((n, L, P) => `The printer jams, and when ${n} reaches in to clear it, the paper feed grabs the hem of ${P.their} ${L.n} and eats ${L.them}, inch by inch, with a horrible grinding noise.`)),
+  copier: M(false, W((n, L, P) => `${n} leans on the copier lid. The lid snaps shut on ${P.their} ${L.n}, and when ${P.they} pull${P.s} away... RRRIP. The copier now has a fabric souvenir.`)),
+  scanner: M(false, W((n, L, P) => `${n} leans on the scanner lid. It snaps shut on ${P.their} ${L.n}, and when ${P.they} pull${P.s} away... RRRIP.`)),
+  shredder: M(false, W((n, L) => `${n}'s ${L.n} drift${L.s} a little too close to the shredder. It does not hesitate.`)),
+  cabinet: M(false, W((n, L, P) => `${n} slams the filing cabinet drawer shut with ${P.their} ${L.n} caught inside, then steps away. RRRRIP.`)),
+  archivebox: M(false, W((n, L, P) => `A shelf of heavy archive boxes topples. ${n} leaps clear, but ${P.their} ${L.n} stay${L.s} pinned under the boxes... and tear${L.s} right off.`)),
+  supply: M(false, W((n, L, P) => `${n} snags ${P.their} ${L.n} on a nail sticking out of the supply shelf. One step later there is a long, loud RRRRIP.`)),
+  stockbox: M(false, W((n, L) => `${n}'s ${L.n} hook${L.s} on a loose pallet strap. The pallet jack rolls off with ${L.them}, straight into the compactor.`)),
+  shelf: M(false, W((n, L, P) => `${n} climbs the bottom shelf to reach the top. ${P.Their} ${L.n} catch${L.es} on a price tag hook, and when ${P.they} hop${P.s} down, the ${L.n} stay${L.s} up there.`)),
+  rack: M(false, W((n, L) => `${n}'s ${L.n} catch${L.es} on the edge of a steel rack. One step later, RRRRIP. There's not much left of ${L.them}.`)),
+  dock: M(false, W((n, L) => `A delivery truck pulls away from the dock with the hem of ${n}'s ${L.n} caught in its door. ${n} stays. The ${L.n} ${L.n === 'skirt' ? 'does' : 'do'} not.`)),
+  pallet: M(false, W((n, L) => `${n}'s ${L.n} snag${L.s} on a splintered pallet. One step later there is a long, loud RRRRIP.`)),
+  conveyor: M(false, W((n, L) => `${n}'s ${L.n} catch${L.es} on the conveyor belt, which happily carries ${L.them} off to the shipping area.`)),
+  packing: M(false, W((n, L, P) => `${n} accidentally tapes ${P.their} ${L.n} into a shipping box. By the time ${P.they} notice${P.s}, the box has shipped.`)),
+  coffee: M(true, W((n, L, P) => `The coffee pot slips. A full pot of coffee pours down ${n}'s ${L.n}. ${P.They} peel${P.s} ${L.them} off before ${L.they} burn${L.s}, and ${L.theyre} soaked and stained beyond saving.`)),
+  espresso: M(true, W((n, L, P) => `The steam wand sputters and blasts ${n}'s ${L.n} with scalding milk. ${P.They} ${P.have} to take ${L.them} off right away, and ${L.theyre} ruined.`)),
+  soda: M(true, W((n, L) => `The soda fountain nozzle breaks off and sprays ${n}'s ${L.n} with sticky cola. Soaked, sticky and ruined.`)),
+  bar: M(true, W((n, L) => `A bottle of syrup shatters and drenches ${n}'s ${L.n}. ${L.They} ${L.have} to come off, and ${L.theyre} ruined.`)),
+  table: M(true, W((n, L, P) => `A diner knocks over a bowl of tomato soup, right onto ${n}'s ${L.n}. ${P.They} peel${P.s} ${L.them} off before ${L.they} stain${L.s}, but ${L.theyre} soaked and unwearable.`)),
+  cafetable: M(true, W((n, L) => `A customer's iced coffee tips over straight onto ${n}'s ${L.n}. Soaked, sticky and ruined.`)),
+  pass: M(true, W((n, L) => `A tray of soup bowls tips over at the pass, right onto ${n}'s ${L.n}. ${L.Theyre} soaked, scalding and unwearable.`)),
+  stove: M(true, W((n, L) => `A pot of pasta water boils over onto ${n}'s ${L.n}. ${L.They} ${L.have} to come off immediately, and ${L.theyre} soaked and ruined.`)),
+  prep: M(false, W((n, L) => `${n}'s ${L.n} catch${L.es} on the meat slicer's handle. The slicer makes short work of ${L.them}.`)),
+  oven: M(false, W((n, L, P) => `${n} backs into the hot oven door, and ${P.their} ${L.n} scorch${L.es} and melt${L.s} right off.`)),
+  roaster: M(false, W((n, L) => `${n} stands too close to the roaster vent. The ${L.n} singe${L.s}, smoke${L.s}, and fall${L.s} apart.`)),
+  dish: M(true, W((n, L) => `The dish sprayer slips out of its holder and blasts ${n}'s ${L.n} with soapy water. ${L.Theyre} drenched and see-through, so off ${L.they} come${L.s}.`)),
+  sink: M(true, W((n, L) => `The faucet handle snaps off and a geyser of water drenches ${n}'s ${L.n}. Soaked through and ruined.`)),
+  washer: M(true, W((n, L) => `A washing machine door pops open mid-cycle, flooding ${n}'s ${L.n} with soapy water. ${L.Theyre} soaked and ruined.`)),
+  mop: M(true, W((n, L, P) => `${n} knocks over the mop bucket, dousing ${P.their} ${L.n} in dirty mop water. ${L.They} ${L.have} to come off right now.`)),
+  spill: M(true, W((n, L, P) => `${n} slips in the spill and lands right in it. ${P.Their} ${L.n} ${L.are} soaked through and ruined.`)),
+  trash: M(false, W((n, L) => `The trash bag splits open over ${n}'s ${L.n}. ${L.Theyre} covered in something unspeakable, and there's no saving ${L.them}.`)),
+  dumpster: M(false, W((n, L) => `${n}'s ${L.n} catch${L.es} on the dumpster lid as it slams shut. One step later: RRRRIP.`)),
+  fridge: M(false, W((n, L, P) => `${n}'s ${L.n} get${L.s} caught in the fridge door, and when ${P.they} turn${P.s} away... RRRIP.`)),
+  freezer: M(false, W((n, L, P) => `${n}'s ${L.n} freeze${L.s} to the walk-in freezer shelf. When ${P.they} pull${P.s} free, the ${L.n} stay${L.s} behind.`)),
+  guestbed: M(false, W((n, L, P) => `${n} trips over the bedsheets and ${P.their} ${L.n} tangle${L.s} in the bed frame. RRRRIP.`)),
+  luggage: M(false, W((n, L) => `${n}'s ${L.n} catch${L.es} in a suitcase zipper, and the luggage cart rolls away with ${L.them}.`)),
+  bookshelf: M(false, W((n, L, P) => `${n} climbs the library ladder; ${P.their} ${L.n} catch${L.es} on a shelf bracket and stay${L.s} behind on the way down.`)),
+  returncart: M(false, W((n, L) => `${n}'s ${L.n} tangle${L.s} in the book cart wheel. The cart wins.`)),
+  repair: M(false, W((n, L, P) => `${n} sits on the book repair bench, right on the fresh glue. The ${L.n} ${L.are} glued in place when ${P.they} stand${P.s} up. ${P.They} stand${P.s} up anyway.`)),
+  plant: M(true, W((n, L) => `The watering can spout pops off and the whole can empties onto ${n}'s ${L.n}. Soaked and muddy.`)),
 };
-export const MISHAP_GENERIC = M(false, (n, lw) => `${n}'s zipper and button give out at the same moment. The ${lw} simply slide down to the floor... and refuse to stay up.`);
+export const MISHAP_GENERIC = M(false, W((n, L) => `${n}'s zipper and button give out at the same moment. The ${L.n} simply slide${L.s} down to the floor... and refuse${L.s} to stay up.`));
 export function mishapFor(tag) {
   return MISHAP_BY_TAG[tag] || MISHAP_GENERIC;
 }
@@ -484,6 +540,7 @@ export const DEFAULT_SETTINGS = {
   minimap: true,
   wetMaxSee: 0.5,
   allowedUnfinished: 2,
+  complaintLimit: 5,
   dynamicRes: true,
   outlines: true,
   quality: 'medium',
@@ -520,10 +577,20 @@ export function weatherFor(day, seed = 0) {
   return r < 0.45 ? 'sunny' : r < 0.7 ? 'cloudy' : 'rain';
 }
 
+/** Pronouns plus the verb endings that go with them ("she notices" / "they notice"). */
 export function pronouns(gender) {
-  if (gender === 'male') return { they: 'he', them: 'him', their: 'his', theyre: "he's", They: 'He', Their: 'His' };
-  if (gender === 'female') return { they: 'she', them: 'her', their: 'her', theyre: "she's", They: 'She', Their: 'Her' };
-  return { they: 'they', them: 'them', their: 'their', theyre: "they're", They: 'They', Their: 'Their' };
+  const sing = { s: 's', es: 'es', are: 'is', were: 'was', have: 'has' };
+  if (gender === 'male') return { they: 'he', them: 'him', their: 'his', theirs: 'his', theyre: "he's", They: 'He', Their: 'His', Theyre: "He's", self: 'himself', ...sing };
+  if (gender === 'female') return { they: 'she', them: 'her', their: 'her', theirs: 'hers', theyre: "she's", They: 'She', Their: 'Her', Theyre: "She's", self: 'herself', ...sing };
+  return { they: 'they', them: 'them', their: 'their', theirs: 'theirs', theyre: "they're", They: 'They', Their: 'Their', Theyre: "They're", self: 'themselves', s: '', es: '', are: 'are', were: 'were', have: 'have' };
+}
+
+/** Words for a piece of legwear, so a skirt reads as "a skirt... it is" and pants as "some pants... they are". */
+export function lwWords(type) {
+  const sk = /skirt/i.test(type || '');
+  return sk
+    ? { n: 'skirt', bare: 'a skirt', some: 'a skirt', a: 'a skirt', are: 'is', were: 'was', them: 'it', they: 'it', They: 'It', theyre: "it's", Theyre: "It's", s: 's', es: 'es', have: 'has' }
+    : { n: 'pants', bare: 'pants', some: 'some pants', a: 'a pair of pants', are: 'are', were: 'were', them: 'them', they: 'they', They: 'They', theyre: "they're", Theyre: "They're", s: '', es: '', have: 'have' };
 }
 
 // Underwear designs (texture overlays in the VRoid body layout). 'LegoBlack' ones are plain and take any

@@ -2378,6 +2378,13 @@ export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
         g.globalCompositeOperation = 'source-over';
       }
       for (const ov of overlays) g.drawImage(ov, 0, 0);
+      // bleed the finished colors (underwear included) well past the UV seams: zoomed out, the
+      // smaller mip levels average across them and would otherwise show a skin-colored split
+      if (islands && overlays.length) {
+        const id = g.getImageData(0, 0, R, R);
+        padIslands(id, islands, R, 16);
+        g.putImageData(id, 0, 0);
+      }
       return c;
     };
     const mk = (c, like) => {

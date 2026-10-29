@@ -103,33 +103,39 @@ export const MAKESHIFT_SNAGS = [
 ];
 
 // Neighbors and other residents of your building
+/** Fill {They} {they} {their} {Their} {them} {s} {es} {do} placeholders for one person. */
+export function fillP(str, P) {
+  return str.replace(/\{(They|they|their|Their|them|s|es|do|studies)\}/g, (_, k) => (k === 'do' ? (P.s ? 'does' : 'do') : k === 'studies' ? (P.s ? 'studies' : 'study') : P[k]));
+}
 export const RESIDENT_INTRO = [
   (who) => `${who} steps out, stops dead, and looks you up and down. "...Evening."`,
-  (who) => `${who} is waiting by the door with a bag of trash. Their eyes go down... and snap right back up.`,
+  (who) => `${who} is waiting by the door with a bag of trash. {Their} eyes go down... and snap right back up.`,
   (who) => `${who} glances over, then does a slow double take.`,
-  (who) => `"Oh!" ${who} nearly drops their keys.`,
+  (who) => `"Oh!" ${who} nearly drops {their} keys.`,
 ];
+export const RESIDENT_AGAIN = ['{They} clearly remember{s} the last time.', 'Recognition flickers across {their} face.', '"...Oh. Hi. Again."'];
 export const RESIDENT_REPLIES = {
-  swim: { good: ['"Swimming?" A long pause. They look at the puddle at your feet. "...Right. Have a good night."', '"Ah. Pool\'s nice this time of year?" They clearly don\'t believe a word, but they nod anyway.'], bad: ['"Swimming." They look at your completely dry hair. "...In the hallway?"', '"Swimming? It\'s bone dry out there." They squint.'] },
-  laundry: { good: ['"Laundry? Ah. I figured." They very carefully look anywhere else.', '"Yeah, it happens." They nod slowly and get on with their own business.'], bad: ['"Laundry. At this hour. Dressed like... that." They shake their head.'] },
+  swim: { good: ['"Swimming?" A long pause. {They} look{s} at the puddle at your feet. "...Right. Have a good night."', '"Ah. Pool\'s nice this time of year?" {They} clearly {do}n\'t believe a word, but {they} nod{s} anyway.'], bad: ['"Swimming." {They} look{s} at your completely dry hair. "...In the hallway?"', '"Swimming? It\'s bone dry out there." {They} squint{s}.'] },
+  laundry: { good: ['"Laundry? Ah. I figured." {They} very carefully look{s} anywhere else.', '"Yeah, it happens." {They} nod{s} slowly and get{s} on with {their} own business.'], bad: ['"Laundry. At this hour. Dressed like... that." {They} shake{s} {their} head.'] },
   locked: { good: ['"Ugh, that machine. Happens all the time. Want me to call the building manager?" "NO! I mean... no, thanks."', '"Oh no, that one again? Kick it near the bottom. Works sometimes."'], bad: [] },
-  fine: { good: ['"You\'re... shaking." "I\'m not." They very politely pretend to believe you.'], bad: ['"Fine? You don\'t LOOK fine."'] },
-  evening: { good: ['They nod once and very deliberately study the ceiling until you\'ve passed.', '"Evening." Their eyes stay locked on a spot somewhere above your head.'], bad: ['"Evening... are you okay?"'] },
-  story: { good: ['"Ah. Okay." They go back to their phone. Then look again. Then back to the phone.'], bad: [] },
+  fine: { good: ['"You\'re... shaking." "I\'m not." {They} very politely pretend{s} to believe you.'], bad: ['"Fine? You don\'t LOOK fine."'] },
+  evening: { good: ['{They} nod{s} once and very deliberately {studies} the ceiling until you\'ve passed.', '"Evening." {Their} eyes stay locked on a spot somewhere above your head.'], bad: ['"Evening... are you okay?"'] },
+  story: { good: ['"Ah. Okay." {They} go{es} back to {their} phone. Then look{s} again. Then back to the phone.'], bad: [] },
 };
 
 // What ruins the rest of the wardrobe on night one
+const EVERY = (lw, cap) => (/skirt/.test(lw) ? (cap ? 'Every skirt' : 'every skirt') : cap ? 'Every pair of pants' : 'every pair of pants');
 export const WARDROBE_RUIN = [
-  (lw) => `Something blue went in with everything else. Every top is blotched, and every pair of ${lw} has shrunk to doll size, tangled into one hopeless knot.`,
-  (lw) => `The drum must have caught on something: every pair of ${lw} comes out shredded into ribbons.`,
-  (lw) => `A pen in someone's pocket burst. Everything is soaked in ink, and the ${lw} got the worst of it.`,
-  (lw) => `The machine overheated. Every pair of ${lw} has melted and fused into one stiff, shiny lump.`,
+  (lw) => `Something blue went in with everything else. Every top is blotched, and ${EVERY(lw)} has shrunk to doll size, tangled into one hopeless knot.`,
+  (lw) => `The drum must have caught on something: ${EVERY(lw)} comes out shredded into ribbons.`,
+  (lw) => `A pen in someone's pocket burst. Everything is soaked in ink, and the ${/skirt/.test(lw) ? 'skirts' : 'pants'} got the worst of it.`,
+  (lw) => `The machine overheated. ${EVERY(lw, true)} has melted and fused into one stiff, shiny lump.`,
 ];
 export const HOME_RUIN = [
-  (lw) => `...and find a puddle. A pipe burst in the wall overnight and flooded the closet. Every pair of ${lw} is soaked, mildewed and ruined.`,
-  (lw) => `...and find the closet door open and the window wide. The upstairs neighbor's dog got in through the fire escape and chewed every pair of ${lw} to pieces.`,
-  (lw) => `...and find a cloud of moths. Every pair of ${lw} has more holes than fabric.`,
-  (lw) => `...and find a note from the landlord: the closet was "treated" for mold today. Every pair of ${lw} reeks of chemicals and is falling apart.`,
+  (lw) => `...and find a puddle. A pipe burst in the wall overnight and flooded the closet. ${EVERY(lw, true)} is soaked, mildewed and ruined.`,
+  (lw) => `...and find the closet door open and the window wide. The upstairs neighbor's dog got in through the fire escape and chewed ${EVERY(lw)} to pieces.`,
+  (lw) => `...and find a cloud of moths. ${EVERY(lw, true)} has more holes than fabric.`,
+  (lw) => `...and find a note from the landlord: the closet was "treated" for mold today. ${EVERY(lw, true)} reeks of chemicals and is falling apart.`,
 ];
 export const MACHINE_ERRORS = ['E03', 'E21', 'F05', 'Err 7', 'DOOR LOCK', 'E44'];
 
@@ -137,17 +143,17 @@ export { pick };
 
 // ---- Friends and oddballs who know your secret drop by now and then
 export const FRIEND_CHECKS = [
-  (nm, you) => `${nm} sidles up and keeps their voice low. "Hey. How are you holding up?"`,
+  (nm, you, mgr, P) => `${nm} sidles up and keeps ${P.their} voice low. "Hey. How are you holding up?"`,
   (nm, you) => `"Psst! ${you}! Still in one piece?" ${nm} glances around nervously.`,
   (nm, you) => `${nm} pretends to study a file right next to you. "Doing okay? You look a little pale. And... a LOT pale."`,
   (nm, you) => `${nm} slips a coffee into your hand without looking down. "Moral support. How's it going?"`,
-  (nm, you, mgr) => `"I've been keeping an eye on ${mgr}. Coast is clear... ish." ${nm} lowers their voice. "You alright?"`,
+  (nm, you, mgr, P) => `"I've been keeping an eye on ${mgr}. Coast is clear... ish." ${nm} lowers ${P.their} voice. "You alright?"`,
   (nm, you) => `${nm} drifts past, then doubles back. "Just making sure nobody's cornered you. You good?"`,
 ];
 export const FRIEND_FINE = ['"Uh huh. Sure you are."', '"That\'s the spirit. Terrifying, but the spirit."', '"Okay. Shout if you need me. Quietly."'];
 export const FRIEND_COMFORT = ['"Hang in there. You\'re doing great. Weirdly great."', '"Hey. Breathe. Nobody\'s noticed a thing, I promise."', '"You\'ve made it this far. Only a few more hours."'];
 export const BLESSED_FRIEND_CHECKS = [
-  (nm) => `${nm} shuffles over, tugging their shirt down as far as it goes. "Okay. NOW I get it. How do you do this all day?"`,
+  (nm, P) => `${nm} shuffles over, tugging ${P.their} shirt down as far as it goes. "Okay. NOW I get it. How do you do this all day?"`,
   (nm) => `"Psst. Is it just me, or is the air conditioning aimed directly at us?" ${nm} whispers.`,
   (nm) => `${nm} crouches behind the nearest cover with you. "Support group meeting. Population: us."`,
 ];

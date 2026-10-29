@@ -380,6 +380,9 @@ async function showSettings() {
       <label>Unfinished requests allowed at clock-out: <b id="v-unf"></b></label>
       <input type="range" id="s-unf" min="0" max="8" step="1" value="${st.allowedUnfinished ?? 2}" />
       <p class="note">Leave more than this many requests undone and the manager wants a word. Lower = harder.</p>
+      <label>Complaints before a write-up: <b id="v-cmp"></b></label>
+      <input type="range" id="s-cmp" min="1" max="10" step="1" value="${st.complaintLimit ?? 5}" />
+      <p class="note">How many complaints in one day (from customers, guards, or coworkers right after a write-up) earn a trip to the manager's office.</p>
       <label>Facial expression strength: <b id="v-expr"></b></label>
       <input type="range" id="s-expr" min="0" max="1" step="0.05" value="${st.exprMax}" />
       <p class="note">Maximum weight of VRoid facial expressions (blend shapes) used to show how characters feel.</p>
@@ -405,6 +408,7 @@ async function showSettings() {
     s.querySelector('#v-detect').textContent = `×${(+s.querySelector('#s-detect').value).toFixed(2)}`;
     s.querySelector('#v-wet').textContent = `${Math.round(+s.querySelector('#s-wet').value * 100)}%`;
     s.querySelector('#v-unf').textContent = `${s.querySelector('#s-unf').value}`;
+    s.querySelector('#v-cmp').textContent = `${s.querySelector('#s-cmp').value}`;
   };
   fmt();
   const save = async () => {
@@ -415,6 +419,7 @@ async function showSettings() {
     st.sleepRecovery = s.querySelector('#s-sleep').checked;
     st.wetMaxSee = +s.querySelector('#s-wet').value;
     st.allowedUnfinished = +s.querySelector('#s-unf').value;
+    st.complaintLimit = +s.querySelector('#s-cmp').value;
     st.minimap = s.querySelector('#s-map').checked;
     st.dynamicRes = s.querySelector('#s-dres').checked;
     st.quality = s.querySelector('#s-qual').value;
@@ -426,7 +431,7 @@ async function showSettings() {
   s.querySelectorAll('input:not([id^="s-vol"]), select').forEach((el) => (el.oninput = el.onchange = () => (fmt(), save())));
   bindVolumeSliders(s, st, () => putSettings(st));
   s.querySelector('#s-reset').onclick = async () => {
-    Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, detectScale: 1, sleepRecovery: true, wetMaxSee: 0.5, allowedUnfinished: 2, minimap: true, dynamicRes: true, outlines: true, quality: 'medium', useBundledCivilians: true });
+    Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, detectScale: 1, sleepRecovery: true, wetMaxSee: 0.5, allowedUnfinished: 2, complaintLimit: 5, minimap: true, dynamicRes: true, outlines: true, quality: 'medium', useBundledCivilians: true });
     for (const k of ['volMaster', 'volSfx', 'volVoice', 'volAmbient', 'volUi']) st[k] = DEFAULT_SETTINGS[k];
     applyVolumeSettings(st);
     await putSettings(st);
