@@ -368,6 +368,12 @@ async function showSettings() {
       <input type="range" id="s-expr" min="0" max="1" step="0.05" value="${st.exprMax}" />
       <p class="note">Maximum weight of VRoid facial expressions (blend shapes) used to show how characters feel.</p>
       <label><input type="checkbox" id="s-map" ${st.minimap ? 'checked' : ''}/> Show minimap and compass (toggle in game with M)</label>
+      <label>Graphics quality</label>
+      <select id="s-qual">
+        <option value="high" ${st.quality === 'high' ? 'selected' : ''}>High: everything at full detail</option>
+        <option value="medium" ${(st.quality || 'medium') === 'medium' ? 'selected' : ''}>Medium: less detail on distant people (recommended)</option>
+        <option value="low" ${st.quality === 'low' ? 'selected' : ''}>Low: for slower PCs (fewer people drawn, simpler shadows)</option>
+      </select>
       <label><input type="checkbox" id="s-dres" ${st.dynamicRes !== false ? 'checked' : ''}/> Dynamic resolution (lowers render resolution when the frame rate drops)</label>
       <label><input type="checkbox" id="s-outl" ${st.outlines !== false ? 'checked' : ''}/> Toon outlines on characters</label>
       <label><input type="checkbox" id="s-civ" ${st.useBundledCivilians ? 'checked' : ''}/> Use the bundled townsperson models for civilians</label>
@@ -395,6 +401,7 @@ async function showSettings() {
     st.allowedUnfinished = +s.querySelector('#s-unf').value;
     st.minimap = s.querySelector('#s-map').checked;
     st.dynamicRes = s.querySelector('#s-dres').checked;
+    st.quality = s.querySelector('#s-qual').value;
     st.outlines = s.querySelector('#s-outl').checked;
     setOutlines(st.outlines);
     st.useBundledCivilians = s.querySelector('#s-civ').checked;
@@ -403,7 +410,7 @@ async function showSettings() {
   s.querySelectorAll('input:not([id^="s-vol"])').forEach((el) => (el.oninput = el.onchange = () => (fmt(), save())));
   bindVolumeSliders(s, st, () => putSettings(st));
   s.querySelector('#s-reset').onclick = async () => {
-    Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, detectScale: 1, sleepRecovery: true, wetMaxSee: 0.5, allowedUnfinished: 2, minimap: true, dynamicRes: true, outlines: true, useBundledCivilians: true });
+    Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, detectScale: 1, sleepRecovery: true, wetMaxSee: 0.5, allowedUnfinished: 2, minimap: true, dynamicRes: true, outlines: true, quality: 'medium', useBundledCivilians: true });
     for (const k of ['volMaster', 'volSfx', 'volVoice', 'volAmbient', 'volUi']) st[k] = DEFAULT_SETTINGS[k];
     applyVolumeSettings(st);
     await putSettings(st);

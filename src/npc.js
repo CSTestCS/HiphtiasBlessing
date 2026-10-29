@@ -322,7 +322,7 @@ export class NPC {
     this.char.root.rotation.y = this.yaw;
     // off-screen characters keep thinking but skip skinning/animation work; far ones animate at half rate
     let adt = dt;
-    if (this.char._detail === 0) {
+    if (this.char._far) {
       this._animSkip = !this._animSkip;
       this._animDt = (this._animDt || 0) + dt;
       if (this._animSkip) adt = -1;

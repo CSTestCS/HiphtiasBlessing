@@ -484,6 +484,7 @@ export const DEFAULT_SETTINGS = {
   allowedUnfinished: 2,
   dynamicRes: true,
   outlines: true,
+  quality: 'medium',
   volMaster: 0.8,
   volSfx: 1,
   volVoice: 0.9,

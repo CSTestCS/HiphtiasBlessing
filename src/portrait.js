@@ -146,6 +146,7 @@ export function drawPortrait(renderer, char, look, canvas2d, restore) {
     }
     const prevRT = renderer.getRenderTarget();
     renderer.setRenderTarget(portraitRT);
+    renderer.shadowMap.needsUpdate = true;
     renderer.clear();
     renderer.render(studio, cam);
     renderer.readRenderTargetPixels(portraitRT, 0, 0, W, H, portraitBuf);

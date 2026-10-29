@@ -437,7 +437,15 @@ export class Bus {
       } else if (!p.leaving) p.char.root.rotation.y = 0;
       p.walking = moving;
       p.char.root.position.set(p.x, 0.15, p.z);
-      if (this.inView !== false) p.char.update(dt, { speed: moving ? 1.1 : 0, sit: !!p.seat && !p.walk.length });
+      if (this.inView !== false && p.char.root.visible) {
+        // someone sitting still on a bus that isn't right next to you animates at a third of the rate
+        p._acc = (p._acc || 0) + dt;
+        const slow = !moving && (this.camDist ?? 0) > 10;
+        if (!slow || (p._tick = ((p._tick || 0) + 1) % 3) === 0) {
+          p.char.update(p._acc, { speed: moving ? 1.1 : 0, sit: !!p.seat && !p.walk.length });
+          p._acc = 0;
+        }
+      }
     }
     if (this.driver?.placeholder) {
       // the driver was a stand-in: swap for a real model once one is loaded
@@ -450,7 +458,7 @@ export class Bus {
         this.group.add(this.driver.root);
       }
     }
-    if (this.driver) this.driver.update(dt, { speed: 0, sit: true, carry: true });
+    if (this.driver && this.inView !== false && this.driver.root.visible) this.driver.update(dt, { speed: 0, sit: true, carry: true });
   }
 }
 

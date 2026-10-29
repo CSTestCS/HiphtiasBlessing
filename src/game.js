@@ -39,6 +39,13 @@ const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.ceil(t % 60)).padStart(
 const MGR_GRACE = 150;
 // the workday, in minutes after midnight
 const SHIFT = { start: 540, lunch: 720, lunchEnd: 780, end: 1020 };
+// graphics quality presets: distances (m) for outlines / shadows / face details, max resolution,
+// shadow map size, shadow redraw interval (frames) and how many people are drawn at once
+const QUALITY = {
+  high: { outline: 9, shadow: 16, face: 16, pr: 1.5, smap: 2048, shadowEvery: 1, maxChars: 99, riders: 40 },
+  medium: { outline: 6, shadow: 10, face: 10, pr: 1.25, smap: 2048, shadowEvery: 2, maxChars: 22, riders: 14 },
+  low: { outline: 0, shadow: 0, face: 6, pr: 1, smap: 1024, shadowEvery: 3, maxChars: 12, riders: 8 },
+};
 // Things you can tie on as an emergency skirt, and how they fail (like Mika's attempts in the manga)
 const MAKESHIFT = {
   box: { name: 'Cardboard skirt', short: 'cardboard skirt', color: '#c8a27a', life: [6, 14], wear: 'It holds... for now. (F to take it off)', fail: 'The box gives out.' },
@@ -98,10 +105,14 @@ export class Game {
     this.stamina = 100;
 
     const r = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' }));
-    r.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    this.Q = QUALITY[this.settings.quality] || QUALITY.medium;
+    r.setPixelRatio(Math.min(window.devicePixelRatio, this.Q.pr));
     r.setSize(window.innerWidth, window.innerHeight);
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFShadowMap;
+    // the sun's shadow map is redrawn every other frame (see render)
+    r.shadowMap.autoUpdate = false;
+    r.shadowMap.needsUpdate = true;
     r.outputColorSpace = THREE.SRGBColorSpace;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.15, 400);
@@ -109,7 +120,7 @@ export class Game {
     this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xffffff, 2.0);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.mapSize.set(this.Q.smap, this.Q.smap);
     const sc = this.sun.shadow.camera;
     sc.left = sc.bottom = -24;
     sc.right = sc.top = 24;
@@ -5206,25 +5217,37 @@ export class Game {
     else if (a.ema < 1 / 55) next = Math.min(1, a.scale + 0.1);
     if (next !== a.scale) {
       a.scale = next;
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5) * next);
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.Q.pr) * next);
     }
   }
 
-  /** Distant people skip their toon outline (past ~10 m) and their shadow (past ~14 m). */
-  charDetail(ch, d) {
-    const lvl = d < 10 ? 2 : d < 14 ? 1 : 0;
-    if (ch._detail === lvl) return;
-    ch._detail = lvl;
+  /**
+   * Level of detail by distance (see QUALITY): toon outlines, shadows and small face details drop
+   * off with distance; bus riders (noShadow) never cast a shadow, the bus covers them anyway.
+   */
+  charDetail(ch, d, noShadow = false) {
+    const Q = this.Q;
+    const ol = d < Q.outline && outlinesOn();
+    const sh = d < Q.shadow && !noShadow;
+    const fc = d < Q.face;
+    ch._far = d > 14;
+    const key = (ol ? 1 : 0) + (sh ? 2 : 0) + (fc ? 4 : 0);
+    if (ch._detailKey === key) return;
+    ch._detailKey = key;
     if (!ch._dm) {
-      ch._dm = { meshes: [], outlines: [] };
+      ch._dm = { meshes: [], outlines: [], face: [] };
       ch.root.traverse((o) => {
         if (!o.isMesh) return;
         ch._dm.meshes.push(o);
-        for (const m of [].concat(o.material)) if (m && /outline/i.test(m.name || '')) ch._dm.outlines.push(m);
+        const ms = [].concat(o.material);
+        for (const m of ms) if (m && /outline/i.test(m.name || '')) ch._dm.outlines.push(m);
+        // small face details (a separate draw each) that are only a pixel or two from afar
+        if (ms.every((m) => m && /(EyeHighlight|Eyelash|Eyeline|FaceBrow|FaceMouth)/i.test(m.name || ''))) ch._dm.face.push(o);
       });
     }
-    for (const o of ch._dm.meshes) o.castShadow = lvl >= 1;
-    for (const m of ch._dm.outlines) m.visible = lvl >= 2 && outlinesOn();
+    for (const o of ch._dm.meshes) o.castShadow = sh;
+    for (const m of ch._dm.outlines) m.visible = ol;
+    for (const o of ch._dm.face) o.visible = fc;
   }
 
   cullCharacters() {
@@ -5258,16 +5281,45 @@ export class Game {
       const vis = d < maxD && fr.intersectsSphere(sph);
       n.inView = vis && !n.away;
       n.char.root.visible = vis && !n.away;
+      n._camD = d;
       if (n.inView) this.charDetail(n.char, d);
+    }
+    // only the nearest few are drawn when a place is packed
+    const shown = this.npcs.filter((n) => n.inView);
+    if (shown.length > this.Q.maxChars) {
+      shown.sort((a, b) => a._camD - b._camD);
+      for (const n of shown.slice(this.Q.maxChars)) {
+        if (n === this.player.borrow?.npc || n.state === 'talk') continue;
+        n.inView = false;
+        n.char.root.visible = false;
+      }
     }
     for (const b of this.buses?.buses || []) {
       sph.center.set(b.x, 1.5, b.z);
       sph.radius = 7;
       const d = Math.hypot(b.x - cx, b.z - cz);
-      const vis = this.player.bus === b || (d < 55 && fr.intersectsSphere(sph));
+      const onIt = this.player.bus === b;
+      const vis = onIt || (d < 55 && fr.intersectsSphere(sph));
       b.inView = vis;
-      for (const q of b.passengers) q.char.root.visible = vis && (q.delay <= 0 || q.char.root.visible);
-      if (b.driver) b.driver.root.visible = vis && !b.driver.placeholder;
+      b.camDist = onIt ? 0 : d;
+      // riders of a far-off bus can't be made out through the windows: skip them entirely
+      const riders = vis && (onIt || d < 30);
+      // from outside, only so many riders are drawn: window seats first
+      let room = onIt ? 99 : this.Q.riders;
+      const order = onIt ? b.passengers : [...b.passengers].sort((a, c) => (c.seat?.window ? 1 : 0) - (a.seat?.window ? 1 : 0));
+      for (const q of order) {
+        const on = riders && (q.delay <= 0 || q.char.root.visible) && room > 0;
+        q.char.root.visible = on;
+        if (on) {
+          room--;
+          // riders seen from outside, through the windows, are a bit farther than the bus itself
+          this.charDetail(q.char, onIt ? Math.hypot(q.x - (this.player.lx || 0), q.z - (this.player.lz || 0)) : d + 3, true);
+        }
+      }
+      if (b.driver) {
+        b.driver.root.visible = riders && !b.driver.placeholder;
+        if (b.driver.root.visible) this.charDetail(b.driver, onIt ? 3 : d, true);
+      }
     }
   }
 
@@ -5336,6 +5388,8 @@ export class Game {
     this.cullCharacters();
     this.updateMarker();
     this.updateTags();
+    this._shadowTick = ((this._shadowTick || 0) + 1) % this.Q.shadowEvery;
+    if (this._shadowTick === 0) this.renderer.shadowMap.needsUpdate = true;
     this.renderer.render(this.scene, this.camera);
   }
 }
