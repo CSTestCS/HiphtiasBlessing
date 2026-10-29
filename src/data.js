@@ -526,6 +526,7 @@ export function pronouns(gender) {
 // Underwear designs (texture overlays in the VRoid body layout). 'LegoBlack' ones are plain and take any
 // color; floral/heart/star ones keep their own print. Males only get the fuller cuts.
 export const UNDERWEAR = {
+  patterns: ['Floral', 'Lace', 'RegalFloral', 'Signature', 'Stripes', 'Swirls'],
   panties: ['BandThongLegoBlack', 'BikiniBriefFloralPastelPink', 'BikiniBriefLegoBlack', 'BikiniHipstersLegoBlack', 'BoyshortLegoBlack', 'BrazilianBriefsLegoBlack', 'BriefsLegoBlack', 'CheekyHighRiseLegoBlack', 'CheekyHipstersLegoBlack', 'CuteCheekyBriefsLegoBlack', 'EorzeanBriefsLegoBlack', 'EriHighBriefsLegoBlack', 'FrenchCutLegoBlack', 'FrenchCutThongLegoBlack', 'FullThongLegoBlack', 'HalfThongBriefLegoBlack', 'HalfThongLegoBlack', 'HalfTycoonsLegoBlack', 'HighCutThongLegoBlack', 'HighRiseLegoBlack', 'HighRiseTrimLegoBlack', 'HipstersLegoBlack', 'LowRiseCheekyLegoBlack', 'LowRiseCheekyTrimmedLegoBlack', 'LowRiseTangaLegoBlack', 'MidRiseThongLegoBlack', 'NierThongLegoBlack', 'ShapingBriefsLegoBlack', 'SimpleBikiniBriefLegoBlack', 'StringBikiniLegoBlack', 'StringTangaLegoBlack', 'StringThongLegoBlack', 'TangaLegoBlack', 'ThongBriefLegoBlack', 'ThongLegoBlack', 'TrimmedBriefsLegoBlack', 'TrimmedFullBriefLegoBlack', 'TycoonsLegoBlack'],
   bras: ['AdhesiveBraLegoBlack', 'BalconetteBraLegoBlack', 'BikiniBraLegoBlack', 'BraFloralNude', 'BraFloralPastelPink', 'BraLegoBlack', 'EorzeanBraLegoBlack', 'FullCupBraLegoBlack', 'HalfCupBraLegoBlack', 'HalterTopBraLegoBlack', 'LaceBraLegoBlack', 'PlungeBraLegoBlack', 'RacerbackBraLegoBlack', 'SportsBraLegoBlack', 'SportsBraStarsLegoBlack', 'SportsBraTrimmedLegoBlack', 'StraplessBraFloralPastelPink', 'StraplessBraFloralPink', 'StraplessBraLegoBlack', 'TShirtBraLegoBlack', 'TriangleBraLegoBlack', 'TrimmedBikiniBraHearts', 'TrimmedBikiniBraLegoBlack', 'WirelessBraLegoBlack'],
   male: ['BoyshortLegoBlack', 'BriefsLegoBlack', 'EorzeanBriefsLegoBlack', 'HighRiseLegoBlack', 'HighRiseTrimLegoBlack', 'ShapingBriefsLegoBlack', 'TrimmedBriefsLegoBlack', 'TrimmedFullBriefLegoBlack'],
@@ -546,7 +547,9 @@ export function randomUnderwear(gender) {
     const match = !plain(panty) && UNDERWEAR.bras.find((x) => x.includes(print));
     bra = match || pick(UNDERWEAR.bras.filter(plain));
   }
-  return { panty, bra, color: pick(UNDERWEAR_COLORS) };
+  // now and then a print on a woman's plain underwear: the pattern's light parts take an accent color
+  const print = gender !== 'male' && Math.random() < 0.2 ? { pattern: pick(UNDERWEAR.patterns), accent: pick(UNDERWEAR_COLORS) } : {};
+  return { panty, bra, color: pick(UNDERWEAR_COLORS), ...print };
 }
 
 /** An outfit body taken from an imported civilian model, with that model's part settings. */

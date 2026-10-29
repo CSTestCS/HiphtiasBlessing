@@ -1927,7 +1927,40 @@ async function unionMask(R) {
   return p;
 }
 
-function tintedOverlay(img, color, R) {
+/** A print mask: the pattern's brightness becomes alpha (white = accent shows). */
+const patternMasks = new Map();
+function patternMask(name, R) {
+  const key = name + '|' + R;
+  if (!patternMasks.has(key)) {
+    patternMasks.set(
+      key,
+      fetch(UW_BASE + 'patterns/' + name + '.png')
+        .then((r) => (r.ok ? r.blob() : Promise.reject(new Error('missing pattern ' + name))))
+        .then((b) => createImageBitmap(b))
+        .then((img) => {
+          const c = document.createElement('canvas');
+          c.width = c.height = R;
+          const g = c.getContext('2d', { willReadFrequently: true });
+          g.drawImage(img, 0, 0, R, R);
+          const id = g.getImageData(0, 0, R, R);
+          const d = id.data;
+          for (let i = 0; i < d.length; i += 4) {
+            d[i + 3] = d[i];
+            d[i] = d[i + 1] = d[i + 2] = 255;
+          }
+          g.putImageData(id, 0, 0);
+          return c;
+        })
+    );
+  }
+  return patternMasks.get(key);
+}
+
+/**
+ * A design colored for this character. A plain design takes `color`; with a pattern, the pattern's
+ * white parts take `accent` instead. The design's own alpha cuts everything, so prints never reach skin.
+ */
+function tintedOverlay(img, color, R, mask = null, accent = null) {
   const c = document.createElement('canvas');
   c.width = c.height = R;
   const g = c.getContext('2d', { willReadFrequently: true });
@@ -1939,6 +1972,22 @@ function tintedOverlay(img, color, R) {
     g.globalCompositeOperation = 'destination-in';
     g.drawImage(img, 0, 0, R, R);
   }
+  if (color && mask && accent) {
+    // the accent-colored copy, cut to the design, then to the pattern's white parts
+    const a = document.createElement('canvas');
+    a.width = a.height = R;
+    const ag = a.getContext('2d', { willReadFrequently: true });
+    ag.drawImage(img, 0, 0, R, R);
+    ag.globalCompositeOperation = 'multiply';
+    ag.fillStyle = accent;
+    ag.fillRect(0, 0, R, R);
+    ag.globalCompositeOperation = 'destination-in';
+    ag.drawImage(img, 0, 0, R, R);
+    ag.drawImage(mask, 0, 0, R, R);
+    g.globalCompositeOperation = 'source-over';
+    g.drawImage(a, 0, 0);
+  }
+  g.globalCompositeOperation = 'source-over';
   return c;
 }
 
@@ -2168,7 +2217,9 @@ export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
     for (const part of parts) {
       const name = part === 'panty' ? uw.panty : uw.bra;
       const img = await loadOverlay(part === 'panty' ? 'panties' : 'bras', name);
-      overlays.push(tintedOverlay(img, /LegoBlack$/.test(name) ? uw.color : null, R));
+      const plain = /LegoBlack$/.test(name);
+      const mask = plain && uw.pattern && uw.accent ? await patternMask(uw.pattern, R).catch(() => null) : null;
+      overlays.push(tintedOverlay(img, plain ? uw.color : null, R, mask, uw.accent));
     }
     // per character: just the skin tint and the new design on top of the cleaned texture
     const build = (src, tintCol) => {

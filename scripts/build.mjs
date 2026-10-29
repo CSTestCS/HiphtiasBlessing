@@ -32,7 +32,7 @@ for (const f of readdirSync('assets/fonts')) copyFileSync('assets/fonts/' + f, '
 // underwear overlays
 mkdirSync('dist/underwear', { recursive: true });
 copyFileSync('assets/underwear/union.png', 'dist/underwear/union.png');
-for (const sub of ['panties', 'bras']) {
+for (const sub of ['panties', 'bras', 'patterns']) {
   mkdirSync('dist/underwear/' + sub, { recursive: true });
   for (const f of readdirSync('assets/underwear/' + sub)) {
     const dst = 'dist/underwear/' + sub + '/' + f;

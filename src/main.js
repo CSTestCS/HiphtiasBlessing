@@ -704,6 +704,10 @@ let previewTarget = 'player'; // 'player' | 'mgr' | index
 
 /** A random coworker: name, gender, any built-in or imported civilian body, colors and underwear. */
 function randomCoworker(personality, used) {
+  if (personality === undefined) {
+    const keys = Object.keys(PERSONALITIES);
+    personality = keys[Math.floor(Math.random() * keys.length)];
+  }
   const g = randGender();
   const name = nameFor(g, used);
   used.add(name);
@@ -874,7 +878,13 @@ function underwearEditor(def, attr) {
       <button class="secondary" style="padding:4px 10px" data-${attr}-r>Random</button>
     </div>
     ${uw.panty ? swatches('under', uw.color, attr + '-c', UNDERWEAR_COLORS) : ''}
-    ${uw.panty ? '<div class="note">Plain designs take the color; printed ones keep their pattern. Only shows on .vrm models.</div>' : ''}`;
+    ${
+      uw.panty && !male
+        ? `<label>Print</label><select data-${attr}-pat><option value="">None</option>${UNDERWEAR.patterns.map((n) => `<option value="${n}" ${uw.pattern === n ? 'selected' : ''}>${esc(prettyUnderwear(n))}</option>`).join('')}</select>
+           ${uw.pattern ? `<label>Print color</label>${swatches('under', uw.accent, attr + '-a', UNDERWEAR_COLORS)}` : ''}`
+        : ''
+    }
+    ${uw.panty ? '<div class="note">Plain designs take the color (and the print, in the print color); printed designs keep their own pattern. Only shows on .vrm models.</div>' : ''}`;
 }
 
 function bindUnderwear(s, def, attr, target, rerender = null) {
@@ -890,6 +900,9 @@ function bindUnderwear(s, def, attr, target, rerender = null) {
   if (b) b.onchange = () => ((def.underwear = { ...def.underwear, bra: b.value || null }), re());
   s.querySelector(`[data-${attr}-r]`).onclick = () => ((def.underwear = randomUnderwear(def.gender)), re());
   s.querySelectorAll(`[data-${attr}-c]`).forEach((el) => (el.onclick = () => ((def.underwear = { ...def.underwear, color: el.getAttribute(`data-${attr}-c`) }), re())));
+  const pat = s.querySelector(`[data-${attr}-pat]`);
+  if (pat) pat.onchange = () => ((def.underwear = { ...def.underwear, pattern: pat.value || null, accent: def.underwear.accent || UNDERWEAR_COLORS[Math.floor(Math.random() * UNDERWEAR_COLORS.length)] }), re());
+  s.querySelectorAll(`[data-${attr}-a]`).forEach((el) => (el.onclick = () => ((def.underwear = { ...def.underwear, accent: el.getAttribute(`data-${attr}-a`) }), re())));
 }
 
 function genderSelect(def, attr) {
@@ -1070,10 +1083,10 @@ function bindCreator(s) {
     q('[data-cwname]').forEach((el) => (el.oninput = () => (draft.coworkers[+el.dataset.cwname].name = el.value)));
     q('[data-cwpers]').forEach((el) => (el.onchange = () => ((draft.coworkers[+el.dataset.cwpers].personality = el.value), renderCreator())));
     q('[data-cwdel]').forEach((el) => (el.onclick = () => (draft.coworkers.splice(+el.dataset.cwdel, 1), (previewTarget = 0), renderCreator())));
-    // re-roll one coworker (or everyone): new name, gender, body, colors and underwear; personality stays
+    // re-roll one coworker (or everyone): new name, gender, personality, body, colors and underwear
     const reroll = (i) => {
       const used = new Set([draft.name, draft.manager.name, ...draft.coworkers.filter((_, k) => k !== i).map((c) => c.name)]);
-      draft.coworkers[i] = randomCoworker(draft.coworkers[i].personality, used);
+      draft.coworkers[i] = randomCoworker(undefined, used);
     };
     q('[data-cwrand]').forEach((el) => (el.onclick = () => (reroll(+el.dataset.cwrand), (previewTarget = +el.dataset.cwrand), renderCreator())));
     s.querySelector('#cw-randall').onclick = () => {
