@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { ui, esc } from './ui.js';
 import { storage, newId } from './storage.js';
 import { dyeName } from './dyes.js';
-import { randomApartment, randomWorkSlot, aptById, UNDERWEAR, UNDERWEAR_COLORS, prettyUnderwear, randomUnderwear, JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, FEMALE_NAMES, MALE_NAMES, nameFor, guessGender, guessModelGender, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
+import { randomApartment, randomWorkSlot, civBodyFrom, randomBodyFor, aptById, UNDERWEAR, UNDERWEAR_COLORS, prettyUnderwear, randomUnderwear, JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, FEMALE_NAMES, MALE_NAMES, nameFor, guessGender, guessModelGender, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
 import { createCharacter, inspectVRM, randomColors, addAngelic, clearTemplates, setOutlines } from './character.js';
 import { Game, controlsTable } from './game.js';
 import { listSlots, loadSlot, createSlot, writeProfile, deleteSlot, otherSlotPeople } from './saves.js';
@@ -36,17 +36,6 @@ async function getSettings() {
 async function putSettings(s) {
   civModels = s.civilians || [];
   await storage.set('settings', s);
-}
-/** A body for an outfit from a civilian model, with that model's part settings. */
-function civBody(c) {
-  return {
-    key: c.key, title: c.title, civ: true, tintable: true, underwearOverlay: false,
-    materials: c.materials ? [...c.materials] : undefined,
-    legwearMaterials: c.legwearMaterials ? [...c.legwearMaterials] : null,
-    wetMaterials: c.wetMaterials ? [...c.wetMaterials] : [],
-    keepMaterials: c.cfg?.keep ? [...c.cfg.keep] : null,
-    cfg: c.cfg ? JSON.parse(JSON.stringify(c.cfg)) : null,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -713,14 +702,18 @@ let draft = null;
 let step = 0;
 let previewTarget = 'player'; // 'player' | 'mgr' | index
 
+/** A random coworker: name, gender, any built-in or imported civilian body, colors and underwear. */
+function randomCoworker(personality, used) {
+  const g = randGender();
+  const name = nameFor(g, used);
+  used.add(name);
+  const outfit = { model: randomBodyFor(g, civModels), legwearType: g === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', colors: randomColors() };
+  return { name, gender: g, underwear: randomUnderwear(g), personality, outfits: [outfit] };
+}
+
 function defaultDraft() {
   const used = new Set();
-  const cw = (i) => {
-    const g = randGender();
-    const name = nameFor(g, used);
-    used.add(name);
-    return { name, gender: g, underwear: randomUnderwear(g), personality: DEFAULT_PERSONALITIES[i], outfits: [newOutfit(g === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', randomColors(), g, Math.random() < 0.25)] };
-  };
+  const cw = (i) => randomCoworker(DEFAULT_PERSONALITIES[i], used);
   return {
     name: 'Alex',
     job: 'office',
@@ -751,7 +744,8 @@ function stepsBar() {
   return `<div class="steps">${names.map((n, i) => `<div class="${i === step ? 'on' : ''}">${n}</div>`).join('')}</div>`;
 }
 
-function showCreator() {
+async function showCreator() {
+  await getSettings(); // so random coworkers can use imported civilian models
   draft = defaultDraft();
   step = 0;
   previewTarget = 'player';
@@ -943,7 +937,7 @@ function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator, onRefr
       o.model = { asset: b.asset, title: b.title, tintable: true, legwearMaterials: null, underwearOverlay: false, wetMaterials: null };
     } else if (v.startsWith('civ:')) {
       const c = civModels.find((x) => x.key === v.slice(4));
-      if (c) o.model = civBody(c);
+      if (c) o.model = civBodyFrom(c);
     }
     if (!onRefresh) previewTarget = target;
     rerender();
@@ -1014,7 +1008,7 @@ function creatorJob() {
 function creatorCoworkers() {
   const roles = ROLE_NAMES[draft.job];
   const card = (c, i) => `<div class="cw">
-      <h4><span>${esc(roles[i] || 'Coworker')}</span>${draft.coworkers.length > 4 ? `<button class="danger" style="padding:4px 10px" data-cwdel="${i}">Remove</button>` : ''}</h4>
+      <h4><span>${esc(roles[i] || 'Coworker')}</span><span><button class="secondary" style="padding:4px 10px" data-cwrand="${i}">Randomize</button>${draft.coworkers.length > 4 ? ` <button class="danger" style="padding:4px 10px" data-cwdel="${i}">Remove</button>` : ''}</span></h4>
       <label>Name</label><input type="text" maxlength="16" data-cwname="${i}" value="${esc(c.name)}" />
       <label>Personality</label>
       <select data-cwpers="${i}">${Object.entries(PERSONALITIES).map(([k, p]) => `<option value="${k}" ${c.personality === k ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select>
@@ -1033,7 +1027,7 @@ function creatorCoworkers() {
     ${underwearEditor(draft.manager, 'muw')}
   </div>
   <div class="cw-grid">${draft.coworkers.map(card).join('')}</div>
-  <div class="row" style="margin-top:12px"><button id="cw-add" ${draft.coworkers.length >= 12 ? 'disabled' : ''}>+ Add coworker</button><span></span></div>`;
+  <div class="row" style="margin-top:12px"><button id="cw-add" ${draft.coworkers.length >= 12 ? 'disabled' : ''}>+ Add coworker</button><button class="secondary" id="cw-randall">Randomize all coworkers</button></div>`;
 }
 
 function creatorSummary() {
@@ -1076,12 +1070,21 @@ function bindCreator(s) {
     q('[data-cwname]').forEach((el) => (el.oninput = () => (draft.coworkers[+el.dataset.cwname].name = el.value)));
     q('[data-cwpers]').forEach((el) => (el.onchange = () => ((draft.coworkers[+el.dataset.cwpers].personality = el.value), renderCreator())));
     q('[data-cwdel]').forEach((el) => (el.onclick = () => (draft.coworkers.splice(+el.dataset.cwdel, 1), (previewTarget = 0), renderCreator())));
+    // re-roll one coworker (or everyone): new name, gender, body, colors and underwear; personality stays
+    const reroll = (i) => {
+      const used = new Set([draft.name, draft.manager.name, ...draft.coworkers.filter((_, k) => k !== i).map((c) => c.name)]);
+      draft.coworkers[i] = randomCoworker(draft.coworkers[i].personality, used);
+    };
+    q('[data-cwrand]').forEach((el) => (el.onclick = () => (reroll(+el.dataset.cwrand), (previewTarget = +el.dataset.cwrand), renderCreator())));
+    s.querySelector('#cw-randall').onclick = () => {
+      draft.coworkers.forEach((_, i) => reroll(i));
+      previewTarget = 0;
+      renderCreator();
+    };
     const add = s.querySelector('#cw-add');
     add.onclick = () => {
       const used = new Set(draft.coworkers.map((c) => c.name));
-      const g = randGender();
-      const nm = nameFor(g, used);
-      draft.coworkers.push({ name: nm, gender: g, underwear: randomUnderwear(g), personality: DEFAULT_PERSONALITIES[draft.coworkers.length % DEFAULT_PERSONALITIES.length], outfits: [newOutfit(g === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', randomColors(), g, Math.random() < 0.25)] });
+      draft.coworkers.push(randomCoworker(DEFAULT_PERSONALITIES[draft.coworkers.length % DEFAULT_PERSONALITIES.length], used));
       previewTarget = draft.coworkers.length - 1;
       renderCreator();
     };

@@ -25,7 +25,7 @@ import { buildShop } from './levels/shop.js';
 import { BusSystem, DOOR } from './bus.js';
 import {
   JOBS, GENERIC_TASKS, STORY, REPORT_REASONS, ERRANDS, PLACES,
-  WEEKDAYS, weekday, isWorkday, CELESTI_DAY, ROLE_TASKS, mishapFor, SHAME, weatherFor, WEATHER, pronouns, BUNDLED, guessGender, guessModelGender, nameFor, randomUnderwear, APARTMENTS, aptById, randomApartment } from './data.js';
+  WEEKDAYS, weekday, isWorkday, CELESTI_DAY, ROLE_TASKS, mishapFor, SHAME, weatherFor, WEATHER, pronouns, BUNDLED, guessGender, guessModelGender, nameFor, randomUnderwear, randomBodyFor, APARTMENTS, aptById, randomApartment } from './data.js';
 
 const WALK = 2.0;
 const RUN = 4.3;
@@ -4909,14 +4909,13 @@ export class Game {
       const old = p.coworkers[i];
       const used = new Set([p.player.name, p.manager.name, ...p.coworkers.map((c) => c.name)]);
       const gender = Math.random() < 0.5 ? 'female' : 'male';
-      const bodies = BUNDLED.bodies.filter((b) => b.gender === gender);
-      const body = bodies[Math.floor(Math.random() * bodies.length)];
+      const model = randomBodyFor(gender, this.settings.civilians);
       const pers = ['friend', 'sympathetic', 'neutral', 'strict', 'distant', 'oddball'];
       p.coworkers[i] = {
         name: nameFor(gender, used),
         gender,
         personality: pers[Math.floor(Math.random() * pers.length)],
-        outfits: [{ model: { asset: body.asset, title: body.title, tintable: true, legwearMaterials: null, underwearOverlay: false, wetMaterials: null }, legwearType: gender === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', colors: randomColors() }],
+        outfits: [{ model, legwearType: gender === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', colors: randomColors() }],
         underwear: randomUnderwear(gender),
         home: randomApartment(),
         hiredDay: st.day,

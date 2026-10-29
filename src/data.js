@@ -271,8 +271,8 @@ export const APARTMENTS = [
 export const aptById = (id) => APARTMENTS.find((a) => a.id === id) || APARTMENTS[0];
 export const randomApartment = () => APARTMENTS[Math.floor(Math.random() * APARTMENTS.length)].id;
 
-export const FEMALE_NAMES = ['Mia', 'Priya', 'Sofia', 'Hana', 'Aria', 'Nora', 'Yuki', 'Lena', 'Chloe', 'Emma', 'Ines', 'Maya', 'Ruth', 'Zoe', 'Ivy', 'Clara', 'Amara', 'Elena', 'Rosa', 'Tess', 'Mei', 'Freya', 'Lucia', 'Naomi'];
-export const MALE_NAMES = ['Daniel', 'Kenji', 'Marcus', 'Leo', 'Felix', 'Theo', 'Omar', 'Ravi', 'Jonah', 'Mateo', 'Elliot', 'Samir', 'Hugo', 'Victor', 'Noah', 'Ethan', 'Diego', 'Kai', 'Ivan', 'Oscar', 'Tomas', 'Arjun', 'Liam', 'Rafael'];
+export const FEMALE_NAMES = ['Mia', 'Priya', 'Sofia', 'Hana', 'Aria', 'Nora', 'Yuki', 'Lena', 'Chloe', 'Emma', 'Ines', 'Maya', 'Ruth', 'Zoe', 'Ivy', 'Clara', 'Amara', 'Elena', 'Rosa', 'Tess', 'Mei', 'Freya', 'Lucia', 'Naomi', 'Ava', 'Isla', 'Grace', 'Lily', 'Ella', 'Sara', 'Nina', 'Leah', 'Julia', 'Alice', 'Hazel', 'Iris', 'Jade', 'Kira', 'Luna', 'Mila', 'Olivia', 'Paige', 'Quinn', 'Rina', 'Sakura', 'Tara', 'Una', 'Vera', 'Wren', 'Yara', 'Zara', 'Aiko', 'Bianca', 'Carmen', 'Dahlia', 'Esme', 'Fiona', 'Gemma', 'Helena', 'Imani', 'Jasmine', 'Keiko', 'Laila', 'Mariko', 'Nadia', 'Ophelia', 'Penny', 'Rhea', 'Selma', 'Talia', 'Uma', 'Valeria', 'Willa', 'Ximena', 'Yasmin', 'Zuri', 'Anya', 'Beatrice', 'Celine', 'Daria', 'Eva', 'Farah', 'Greta', 'Hope', 'Ingrid', 'June', 'Kate', 'Lorena', 'Molly', 'Nell', 'Paloma', 'Rosalind', 'Sienna', 'Thea', 'Violet', 'Wendy'];
+export const MALE_NAMES = ['Daniel', 'Kenji', 'Marcus', 'Leo', 'Felix', 'Theo', 'Omar', 'Ravi', 'Jonah', 'Mateo', 'Elliot', 'Samir', 'Hugo', 'Victor', 'Noah', 'Ethan', 'Diego', 'Kai', 'Ivan', 'Oscar', 'Tomas', 'Arjun', 'Liam', 'Rafael', 'Adam', 'Ben', 'Caleb', 'Dev', 'Eli', 'Finn', 'Gabriel', 'Henry', 'Isaac', 'Jack', 'Kofi', 'Luca', 'Malik', 'Nate', 'Owen', 'Pablo', 'Quentin', 'Rory', 'Sam', 'Tariq', 'Umar', 'Vince', 'Wes', 'Xavier', 'Yusuf', 'Zane', 'Aaron', 'Bruno', 'Colin', 'Dante', 'Emil', 'Farid', 'Gus', 'Haruto', 'Ian', 'Jasper', 'Kieran', 'Lars', 'Milo', 'Nico', 'Otto', 'Pierce', 'Reid', 'Simon', 'Tobias', 'Uriel', 'Vik', 'Warren', 'Yosef', 'Abel', 'Basil', 'Cyrus', 'Dmitri', 'Ezra', 'Frank', 'Glen', 'Hassan', 'Ibrahim', 'Jun', 'Kurt', 'Lionel', 'Martin', 'Nolan', 'Paolo', 'Rami', 'Sergei', 'Tyler', 'Viktor', 'Walter'];
 export const DEFAULT_COWORKER_NAMES = [...FEMALE_NAMES, ...MALE_NAMES];
 /** A first name that fits the gender and isn't taken yet. */
 export function nameFor(gender, used = new Set()) {
@@ -547,4 +547,25 @@ export function randomUnderwear(gender) {
     bra = match || pick(UNDERWEAR.bras.filter(plain));
   }
   return { panty, bra, color: pick(UNDERWEAR_COLORS) };
+}
+
+/** An outfit body taken from an imported civilian model, with that model's part settings. */
+export function civBodyFrom(c) {
+  return {
+    key: c.key, title: c.title, civ: true, tintable: true, underwearOverlay: false,
+    materials: c.materials ? [...c.materials] : undefined,
+    legwearMaterials: c.legwearMaterials ? [...c.legwearMaterials] : null,
+    wetMaterials: c.wetMaterials ? [...c.wetMaterials] : [],
+    keepMaterials: c.cfg?.keep ? [...c.cfg.keep] : null,
+    cfg: c.cfg ? JSON.parse(JSON.stringify(c.cfg)) : null,
+  };
+}
+/** A random body for a gender: any built-in body or imported civilian model of that gender. */
+export function randomBodyFor(gender, civs = []) {
+  const pool = [
+    ...BUNDLED.bodies.filter((b) => !gender || b.gender === gender).map((b) => ({ b })),
+    ...(civs || []).filter((c) => c.key && (!gender || (c.gender || 'female') === gender)).map((c) => ({ c })),
+  ];
+  const x = pool[Math.floor(Math.random() * pool.length)] || { b: BUNDLED.bodies[0] };
+  return x.b ? { asset: x.b.asset, title: x.b.title, tintable: true, legwearMaterials: null, underwearOverlay: false, wetMaterials: null } : civBodyFrom(x.c);
 }
