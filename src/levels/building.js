@@ -80,8 +80,6 @@ export function buildHallway(apt = null, floor = 7) {
 export function buildPool(apt = null, floor = 7) {
   const L = new Level('pool');
   L.bounds = { minX: -16, maxX: 16, minZ: -12, maxZ: 12 };
-  L.floor(0, 0, 32, 24, '#9e9e9e');
-  L.floor(0, 0, 30, 22, '#bdb3a4', 0.004);
   // building wall (north) with the back door, fence on the other sides
   L.wallX(-11.2, -15.5, 15.5, [{ c: 0, w: 1.6 }], 4.5, '#8d7b68');
   L.wallX(11.2, -15.5, 15.5, [{ c: 0, w: 2 }], 2.2, '#5d6d7e');
@@ -91,12 +89,59 @@ export function buildPool(apt = null, floor = 7) {
   L.label('POOL RULES: no running · keep gate closed', -3, 2.4, -11.05, 0, { height: 0.22, bg: '#2d3436' });
   L.interactable('backstairs', 0, -10.3, `Back stairs up to the ${ordinal(floor)} floor`, { r: 1.3 });
   L.interactable('poolgate', 0, 10.3, 'Gate out to the street', { r: 1.4 });
-  // the pool (you can't walk into it)
-  const water = new THREE.Mesh(new THREE.PlaneGeometry(14, 6), new THREE.MeshStandardMaterial({ color: '#1e90ff', roughness: 0.15, metalness: 0.2, transparent: true, opacity: 0.85, depthWrite: false }));
+  // deck around a sunken pool (x -7..7, z -4..2)
+  const P = { x0: -7, x1: 7, z0: -4, z1: 2 };
+  const deck = '#d8cfc0';
+  L.floor(0, -8, 32, 8, deck); // north of the pool
+  L.floor(0, 7, 32, 10, deck); // south
+  L.floor(-11.5, -1, 9, 6, deck); // west
+  L.floor(11.5, -1, 9, 6, deck); // east
+  // coping stones around the rim
+  const cope = '#f5f6fa';
+  L.box(0, P.z0 - 0.2, P.x1 - P.x0 + 0.8, 0.4, 0.06, cope, { occlude: false, collide: false });
+  L.box(0, P.z1 + 0.2, P.x1 - P.x0 + 0.8, 0.4, 0.06, cope, { occlude: false, collide: false });
+  L.box(P.x0 - 0.2, -1, 0.4, P.z1 - P.z0, 0.06, cope, { occlude: false, collide: false });
+  L.box(P.x1 + 0.2, -1, 0.4, P.z1 - P.z0, 0.06, cope, { occlude: false, collide: false });
+  // the basin: tiled floor and walls below the deck
+  const tile = new THREE.MeshStandardMaterial({ color: '#7fd3e8', roughness: 0.5 });
+  const depth = 1.6;
+  const basinFloor = new THREE.Mesh(new THREE.PlaneGeometry(P.x1 - P.x0, P.z1 - P.z0), tile);
+  basinFloor.rotation.x = -Math.PI / 2;
+  basinFloor.position.set(0, -depth, -1);
+  basinFloor.receiveShadow = true;
+  L.add(basinFloor);
+  const side = (w, x, z, ry) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, depth), tile);
+    m.position.set(x, -depth / 2, z);
+    m.rotation.y = ry;
+    m.receiveShadow = true;
+    L.add(m);
+  };
+  side(P.x1 - P.x0, 0, P.z0, 0);
+  side(P.x1 - P.x0, 0, P.z1, Math.PI);
+  side(P.z1 - P.z0, P.x0, -1, Math.PI / 2);
+  side(P.z1 - P.z0, P.x1, -1, -Math.PI / 2);
+  // lane line on the bottom
+  const lane = new THREE.Mesh(new THREE.PlaneGeometry(P.x1 - P.x0 - 1.5, 0.25), new THREE.MeshStandardMaterial({ color: '#1e5f8a' }));
+  lane.rotation.x = -Math.PI / 2;
+  lane.position.set(0, -depth + 0.01, -1);
+  L.add(lane);
+  // the water surface sits a little below the rim
+  const water = new THREE.Mesh(
+    new THREE.PlaneGeometry(P.x1 - P.x0, P.z1 - P.z0),
+    new THREE.MeshStandardMaterial({ color: '#2fa8e0', roughness: 0.08, metalness: 0.1, transparent: true, opacity: 0.55, depthWrite: false }),
+  );
   water.rotation.x = -Math.PI / 2;
-  water.position.set(0, 0.03, -1);
+  water.position.set(0, -0.18, -1);
+  water.renderOrder = 2;
   L.add(water);
-  L.box(0, -1, 14.4, 6.4, 0.08, '#ecf0f1', { occlude: false });
+  L.waterMesh = water;
+  // walking in: the floor slopes down to waist (shallow end) or chest deep (deep end)
+  L.water = [{ ...P, shallow: 0.75, deep: 1.15 }];
+  // pool ladders
+  for (const x of [-6.2, 6.2]) {
+    for (const dx of [-0.25, 0.25]) L.box(x + dx, P.z0 + 0.1, 0.05, 0.05, 0.9, '#b2bec3', { occlude: false, collide: false, y: -0.2 });
+  }
   // loungers (seats), hedges and a changing hut (cover), towels and an umbrella
   for (const x of [-9, -6, -3, 3, 6, 9]) {
     L.box(x, 5.2, 0.7, 1.8, 0.35, '#f5f6fa', { occlude: false });
@@ -127,8 +172,10 @@ export function buildPool(apt = null, floor = 7) {
   L.pois.customerSpots = [
     { x: -6, z: 4.9, yaw: Math.PI, sit: true },
     { x: 6, z: 4.9, yaw: Math.PI, sit: true },
-    { x: -8, z: 2.8, yaw: Math.PI },
+    { x: -9, z: 3.0, yaw: Math.PI },
   ];
+  // spots in the water for swimmers to wade between
+  L.pois.swim = [[-5, -2.5], [-3, 0.5], [0, -1.5], [2.5, 0.8], [4.5, -2.8], [5.5, -0.5], [-1.5, -3]].map(([x, z]) => ({ x, z }));
   L.pois.entrance = { x: 0, z: 10 };
   L.indoor = false;
   L.finalize();

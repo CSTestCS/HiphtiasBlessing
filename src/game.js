@@ -283,6 +283,7 @@ export class Game {
     }
     ch.root.visible = true;
     ch.root.rotation.set(0, 0, 0);
+    ch.setUndressed?.(false);
     ch.setLegwear(true);
     ch.setProp(null);
     ch.setMood({});
@@ -296,6 +297,7 @@ export class Game {
     if (!ch) return;
     ch.root.removeFromParent();
     ch.setProp(null);
+    ch.setUndressed?.(false);
     if (ch.isStub) {
       if (!this.stubPool.includes(ch)) this.stubPool.push(ch);
       return;
@@ -518,6 +520,8 @@ export class Game {
     this._wh = (e) => (this.cam.dist = Math.max(1.8, Math.min(9, this.cam.dist + Math.sign(e.deltaY) * 0.4)));
     this._plc = () => {
       this._skipMoves = 2;
+      // a dialog is up: the cursor stays free for its buttons
+      if (document.pointerLockElement === this.canvas && ui.dialogOpen) return document.exitPointerLock();
       if (!document.pointerLockElement && this.running && !ui.dialogOpen && !this.paused && !this.transitioning && !this.ended) this.pause();
     };
     this._blur = () => {
@@ -525,13 +529,17 @@ export class Game {
       this.aiming = this.dragging = false;
     };
     // closing a conversation hands the mouse straight back to the game
+    // (after a short wait: a follow-up panel opens right after the click, and keeps the cursor)
     ui.onDialogClosed = () => {
-      if (!this.running || this.paused || this.ended || ui.dialogOpen || document.pointerLockElement === this.canvas) return;
-      if (!ui.screen.classList.contains('hidden')) return;
-      try {
-        const pr = this.canvas.requestPointerLock();
-        if (pr && pr.catch) pr.catch(() => {});
-      } catch (_) {}
+      clearTimeout(this._relockT);
+      this._relockT = setTimeout(() => {
+        if (!this.running || this.paused || this.ended || ui.dialogOpen || document.pointerLockElement === this.canvas) return;
+        if (!ui.screen.classList.contains('hidden')) return;
+        try {
+          const pr = this.canvas.requestPointerLock();
+          if (pr && pr.catch) pr.catch(() => {});
+        } catch (_) {}
+      }, 150);
     };
     window.addEventListener('keydown', this._kd);
     window.addEventListener('keyup', this._ku);
@@ -636,6 +644,7 @@ export class Game {
         w.swapChar(this.acquireCivilian(), true);
         if (stub.isStub) this.stubPool.push(stub);
         if (w.kind === 'pedestrian') this.dressCivilian(w);
+        this.restyle(w);
       }
       lk.char = w.char;
       lk.name = this.speakerName(w);
@@ -853,6 +862,18 @@ export class Game {
     this.cancelInteract();
     if (!opts.first) await ui.fade(true);
     const prev = this.phase;
+    if (this.hostChar) {
+      // the coworker you visited: back to their outdoor look (a night-time home outfit is thrown away)
+      const h = this.hostChar;
+      this.hostChar = null;
+      h.setShoes?.(true);
+      h.setUndressed?.(false);
+      h.setHomeMode?.(false);
+      if (!this.cwChars.includes(h)) {
+        h.root.removeFromParent();
+        h.dispose?.();
+      }
+    }
     if (this.player.bus) this.leaveBus(null, true);
     this.standUp(true);
     this.stopHiding(true);
@@ -1025,7 +1046,7 @@ export class Game {
         this.clock = Math.max(this.clock, 530);
         this.work = {
           day: st.day, clockedIn: false, clockedOut: false, done: 0, task: null, step: 0, lastTpl: null, sneakT: 0,
-          mishapPending: st.day === 1, coverT: 0, requests: [], active: null, reqT: 20, events: {}, pendingStaff: [],
+          mishapPending: st.day === 1 ? { task: Math.floor(Math.random() * 4), at: Math.random() } : null, coverT: 0, requests: [], active: null, reqT: 20, events: {}, pendingStaff: [],
         };
       }
       // complaints count per day: leaving and coming back doesn't wipe them, a new day does
@@ -1249,6 +1270,7 @@ export class Game {
   }
 
   removeNPC(n) {
+    if (n.fitting) this.endFitting(n);
     n.destroy();
     if (n.char.civilian) this.releaseCivilian(n.char);
     this.npcs = this.npcs.filter((x) => x !== n);
@@ -1330,7 +1352,7 @@ export class Game {
     const { st, seat, role, sched } = this.staffInfo[i];
     const e = L.pois.entrance;
     const at = arriving ? e : st;
-    cw.playing = cw.joined && !cw.blessed && Math.random() < 0.6;
+    cw.playing = (cw.joined || cw.likesIt) && !cw.blessed && Math.random() < 0.6;
     const n = new NPC(this, ch, {
       kind: 'coworker', name: c.name, personality: c.personality, index: i, station: st, legwearType: ch.legwearType,
       x: at.x, z: at.z, yaw: st.yaw, range: 13, speed: 1.95 + Math.random() * 0.15, // same pace as the player
@@ -1339,8 +1361,8 @@ export class Game {
     n.role = role;
     n.seat = seat || null;
     n.sched = sched;
-    // a joined oddball changes in private first; blessed coworkers arrive already without legwear
-    this.setSneaking(n, cw.blessed);
+    // a joined oddball changes in private first; blessed coworkers (and anyone who had a mishap today) arrive without legwear
+    this.setSneaking(n, this.bareToday(cw));
     if (cw.playing && !cw.blessed) this.stripPrivately(n, false);
     else if (arriving) n.plan([{ go: L.pois.lockers?.spot || st }, { t: 2 }, ...this.homeSteps(n, 4)]);
     else n.plan(seat ? this.sitSteps(n, seat, 4 + Math.random() * 8) : [{ work: true, t: 2 + Math.random() * 6, yaw: st.yaw }]);
@@ -1391,6 +1413,58 @@ export class Game {
       return true;
     }
     return false;
+  }
+
+  /** Without legwear today: blessed, or a (very rare) ordinary wardrobe mishap earlier today. */
+  bareToday(cw) {
+    return !!cw && (cw.blessed || cw.mishapDay === this.state.day);
+  }
+
+  /** Very rarely, anyone's clothes give out, blessing or not. */
+  rareMishapTick(dt) {
+    this._rareT = (this._rareT || 20) - dt;
+    if (this._rareT > 0) return;
+    this._rareT = 20;
+    const p = this.player;
+    const cands = this.npcs.filter((n) => !n.removed && !n.sneaking && !n.lostLegwear && !n.poolgoer && !n.fitting && n.char.legwearOn && n.state !== 'talk' && n.inView !== false && Math.hypot(n.x - p.x, n.z - p.z) < 30);
+    for (const n of cands) {
+      if (n.kind === 'coworker') {
+        const cw = this.state.cw[n.index];
+        if (!cw || cw.blessed || cw.playing || n.leaving || n.away) continue;
+        if (Math.random() < 0.0004) return this.npcMishap(n);
+      } else if (['customer', 'pedestrian', 'resident'].includes(n.kind) && !n.commuter && !n.coworkerEncounter) {
+        if (Math.random() < 0.0008) return this.npcMishap(n);
+      }
+    }
+  }
+
+  npcMishap(n) {
+    const lw = n.char.legwearType === 'skirt' ? 'skirt' : 'pants';
+    const cause = pick([
+      `${n.name}'s ${lw} catch on a corner and rip clean away`,
+      `the seam of ${n.name}'s ${lw} gives out all at once`,
+      `a button pops and ${n.name}'s ${lw} drop straight to the floor`,
+      `${n.name}'s ${lw} snag on something and tear right off`,
+    ]);
+    sound.play('rip', { x: n.x, z: n.z });
+    this.talkMood(n, { surprised: 1, sad: 0.6 }, 6);
+    this.bubble(n, pick(['NO NO NO NO-', 'Wh- WHAT?!', "This isn't happening!", 'Oh my god. Oh my god.']), 3);
+    if (n.kind === 'coworker') {
+      const cw = this.state.cw[n.index];
+      cw.mishapDay = this.state.day;
+      // an oddball decides it's kind of fun and keeps playing on other days too
+      if (n.personality === 'oddball') cw.likesIt = true;
+      this.setSneaking(n, true);
+      ui.toast(`Unlucky: ${cause}! No blessing needed. Now ${n.name} has to sneak around too.`, '', 6000);
+      this.flee(n);
+      return;
+    }
+    n.lostLegwear = true;
+    n.char.setLegwear(false);
+    ui.toast(`Somewhere nearby, ${cause}.`, '', 4000);
+    const e = this.level.pois.entrance;
+    if (n.kind === 'pedestrian') n.speedMul = 1.45;
+    else if (e) n.plan([{ go: e, run: true }, { call: () => this.removeNPC(n) }]);
   }
 
   setSneaking(n, on) {
@@ -1739,10 +1813,21 @@ export class Game {
     const def = this.profile.coworkers[i];
     if (!def) return;
     this.visitHost = i;
-    const ch = this.cwChars[i] || (this.cwChars[i] = await this.charFromDef(def, 'cw' + i, false));
+    // what they have on depends on the hour: mid-day dressed but barefoot, morning/evening
+    // barefoot without legwear, at night whatever they wear at home
+    const c = this.clock;
+    const night = c >= 1260 || c < 360;
+    const midday = c >= 600 && c < 1020;
+    let ch;
+    if (night && def.homeOutfit != null) ch = await this.charFromDef(def, 'cw' + i, false, true);
+    else ch = this.cwChars[i] || (this.cwChars[i] = await this.charFromDef(def, 'cw' + i, false));
     ch.root.visible = true;
     ch.root.matrixWorldAutoUpdate = true;
-    ch.setLegwear(!(this.state.cw[i].blessed || this.state.cw[i].playing));
+    ch.setHomeMode?.(true);
+    ch.setUndressed?.(night && def.homeOutfit == null);
+    ch.setLegwear(!(this.state.cw[i].blessed || this.state.cw[i].playing || this.state.cw[i].mishapDay === this.state.day) && (midday || night));
+    ch.setShoes?.(false);
+    this.hostChar = ch;
     const s = L.pois.celesti;
     const n = new NPC(this, ch, { kind: 'host', name: def.name, personality: def.personality, index: i, x: s.x, z: s.z, yaw: s.yaw, range: 6 });
     n.gender = def.gender;
@@ -1853,6 +1938,7 @@ export class Game {
     if (['commute_am', 'commute_pm', 'dayoff', 'shop', 'lobby', 'hallway', 'pool', 'laundry', 'work'].includes(this.phase)) this.clock += dt * this.minPerSec;
     if (this.phase === 'work') this.updateShift(dt);
     if (this.phase === 'work') this.updateSwapLead();
+    if (this.stealthActive()) this.rareMishapTick(dt);
     if (this.phase === 'laundry') this.updateLaundry(dt);
     this.mgrGrace = Math.max(0, this.mgrGrace - dt);
     if (this.weatherChange && this.clock >= this.weatherChange.at) {
@@ -1897,7 +1983,7 @@ export class Game {
     const seated = !!p.seat || !!p.sitAt;
     p.char.update(dt, { speed: p.speed, crouch: (p.crouching && !seated) || !!p.hidden, sit: seated, carry: !!p.carry || !!p.pushing, work: !!p.inter && !p.carry, workKind: p.inter?.action.anim, cover: exposed || !p.char.legwearOn, push: !!p.pushing, overHead: !!p.overHead && !!p.carry });
     if (!p.bus) {
-      p.char.root.position.set(p.x, 0, p.z);
+      p.char.root.position.set(p.x, L.water ? -L.waterDepth(p.x, p.z) : 0, p.z);
       p.char.root.rotation.y = p.yaw;
     }
 
@@ -2140,13 +2226,33 @@ export class Game {
       const events = Math.random() < 0.35 ? 0 : Math.random() < 0.7 ? 1 : 2;
       for (let k = 0; k < events; k++) this.later(1.5 + Math.random() * 10, () => this.hallwayResident());
     } else if (phase === 'pool' && !this.isRaining && this.clock < 1200) {
-      for (const sp of L.pois.customerSpots.slice(0, 1 + Math.floor(Math.random() * 2))) {
-        const n = new NPC(this, this.acquireCivilian(true), { kind: 'resident', name: 'Resident', x: sp.x, z: sp.z, yaw: sp.yaw, range: 10 });
-        n.sitting = !!sp.sit;
-        n.plan([{ sit: !!sp.sit, t: 9999, yaw: sp.yaw }]);
+      // swimmers and sunbathers, in nothing but their underwear (it passes for swimwear here)
+      const spots = L.pois.customerSpots.slice(0, 1 + Math.floor(Math.random() * 2));
+      const swimmers = Math.floor(Math.random() * 3);
+      for (let k = 0; k < spots.length + swimmers; k++) {
+        const sp = spots[k] || pick(L.pois.swim);
+        const ch = this.acquireCivilian(true);
+        ch.setUndressed?.(true);
+        const n = new NPC(this, ch, { kind: 'resident', name: 'Resident', x: sp.x, z: sp.z, yaw: sp.yaw || Math.random() * 6.28, range: 10 });
+        n.poolgoer = true;
+        if (spots[k]) {
+          n.sitting = !!sp.sit;
+          n.plan([{ sit: !!sp.sit, t: 9999, yaw: sp.yaw }]);
+        } else this.swimPlan(n);
         this.npcs.push(n);
       }
     }
+  }
+
+  /** Wading slowly from spot to spot in the pool, forever. */
+  swimPlan(n) {
+    const sw = this.level.pois.swim || [];
+    if (!sw.length) return n.plan([{ t: 9999 }]);
+    const steps = [];
+    for (let k = 0; k < 6; k++) steps.push({ go: pick(sw) }, { t: 3 + Math.random() * 8, yaw: Math.random() * 6.28 });
+    steps.push({ t: 0, call: () => this.swimPlan(n) });
+    n.speedMul = 0.45;
+    n.plan(steps);
   }
 
   /** Run something after a delay (game time; skipped if the game ended). */
@@ -2243,6 +2349,15 @@ export class Game {
       const home = this.phase === 'morning' || this.phase === 'evening';
       w = Math.max(0, w - dt * (home ? 1 / 40 : this.outdoors ? 1 / 240 : 1 / 150));
     }
+    // in the pool: soaked through
+    if (this.level.water && this.level.waterDepth(p.x, p.z) > 0.25) {
+      if (w < 0.95 && !this._inWater) {
+        sound.play('splash', { minGap: 800 });
+        ui.toast('*splash* You wade into the pool. Everything you have on is soaked.', '', 3000, null);
+      }
+      this._inWater = true;
+      w = 1;
+    } else this._inWater = false;
     // splashed by a passing car in the rain
     if (this.outdoors && this.isRaining && !p.bus && this.level.cars) {
       for (const c of this.level.cars) {
@@ -2280,7 +2395,7 @@ export class Game {
     const chest = new THREE.Vector3(p.x, (p.char.height || 1.6) * 0.75, p.z);
     let watchers = 0;
     for (const n of this.npcs) {
-      if (!n.canSee() || n.sneaking || this.complicit(n)) continue;
+      if (!n.canSee() || n.sneaking || n.poolgoer || this.complicit(n)) continue;
       const dx = p.x - n.x;
       const dz = p.z - n.z;
       const d = Math.hypot(dx, dz);
@@ -2596,8 +2711,8 @@ export class Game {
     const seated = !!p.sitAt;
     for (const n of this.npcs) {
       // shown for anyone getting near seeing range of the player (wherever the camera points)
-      n.updateConeVisual(this.stealthActive() && !p.bus && !n.away && Math.hypot(n.x - p.x, n.z - p.z) < n.range * rainMul + 8);
-      if (!active || !n.canSee()) {
+      n.updateConeVisual(this.stealthActive() && !p.bus && !n.away && !n.poolgoer && Math.hypot(n.x - p.x, n.z - p.z) < n.range * rainMul + 8);
+      if (!active || !n.canSee() || n.poolgoer) {
         n.suspicion = Math.max(0, n.suspicion - dt);
         continue;
       }
@@ -3582,8 +3697,8 @@ export class Game {
     if (this.cwRuntime[b.npc.index]) this.cwRuntime[b.npc.index].lendCd = LEND_COOLDOWN;
     const cw = this.state.cw[b.npc.index];
     if (!b.npc.removed) {
-      b.npc.char.setLegwear(!(cw.blessed || cw.playing));
-      b.npc.sneaking = cw.blessed || cw.playing;
+      b.npc.char.setLegwear(!(this.bareToday(cw) || cw.playing));
+      b.npc.sneaking = this.bareToday(cw) || cw.playing;
       b.npc.unhide();
     }
     if (!silent) ui.toast(`${b.npc.name} asked for ${pronouns(b.npc.gender).their} ${b.npc.legwearType} back. You're exposed again!`, 'bad', 5000);
@@ -3953,7 +4068,7 @@ export class Game {
     if (best === null) return;
     const c = this.profile.coworkers[i];
     const ch = this.cwChars[i];
-    ch.setLegwear(!this.state.cw[i].blessed);
+    ch.setLegwear(!this.bareToday(this.state.cw[i]));
     const n = new NPC(this, ch, { kind: 'pedestrian', name: c.name, personality: c.personality, index: i, x: G[best].x, z: G[best].z, range: 14, legwearType: ch.legwearType });
     n.coworkerEncounter = true;
     n.node = best;
@@ -4307,12 +4422,16 @@ export class Game {
     if (!h) return [];
     h.occupant = c; // reserved on the way there
     const inYaw = Math.PI;
+    const first = { go: { x: h.x, z: h.z } };
+    // if anything interrupts them (a new plan, leaving), they get dressed and the stall frees up
+    c.fitting = { h, first };
     const free = () => {
       if (h.occupant === c) h.occupant = null;
       c.inFitting = null;
+      c.fitting = null;
     };
     return [
-      { go: { x: h.x, z: h.z } },
+      first,
       { t: 2.5, yaw: inYaw, call: () => (c.inFitting = h) },
       { t: 3, yaw: inYaw, call: () => c.char.setLegwear(false) },
       { t: 3, yaw: inYaw, call: () => c.char.setUndressed?.(true) },
@@ -4322,6 +4441,17 @@ export class Game {
       { t: 2, yaw: 0, call: () => this.bubble(c, pick(['Hmm. Maybe.', 'Oh, I like this one.', 'Not my color...', '*checks the mirror*'])) },
       { t: 0, call: free },
     ];
+  }
+
+  /** A shopper's fitting-room visit was cut short: dressed again, stall freed. */
+  endFitting(c) {
+    const f = c.fitting;
+    if (!f) return;
+    c.fitting = null;
+    c.inFitting = null;
+    if (f.h.occupant === c) f.h.occupant = null;
+    c.char.setUndressed?.(false);
+    if (!c.lostLegwear) c.char.setLegwear(true);
   }
 
   /** What a customer puts on in the fitting room: the same clothes in new colors, or (people from your other saves) another of their outfits. */
@@ -4338,7 +4468,7 @@ export class Game {
           legwearType: o.legwearType, gender: g, wetMaterials: o.model?.wetMaterials, cfg: o.model?.cfg || null,
           underwear: named.def.underwear?.panty ? named.def.underwear : randomUnderwear(g), underwearRes: 512,
         });
-        if (c.removed) return nc.dispose?.();
+        if (c.removed || !c.fitting) return nc.dispose?.();
         nc.civilian = true;
         nc.civName = named.name;
         nc.gender = g;
@@ -5185,8 +5315,10 @@ export class Game {
     if (s.carry) this.setTaskCarry(s.carry);
     if (s.drop) this.clearTaskCarry();
     w.step++;
-    if (w.mishapPending) {
-      w.mishapPending = false;
+    // day 1: the disaster strikes during one of the first four tasks, at some step of it
+    const mp = w.mishapPending === true ? { task: 0, at: 0 } : w.mishapPending;
+    if (mp && !this.legwearGone && w.done >= mp.task && w.step - 1 >= Math.floor(mp.at * w.task.steps.length)) {
+      w.mishapPending = null;
       this.firstTaskMishap(s);
     }
     if (w.active) w.active.step = w.step;
@@ -5199,7 +5331,7 @@ export class Game {
     }
   }
 
-  /** Day 1: the wardrobe disaster strikes during the first task, caused by what you're doing. */
+  /** Day 1: the wardrobe disaster strikes during one of the first tasks, caused by what you're doing. */
   async firstTaskMishap(step) {
     const p = this.player;
     sound.play('rip');
@@ -5213,7 +5345,7 @@ export class Game {
     // the legwear is gone before the panel is drawn, so the panel shows it
     this.legwearGone = true;
     p.char.setLegwear(false);
-    await this.dialog('Wardrobe Malfunction!', `${mh.fn(this.profile.name, this.lw)}\n\nYou stuff what's left of them out of sight... and realize your underwear is now on full display. The shift has only just started. Nobody can find out.`);
+    await this.dialog('Wardrobe Malfunction!', `${mh.fn(this.profile.name, this.lw)}\n\nYou stuff what's left of them out of sight... and realize your underwear is now on full display. The shift is far from over. Nobody can find out.`);
     ui.toast('Your underwear is exposed! Stay out of the yellow sight cones. Carry things, sit at tables, hide.', 'bad', 7000);
   }
 
@@ -5391,7 +5523,7 @@ export class Game {
         sz = route[k].z;
       }
       const ch = this.cwChars[i];
-      ch.setLegwear(!(cw.blessed || cw.playing));
+      ch.setLegwear(!(this.bareToday(cw) || cw.playing));
       ch.setProp(null);
       const n = new NPC(this, ch, { kind: 'pedestrian', name: def.name, personality: def.personality, index: i, x: sx, z: sz, range: 14, speed, legwearType: ch.legwearType });
       n.gender = def.gender;
@@ -5794,6 +5926,7 @@ export class Game {
           n.swapChar(this.acquireCivilian(), true);
           if (stub.isStub) this.stubPool.push(stub);
           if (n.kind === 'pedestrian') this.dressCivilian(n);
+          this.restyle(n);
         } else {
           if (vis) this.refillCivilians();
           n.inView = false;
@@ -5840,8 +5973,16 @@ export class Game {
   anonymous(n) {
     if (!n.char.civilian || n.char.placeholder || n.char.civName || n.commuter || n.coworkerEncounter) return false;
     if (!['pedestrian', 'customer', 'clerk', 'resident'].includes(n.kind)) return false;
-    if (n.state === 'talk' || n.lending || n.stripping || n === this.player.borrow?.npc) return false;
+    if (n.state === 'talk' || n.lending || n.stripping || n.fitting || n === this.player.borrow?.npc) return false;
     return true;
+  }
+
+  /** A freshly handed model takes on what this person currently looks like. */
+  restyle(n) {
+    const ch = n.char;
+    if (n.poolgoer) ch.setUndressed?.(true);
+    if (n.lostLegwear) ch.setLegwear(false);
+    if (n.soaked) ch.setWet?.(1);
   }
 
   /** A model-less stand-in: no meshes worth drawing, just enough for the logic. */

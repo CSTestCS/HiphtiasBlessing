@@ -116,6 +116,8 @@ export class NPC {
 
   // ---- activity queue ----------------------------------------------------
   plan(steps) {
+    // walked out of a fitting room mid-change: dress first
+    if (this.fitting && !steps.includes(this.fitting.first)) this.game.endFitting?.(this);
     // let go of a cart if the new plan doesn't involve pushing it
     if (this.pushing && !(steps[0] && (steps[0].keepPush || steps[0].call))) {
       this.pushing.holder = null;
@@ -318,7 +320,13 @@ export class NPC {
       const tg = g.level.pushTarget(m, this.x, this.z, this.yaw);
       g.level.placeMovable(m, tg.x, tg.z, tg.yaw);
     }
-    this.char.root.position.set(this.x, 0, this.z);
+    const L = g.level;
+    const wd = L.water ? L.waterDepth(this.x, this.z) : 0;
+    this.char.root.position.set(this.x, -wd, this.z);
+    if (wd > 0.25 && !this.soaked) {
+      this.soaked = true;
+      this.char.setWet?.(1);
+    }
     this.char.root.rotation.y = this.yaw;
     // off-screen characters keep thinking but skip skinning/animation work
     if (this.inView !== false) this.char.update(dt, {

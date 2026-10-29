@@ -941,7 +941,7 @@ function bindGender(s, def, attr, target) {
   };
 }
 
-function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator, onRefresh = null) {
+function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator, onRefresh = null, def = null) {
   const q = (a) => s.querySelector(`[data-${prefix}${a}]`);
   const refresh =
     onRefresh ||
@@ -982,7 +982,15 @@ function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator, onRefr
       if (!onRefresh) previewTarget = target;
       rerender();
     };
-  if (q('rand')) q('rand').onclick = () => ((o.colors = { ...randomColors(), under: o.colors.under }), refresh());
+  // new colors, plus new underwear (style, color and print) for whoever wears this outfit
+  if (q('rand'))
+    q('rand').onclick = () => {
+      o.colors = randomColors();
+      if (def) def.underwear = randomUnderwear(def.gender === 'male' ? 'male' : 'female');
+      if (!def) return refresh();
+      if (!onRefresh) previewTarget = target;
+      rerender();
+    };
   if (q('pv')) q('pv').onclick = refresh;
   if (q('uw')) q('uw').onchange = (e) => ((o.model.underwearOverlay = e.target.checked), refresh());
   if (q('clothes'))
@@ -1073,18 +1081,18 @@ function bindCreator(s) {
       const l = document.getElementById('pv-label');
       if (l) l.textContent = draft.name;
     };
-    bindOutfitEditor(s, draft.player.outfits[0], 'p', 'player');
+    bindOutfitEditor(s, draft.player.outfits[0], 'p', 'player', renderCreator, null, draft.player);
     bindGender(s, draft.player, 'pgender', 'player');
     bindUnderwear(s, draft.player, 'puw', 'player');
   } else if (step === 1) {
     q('[data-job]').forEach((el) => (el.onclick = () => ((draft.job = el.dataset.job), renderCreator())));
   } else if (step === 2) {
     s.querySelector('#mgr-name').oninput = (e) => (draft.manager.name = e.target.value);
-    bindOutfitEditor(s, draft.manager.outfits[0], 'm', 'mgr');
+    bindOutfitEditor(s, draft.manager.outfits[0], 'm', 'mgr', renderCreator, null, draft.manager);
     bindGender(s, draft.manager, 'mgender', 'mgr');
     bindUnderwear(s, draft.manager, 'muw', 'mgr');
     draft.coworkers.forEach((c, i) => {
-      bindOutfitEditor(s, c.outfits[0], 'c' + i + 'x', i);
+      bindOutfitEditor(s, c.outfits[0], 'c' + i + 'x', i, renderCreator, null, c);
       bindGender(s, c, 'cgender' + i, i);
       bindUnderwear(s, c, 'cuw' + i, i);
     });
@@ -1225,7 +1233,7 @@ function chooseOutfits(g) {
         if (det) det.ontoggle = () => (openEdit = det.open ? e.key : openEdit === e.key ? null : openEdit);
         const o = e.def.outfits[d.outfit] || e.def.outfits[0];
         const focus = () => ((sel = e.key), (openEdit = e.key), (homePrev = false));
-        bindOutfitEditor(s, o, 'od' + e.key + 'x', e.key, () => (focus(), render()), () => (focus(), show()));
+        bindOutfitEditor(s, o, 'od' + e.key + 'x', e.key, () => (focus(), render()), () => (focus(), show()), e.def);
         bindUnderwear(s, e.def, 'oduw' + e.key, e.key, () => (focus(), render()));
       }
       show();

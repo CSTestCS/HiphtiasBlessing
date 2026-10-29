@@ -288,6 +288,18 @@ export class Level {
     return m;
   }
 
+  /** How deep the water is here (0 outside any pool). Deepens over the first metre in from the edge. */
+  waterDepth(x, z) {
+    for (const w of this.water || []) {
+      if (x <= w.x0 || x >= w.x1 || z <= w.z0 || z >= w.z1) continue;
+      const edge = Math.min(x - w.x0, w.x1 - x, z - w.z0, w.z1 - z);
+      // the shallow end (west) is waist deep, the deep end chest deep
+      const full = w.shallow + (w.deep - w.shallow) * ((x - w.x0) / (w.x1 - w.x0));
+      return Math.min(full, edge * 1.2);
+    }
+    return 0;
+  }
+
   label(text, x, y, z, rotY = 0, opts) {
     const p = textPlane(text, opts);
     p.position.set(x, y, z);

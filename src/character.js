@@ -987,6 +987,19 @@ function setupVRMChar(ch, scene, hum, opts) {
     ch.homeMode = on;
     for (const m of ch.homeHideMeshes || []) m.visible = !on;
   };
+  // barefoot indoors: shoes and boots come off
+  const shoeSlots = opts.cfg?.slots || null;
+  ch.shoeMeshes = [];
+  scene.traverse((o) => {
+    if (!o.isMesh) return;
+    const ms = Array.isArray(o.material) ? o.material : [o.material];
+    if (ms.some((m) => m && ch.keepSet?.has(cleanName(m.name)))) return;
+    if (ms.some((m) => m && (shoeSlots ? shoeSlots[cleanName(m.name)] === 'shoe' : /shoe|boot/i.test(cleanName(m.name))))) ch.shoeMeshes.push(o);
+  });
+  ch.setShoes = (on) => {
+    ch.shoesOff = !on;
+    for (const m of ch.shoeMeshes) m.visible = !!on;
+  };
   ch.bone = (n) => hum.getNormalizedBoneNode(n);
   scene.updateMatrixWorld(true);
   const wp = (n) => {
