@@ -100,7 +100,7 @@ export class Game {
     r.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     r.setSize(window.innerWidth, window.innerHeight);
     r.shadowMap.enabled = true;
-    r.shadowMap.type = THREE.PCFSoftShadowMap;
+    r.shadowMap.type = THREE.PCFShadowMap;
     r.outputColorSpace = THREE.SRGBColorSpace;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.15, 400);
@@ -379,10 +379,12 @@ export class Game {
       if (!this.running) return;
       requestAnimationFrame(loop);
       const now = performance.now();
-      const dt = Math.min(0.05, (now - this.last) / 1000);
+      const raw = (now - this.last) / 1000;
+      const dt = Math.min(0.05, raw);
       this.last = now;
       if (!this.paused && !ui.dialogOpen && !this.transitioning && !this.ended) this.update(dt);
       this.render();
+      this.adaptResolution(raw);
     };
     requestAnimationFrame(loop);
     this.enterPhase('morning', { first: true });
@@ -441,14 +443,24 @@ export class Game {
     };
     this._mm = (e) => {
       if (document.pointerLockElement === this.canvas || this.dragging) {
-        this.cam.yaw -= e.movementX * 0.0028;
-        this.cam.pitch = Math.max(-1.45, Math.min(1.5, this.cam.pitch + e.movementY * 0.0024));
+        // browsers sometimes report a huge bogus jump (right after the pointer locks, when the cursor
+        // crosses a window edge, or at random): those would snap the camera/character around
+        if (this._skipMoves > 0) {
+          this._skipMoves--;
+          return;
+        }
+        const mx = e.movementX;
+        const my = e.movementY;
+        if (Math.abs(mx) > 220 || Math.abs(my) > 220) return;
+        this.cam.yaw -= mx * 0.0028;
+        this.cam.pitch = Math.max(-1.45, Math.min(1.5, this.cam.pitch + my * 0.0024));
       }
     };
     this._md = (e) => {
       if (ui.dialogOpen || this.paused) return;
       if (e.button === 2) {
         // hold right-click: aim mode (mouse turns the character, A/D strafe)
+        if (!this.dragging && document.pointerLockElement !== this.canvas) this._skipMoves = 2;
         this.dragging = true;
         this.aiming = true;
       }
@@ -467,11 +479,21 @@ export class Game {
     };
     this._wh = (e) => (this.cam.dist = Math.max(1.8, Math.min(9, this.cam.dist + Math.sign(e.deltaY) * 0.4)));
     this._plc = () => {
+      this._skipMoves = 2;
       if (!document.pointerLockElement && this.running && !ui.dialogOpen && !this.paused && !this.transitioning && !this.ended) this.pause();
     };
     this._blur = () => {
       this.keys.clear();
       this.aiming = this.dragging = false;
+    };
+    // closing a conversation hands the mouse straight back to the game
+    ui.onDialogClosed = () => {
+      if (!this.running || this.paused || this.ended || ui.dialogOpen || document.pointerLockElement === this.canvas) return;
+      if (!ui.screen.classList.contains('hidden')) return;
+      try {
+        const pr = this.canvas.requestPointerLock();
+        if (pr && pr.catch) pr.catch(() => {});
+      } catch (_) {}
     };
     window.addEventListener('keydown', this._kd);
     window.addEventListener('keyup', this._ku);
@@ -493,6 +515,7 @@ export class Game {
     window.removeEventListener('wheel', this._wh);
     window.removeEventListener('blur', this._blur);
     document.removeEventListener('pointerlockchange', this._plc);
+    ui.onDialogClosed = null;
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
@@ -5168,6 +5191,40 @@ export class Game {
   }
 
   /** Hide people (and bus passengers) that are off-screen or far away; they also skip animation. */
+  /** Lower the render resolution when frames get slow, and raise it again when there's headroom. */
+  adaptResolution(frameSec) {
+    if (this.settings.dynamicRes === false || frameSec > 0.5) return;
+    const a = (this._res ||= { ema: 1 / 60, t: 0, scale: 1 });
+    a.ema += (frameSec - a.ema) * 0.05;
+    a.t += frameSec;
+    if (a.t < 2) return;
+    a.t = 0;
+    let next = a.scale;
+    if (a.ema > 1 / 45) next = Math.max(0.6, a.scale - 0.1);
+    else if (a.ema < 1 / 55) next = Math.min(1, a.scale + 0.1);
+    if (next !== a.scale) {
+      a.scale = next;
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5) * next);
+    }
+  }
+
+  /** Distant people skip their toon outline (past ~10 m) and their shadow (past ~14 m). */
+  charDetail(ch, d) {
+    const lvl = d < 10 ? 2 : d < 14 ? 1 : 0;
+    if (ch._detail === lvl) return;
+    ch._detail = lvl;
+    if (!ch._dm) {
+      ch._dm = { meshes: [], outlines: [] };
+      ch.root.traverse((o) => {
+        if (!o.isMesh) return;
+        ch._dm.meshes.push(o);
+        for (const m of [].concat(o.material)) if (m && /outline/i.test(m.name || '')) ch._dm.outlines.push(m);
+      });
+    }
+    for (const o of ch._dm.meshes) o.castShadow = lvl >= 1;
+    for (const m of ch._dm.outlines) m.visible = lvl >= 2;
+  }
+
   cullCharacters() {
     const cam = this.camera;
     cam.updateMatrixWorld();
@@ -5199,6 +5256,7 @@ export class Game {
       const vis = d < maxD && fr.intersectsSphere(sph);
       n.inView = vis && !n.away;
       n.char.root.visible = vis && !n.away;
+      if (n.inView) this.charDetail(n.char, d);
     }
     for (const b of this.buses?.buses || []) {
       sph.center.set(b.x, 1.5, b.z);

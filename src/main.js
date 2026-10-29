@@ -376,6 +376,7 @@ async function showSettings() {
       <input type="range" id="s-expr" min="0" max="1" step="0.05" value="${st.exprMax}" />
       <p class="note">Maximum weight of VRoid facial expressions (blend shapes) used to show how characters feel.</p>
       <label><input type="checkbox" id="s-map" ${st.minimap ? 'checked' : ''}/> Show minimap and compass (toggle in game with M)</label>
+      <label><input type="checkbox" id="s-dres" ${st.dynamicRes !== false ? 'checked' : ''}/> Dynamic resolution (lowers render resolution when the frame rate drops)</label>
       <label><input type="checkbox" id="s-civ" ${st.useBundledCivilians ? 'checked' : ''}/> Use the bundled townsperson models for civilians</label>
       <h3 style="margin:18px 0 6px">Sound</h3>
       ${volumeSlidersHTML(st)}
@@ -400,13 +401,14 @@ async function showSettings() {
     st.wetMaxSee = +s.querySelector('#s-wet').value;
     st.allowedUnfinished = +s.querySelector('#s-unf').value;
     st.minimap = s.querySelector('#s-map').checked;
+    st.dynamicRes = s.querySelector('#s-dres').checked;
     st.useBundledCivilians = s.querySelector('#s-civ').checked;
     await putSettings(st);
   };
   s.querySelectorAll('input:not([id^="s-vol"])').forEach((el) => (el.oninput = el.onchange = () => (fmt(), save())));
   bindVolumeSliders(s, st, () => putSettings(st));
   s.querySelector('#s-reset').onclick = async () => {
-    Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, detectScale: 1, sleepRecovery: true, wetMaxSee: 0.5, allowedUnfinished: 2, minimap: true, useBundledCivilians: true });
+    Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, detectScale: 1, sleepRecovery: true, wetMaxSee: 0.5, allowedUnfinished: 2, minimap: true, dynamicRes: true, useBundledCivilians: true });
     for (const k of ['volMaster', 'volSfx', 'volVoice', 'volAmbient', 'volUi']) st[k] = DEFAULT_SETTINGS[k];
     applyVolumeSettings(st);
     await putSettings(st);

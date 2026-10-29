@@ -320,8 +320,15 @@ export class NPC {
     }
     this.char.root.position.set(this.x, 0, this.z);
     this.char.root.rotation.y = this.yaw;
-    // off-screen characters keep thinking but skip skinning/animation work
-    if (this.inView !== false) this.char.update(dt, {
+    // off-screen characters keep thinking but skip skinning/animation work; far ones animate at half rate
+    let adt = dt;
+    if (this.char._detail === 0) {
+      this._animSkip = !this._animSkip;
+      this._animDt = (this._animDt || 0) + dt;
+      if (this._animSkip) adt = -1;
+      else ((adt = this._animDt), (this._animDt = 0));
+    } else this._animDt = 0;
+    if (this.inView !== false && adt >= 0) this.char.update(adt, {
       speed: this.curSpeed,
       sit: this.sitting && !moving,
       crouch: this.crouch,

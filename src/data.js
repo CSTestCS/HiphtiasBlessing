@@ -482,6 +482,7 @@ export const DEFAULT_SETTINGS = {
   minimap: true,
   wetMaxSee: 0.5,
   allowedUnfinished: 2,
+  dynamicRes: true,
   volMaster: 0.8,
   volSfx: 1,
   volVoice: 0.9,

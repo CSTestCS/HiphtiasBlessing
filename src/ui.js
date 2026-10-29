@@ -70,6 +70,8 @@ export const ui = {
           $('dialog').classList.add('hidden');
           this.dialogOpen = false;
           resolve(o.value);
+          // still inside the click: the game may take the mouse back (unless another panel follows)
+          if (this.onDialogClosed) this.onDialogClosed();
         };
         box.appendChild(b);
         if (i === 0) setTimeout(() => b.focus(), 50);

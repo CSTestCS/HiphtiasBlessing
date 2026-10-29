@@ -94,6 +94,8 @@ function background(kind) {
  * look: { pose, mood, frame: 'bust' | 'full', bg, turn }
  * restore: called afterwards to put the main view back (usually game.render()).
  */
+let portraitRT = null;
+let portraitBuf = null;
 export function drawPortrait(renderer, char, look, canvas2d, restore) {
   if (!char || !char.root) return false;
   const root = char.root;
@@ -133,20 +135,27 @@ export function drawPortrait(renderer, char, look, canvas2d, restore) {
       cam.lookAt(0, h * 0.8, 0);
     }
     cam.updateProjectionMatrix();
-    const pr = renderer.getPixelRatio();
-    const size = renderer.getSize(new THREE.Vector2());
-    const vw = Math.min(size.x, Math.round(W / pr));
-    const vh = Math.min(size.y, Math.round(H / pr));
-    renderer.setScissorTest(true);
-    renderer.setViewport(0, 0, vw, vh);
-    renderer.setScissor(0, 0, vw, vh);
+    // render off-screen and copy the pixels through the CPU: this keeps working after a GPU reset
+    // (which wipes GPU-backed 2D canvases and can leave the main canvas' buffer unreadable)
+    if (renderer.getContext().isContextLost()) return false;
+    if (!portraitRT || portraitRT.width !== W || portraitRT.height !== H) {
+      portraitRT?.dispose();
+      portraitRT = new THREE.WebGLRenderTarget(W, H, { samples: 4 });
+      portraitRT.texture.colorSpace = THREE.SRGBColorSpace;
+      portraitBuf = new Uint8Array(W * H * 4);
+    }
+    const prevRT = renderer.getRenderTarget();
+    renderer.setRenderTarget(portraitRT);
+    renderer.clear();
     renderer.render(studio, cam);
-    const ctx = canvas2d.getContext('2d');
-    ctx.clearRect(0, 0, W, H);
-    const src = renderer.domElement;
-    ctx.drawImage(src, 0, src.height - vh * pr, vw * pr, vh * pr, 0, 0, W, H);
-    renderer.setScissorTest(false);
-    renderer.setViewport(0, 0, size.x, size.y);
+    renderer.readRenderTargetPixels(portraitRT, 0, 0, W, H, portraitBuf);
+    renderer.setRenderTarget(prevRT);
+    const ctx = canvas2d.getContext('2d', { willReadFrequently: true });
+    const img = ctx.createImageData(W, H);
+    const row = W * 4;
+    // WebGL rows run bottom-up
+    for (let y = 0; y < H; y++) img.data.set(portraitBuf.subarray((H - 1 - y) * row, (H - y) * row), y * row);
+    ctx.putImageData(img, 0, 0);
     return true;
   } catch (e) {
     console.warn('portrait failed', e);
