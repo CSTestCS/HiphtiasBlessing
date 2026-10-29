@@ -5,7 +5,7 @@ import { ui, esc } from './ui.js';
 import { storage, newId } from './storage.js';
 import { dyeName } from './dyes.js';
 import { randomApartment, randomWorkSlot, aptById, UNDERWEAR, UNDERWEAR_COLORS, prettyUnderwear, randomUnderwear, JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, FEMALE_NAMES, MALE_NAMES, nameFor, guessGender, guessModelGender, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
-import { createCharacter, inspectVRM, randomColors, addAngelic, clearTemplates } from './character.js';
+import { createCharacter, inspectVRM, randomColors, addAngelic, clearTemplates, setOutlines } from './character.js';
 import { Game, controlsTable } from './game.js';
 import { listSlots, loadSlot, createSlot, writeProfile, deleteSlot, otherSlotPeople } from './saves.js';
 import { modelBuffer, modelKey } from './assets.js';
@@ -30,6 +30,7 @@ let civModels = [];
 async function getSettings() {
   const st = Object.assign({}, DEFAULT_SETTINGS, (await storage.get('settings')) || {});
   civModels = st.civilians || [];
+  setOutlines(st.outlines !== false);
   return st;
 }
 async function putSettings(s) {
@@ -179,6 +180,8 @@ async function outfitOpts(o, tint = {}, gender = null, underwear = null) {
     legwearType: tint.legwearType || o.legwearType,
     tintTop: tint.top || null,
     tintBottom: tint.bottom || null,
+    tintShoe: tint.shoe || null,
+    tintAccent: tint.accent || null,
     wetMaterials: m?.wetMaterials || [],
     keepMaterials: m?.keepMaterials || null,
     gender,
@@ -377,6 +380,7 @@ async function showSettings() {
       <p class="note">Maximum weight of VRoid facial expressions (blend shapes) used to show how characters feel.</p>
       <label><input type="checkbox" id="s-map" ${st.minimap ? 'checked' : ''}/> Show minimap and compass (toggle in game with M)</label>
       <label><input type="checkbox" id="s-dres" ${st.dynamicRes !== false ? 'checked' : ''}/> Dynamic resolution (lowers render resolution when the frame rate drops)</label>
+      <label><input type="checkbox" id="s-outl" ${st.outlines !== false ? 'checked' : ''}/> Toon outlines on characters</label>
       <label><input type="checkbox" id="s-civ" ${st.useBundledCivilians ? 'checked' : ''}/> Use the bundled townsperson models for civilians</label>
       <h3 style="margin:18px 0 6px">Sound</h3>
       ${volumeSlidersHTML(st)}
@@ -402,13 +406,15 @@ async function showSettings() {
     st.allowedUnfinished = +s.querySelector('#s-unf').value;
     st.minimap = s.querySelector('#s-map').checked;
     st.dynamicRes = s.querySelector('#s-dres').checked;
+    st.outlines = s.querySelector('#s-outl').checked;
+    setOutlines(st.outlines);
     st.useBundledCivilians = s.querySelector('#s-civ').checked;
     await putSettings(st);
   };
   s.querySelectorAll('input:not([id^="s-vol"])').forEach((el) => (el.oninput = el.onchange = () => (fmt(), save())));
   bindVolumeSliders(s, st, () => putSettings(st));
   s.querySelector('#s-reset').onclick = async () => {
-    Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, detectScale: 1, sleepRecovery: true, wetMaxSee: 0.5, allowedUnfinished: 2, minimap: true, dynamicRes: true, useBundledCivilians: true });
+    Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, detectScale: 1, sleepRecovery: true, wetMaxSee: 0.5, allowedUnfinished: 2, minimap: true, dynamicRes: true, outlines: true, useBundledCivilians: true });
     for (const k of ['volMaster', 'volSfx', 'volVoice', 'volAmbient', 'volUi']) st[k] = DEFAULT_SETTINGS[k];
     applyVolumeSettings(st);
     await putSettings(st);
@@ -855,7 +861,8 @@ function outfitEditor(o, prefix, full) {
     ${
       tintable && full
         ? `<label>Skin</label>${swatches('skin', o.colors.skin, prefix + 'skin')}<label>Hair</label>${swatches('hair', o.colors.hair, prefix + 'hair')}
-           <label>Top</label>${swatches('top', o.colors.top, prefix + 'top')}<label>Pants / skirt</label>${swatches('bottom', o.colors.bottom, prefix + 'bottom')}`
+           <label>Top</label>${swatches('top', o.colors.top, prefix + 'top')}<label>Pants / skirt</label>${swatches('bottom', o.colors.bottom, prefix + 'bottom')}
+           <label>Shoes</label>${swatches('top', o.colors.shoe, prefix + 'shoe')}<label>Accents</label>${swatches('top', o.colors.accent, prefix + 'accent')}`
         : ''
     }
     ${full && !m ? `<label>Underwear color</label>${swatches('under', o.colors.under, prefix + 'under')}` : ''}`;
@@ -977,7 +984,7 @@ function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator, onRefr
     bindMatList(s, o.model, prefix + 'wet', refresh, 'wetMaterials');
     bindMatList(s, o.model, prefix + 'keep', refresh, 'keepMaterials');
   }
-  for (const k of ['skin', 'hair', 'top', 'bottom', 'under']) {
+  for (const k of ['skin', 'hair', 'top', 'bottom', 'under', 'shoe', 'accent']) {
     s.querySelectorAll(`[data-${prefix}${k}]`).forEach((el) => {
       el.onclick = () => {
         o.colors[k] = el.getAttribute(`data-${prefix}${k}`);
@@ -1124,6 +1131,8 @@ function chooseOutfits(g) {
           <select data-olw="${e.key}"><option value="pants" ${(d.legwearType || (e.def.outfits[d.outfit] || e.def.outfits[0]).legwearType) === 'pants' ? 'selected' : ''}>Pants</option><option value="skirt" ${(d.legwearType || (e.def.outfits[d.outfit] || e.def.outfits[0]).legwearType) === 'skirt' ? 'selected' : ''}>A skirt</option></select>
           <label>Top color</label>${swatches('tint', d.top, 'otop-' + e.key, tintList)}
           <label>Bottom color</label>${swatches('tint', d.bottom, 'obot-' + e.key, tintList)}
+          <label>Shoe color</label>${swatches('tint', d.shoe, 'oshoe-' + e.key, tintList)}
+          <label>Accent color</label>${swatches('tint', d.accent, 'oacc-' + e.key, tintList)}
           ${
             e.key === 'player'
               ? `<label>At-home outfit</label>
@@ -1211,7 +1220,7 @@ function chooseOutfits(g) {
         };
       });
       for (const e of entries) {
-        for (const [attr, field] of [['otop-' + e.key, 'top'], ['obot-' + e.key, 'bottom']]) {
+        for (const [attr, field] of [['otop-' + e.key, 'top'], ['obot-' + e.key, 'bottom'], ['oshoe-' + e.key, 'shoe'], ['oacc-' + e.key, 'accent']]) {
           s.querySelectorAll(`[data-${attr}]`).forEach((el) => {
             el.onclick = () => {
               daily[e.key][field] = el.getAttribute('data-' + attr) || null;
@@ -1254,11 +1263,13 @@ function chooseOutfits(g) {
         for (const e of entries) {
           daily[e.key].top = tintList[1 + Math.floor(Math.random() * (tintList.length - 1))];
           daily[e.key].bottom = Math.random() < 0.5 ? null : tintList[1 + Math.floor(Math.random() * (tintList.length - 1))];
+          daily[e.key].shoe = tintList[1 + Math.floor(Math.random() * (tintList.length - 1))];
+          daily[e.key].accent = tintList[1 + Math.floor(Math.random() * (tintList.length - 1))];
         }
         render();
       };
       s.querySelector('#o-reset').onclick = () => {
-        for (const e of entries) daily[e.key].top = daily[e.key].bottom = null;
+        for (const e of entries) daily[e.key].top = daily[e.key].bottom = daily[e.key].shoe = daily[e.key].accent = null;
         render();
       };
       s.querySelector('#o-go').onclick = async () => {

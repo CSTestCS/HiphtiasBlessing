@@ -23,6 +23,12 @@ let EXPR_MAX = 0.7;
 export function setExpressionMax(v) {
   EXPR_MAX = Math.max(0, Math.min(1, v));
 }
+// toon outlines on characters (a setting)
+let SHOW_OUTLINES = true;
+export function setOutlines(on) {
+  SHOW_OUTLINES = on !== false;
+}
+export const outlinesOn = () => SHOW_OUTLINES;
 // how see-through wet clothes can get at most (0 = never, 1 = fully invisible)
 let WET_MAX_SEE = 0.5;
 export function setWetMaxSee(v) {
@@ -976,6 +982,7 @@ function setupVRMChar(ch, scene, hum, opts) {
     if (opts.cfg?.homeHide?.length && mats.some((m) => m && opts.cfg.homeHide.includes(cleanName(m.name))) && !mats.some((m) => m && ch.keepSet.has(cleanName(m.name)))) (ch.homeHideMeshes ||= []).push(o);
   });
   if (ch.wetAuto) for (const e of ch.mats) if (/(tops|shirt|blouse|onepiece|dress)/i.test(e.name) && !e.leg) ch.wetSet.add(e.name);
+  for (const e of ch.mats) if (/outline/i.test(e.m.name || '')) e.m.visible = SHOW_OUTLINES;
   ch.setHomeMode = (on) => {
     ch.homeMode = on;
     for (const m of ch.homeHideMeshes || []) m.visible = !on;
@@ -1078,16 +1085,23 @@ function applyTints(ch, opts) {
     if (slot) {
       // set by hand in the model settings
       if (slot === 'none') continue;
-      const c = slot === 'bottom' ? opts.tintBottom || rnd?.bottom || col.bottom : slot === 'top' ? opts.tintTop || rnd?.top || col.top : slot === 'accent' ? accent : rnd?.[slot] || col[slot];
-      mulColor(m, c, raw && !(slot === 'top' && opts.tintTop) && !(slot === 'bottom' && opts.tintBottom));
+      const c =
+        slot === 'bottom' ? opts.tintBottom || rnd?.bottom || col.bottom
+        : slot === 'top' ? opts.tintTop || rnd?.top || col.top
+        : slot === 'shoe' ? opts.tintShoe || rnd?.shoe || col.shoe
+        : slot === 'accent' ? opts.tintAccent || accent || col.accent
+        : rnd?.[slot] || col[slot];
+      const picked = (slot === 'top' && opts.tintTop) || (slot === 'bottom' && opts.tintBottom) || (slot === 'shoe' && opts.tintShoe) || (slot === 'accent' && opts.tintAccent);
+      mulColor(m, c, raw && !picked);
       continue;
     }
     if (leg) mulColor(m, opts.tintBottom || rnd?.bottom || col.bottom, raw && !opts.tintBottom);
     else if (SKIN_RE.test(name)) mulColor(m, rnd?.skin || col.skin, raw);
     else if (HAIR_RE.test(name)) mulColor(m, rnd?.hair || col.hair, raw);
     else if (IRIS_RE.test(name)) mulColor(m, rnd?.eye || col.eye, raw);
-    else if (CLOTH_RE.test(name) && !/shoe/i.test(name)) mulColor(m, opts.tintTop || rnd?.top || col.top, raw && !opts.tintTop);
-    else if (/shoe/i.test(name)) mulColor(m, rnd?.shoe || col.shoe, raw);
+    else if (/shoe|boot/i.test(name)) mulColor(m, opts.tintShoe || rnd?.shoe || col.shoe, raw && !opts.tintShoe);
+    else if (/accessor/i.test(name) && (opts.tintAccent || accent || col.accent)) mulColor(m, opts.tintAccent || accent || col.accent, raw && !opts.tintAccent);
+    else if (CLOTH_RE.test(name)) mulColor(m, opts.tintTop || rnd?.top || col.top, raw && !opts.tintTop);
   }
 }
 
@@ -1845,7 +1859,7 @@ export function createMannequin(opts = {}) {
 
 export function randomColors(rng = Math.random) {
   const pick = (arr) => arr[Math.floor(rng() * arr.length)];
-  return { skin: pick(SKIN_TONES), hair: pick(DYE_HEX), top: pick(DYE_HEX), bottom: pick(DYE_HEX), under: pick(DYE_HEX), eye: pick(DYE_HEX) };
+  return { skin: pick(SKIN_TONES), hair: pick(DYE_HEX), top: pick(DYE_HEX), bottom: pick(DYE_HEX), under: pick(DYE_HEX), eye: pick(DYE_HEX), shoe: pick(DYE_HEX), accent: pick(DYE_HEX) };
 }
 
 /** Halo and wings for Celesti (works for VRM or mannequin). No light: she doesn't glow. */

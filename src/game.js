@@ -7,7 +7,7 @@ import { ui, esc } from './ui.js';
 import { NPC, angDiff, pick, propMesh } from './npc.js';
 import { drawPortrait } from './portrait.js';
 import { sound, reactionSound, applyVolumeSettings, volumeSlidersHTML, bindVolumeSliders } from './audio.js';
-import { createCharacter, createMannequin, randomColors, addAngelic, setExpressionMax, setWetMaxSee, borrowLegwear, workKindFor } from './character.js';
+import { createCharacter, createMannequin, randomColors, addAngelic, setExpressionMax, setWetMaxSee, setOutlines, outlinesOn, borrowLegwear, workKindFor } from './character.js';
 import { buildLobby } from './levels/lobby.js';
 import { buildHallway, buildPool, buildLaundry } from './levels/building.js';
 import { Rain } from './weather.js';
@@ -71,6 +71,7 @@ export class Game {
     this.minPerSec = 60 / Math.max(20, this.settings.hourSeconds || 240);
     setExpressionMax(this.settings.exprMax ?? 0.7);
     setWetMaxSee(this.settings.wetMaxSee ?? 0.5);
+    setOutlines(this.settings.outlines !== false);
     this.onEnd = onEnd;
     this.jobId = this.profile.job;
     this.job = JOBS[this.jobId];
@@ -304,6 +305,8 @@ export class Game {
       legwearType: lt,
       tintTop: top,
       tintBottom: bottom,
+      tintShoe: (home ? sel.homeShoe : sel.shoe) || null,
+      tintAccent: (home ? null : sel.accent) || null,
       // bundled bodies with nothing picked get the default see-through-when-wet parts (their tops)
       wetMaterials: o.model?.asset && !(o.model.wetMaterials || []).length ? null : o.model?.wetMaterials || [],
       keepMaterials: o.model?.keepMaterials || null,
@@ -861,7 +864,7 @@ export class Game {
     // remember what the player wore today (the title screen picks from these)
     const today = this.state.daily.player;
     if (today) {
-      const look = { outfit: today.outfit || 0, top: today.top || null, bottom: today.bottom || null, legwearType: today.legwearType || null };
+      const look = { outfit: today.outfit || 0, top: today.top || null, bottom: today.bottom || null, shoe: today.shoe || null, accent: today.accent || null, legwearType: today.legwearType || null };
       const worn = (this.state.worn ||= []);
       const k = JSON.stringify(look);
       if (!worn.some((w) => JSON.stringify(w) === k)) worn.push(look);
@@ -5222,7 +5225,7 @@ export class Game {
       });
     }
     for (const o of ch._dm.meshes) o.castShadow = lvl >= 1;
-    for (const m of ch._dm.outlines) m.visible = lvl >= 2;
+    for (const m of ch._dm.outlines) m.visible = lvl >= 2 && outlinesOn();
   }
 
   cullCharacters() {

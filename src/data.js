@@ -483,6 +483,7 @@ export const DEFAULT_SETTINGS = {
   wetMaxSee: 0.5,
   allowedUnfinished: 2,
   dynamicRes: true,
+  outlines: true,
   volMaster: 0.8,
   volSfx: 1,
   volVoice: 0.9,
