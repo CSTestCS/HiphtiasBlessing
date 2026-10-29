@@ -313,6 +313,7 @@ export async function createCharacter(opts = {}) {
     try {
       const ch = opts.full || !opts.key ? await createFullVRM(opts) : await createClonedVRM(opts);
       if (opts.clothes && opts.clothes.vrm) await wearOtherClothes(ch, opts.clothes);
+      if (opts.pieces?.length || opts.hideOwn?.length) await wearPieces(ch, opts.pieces || [], opts.hideOwn || [], opts);
       if (opts.underwear && opts.underwear.panty) {
         try {
           await applyUnderwear(ch, opts.underwear, opts.cfg || {}, opts.underwearRes || 1024);
@@ -1126,7 +1127,7 @@ function applyTints(ch, opts) {
       continue;
     }
     if (leg) mulColor(m, opts.tintBottom || rnd?.bottom || col.bottom, raw && !opts.tintBottom);
-    else if (SKIN_RE.test(name)) mulColor(m, rnd?.skin || col.skin, raw);
+    else if (SKIN_RE.test(name) || /faceeyeline/i.test(name)) mulColor(m, rnd?.skin || col.skin, raw); // the eyeline shading is skin too
     else if (HAIR_RE.test(name)) mulColor(m, rnd?.hair || col.hair, raw);
     else if (IRIS_RE.test(name)) mulColor(m, rnd?.eye || col.eye, raw);
     else if (/shoe|boot/i.test(name)) mulColor(m, opts.tintShoe || rnd?.shoe || col.shoe, raw && !opts.tintShoe);
@@ -1694,15 +1695,94 @@ async function wearOtherClothes(ch, clothes) {
   });
   for (const m of meshes) {
     m.userData.fitted = true;
+    m.userData.covers = null; // keep the body (and its underwear) under the clothes
     const mats = Array.isArray(m.material) ? m.material : [m.material];
     const nm = cleanName(mats[0].name);
     const isLeg = legSet ? legSet.has(nm) : LEGWEAR_RE.test(nm);
+    m.userData.isLegwear = isLeg;
     if (isLeg) ch.legwearMeshes.push(m);
     mats.forEach((mm) => ch.mats.push({ m: mm, leg: isLeg, name: cleanName(mm.name) }));
   }
   ch.legwearMeshes = ch.legwearMeshes.filter((m) => !m.userData.hiddenByClothes);
   ch.setLegwear(ch.legwearOn);
   refreshBodyHiding(ch);
+}
+
+/**
+ * Mix and match: hide some of this body's own clothing parts and put on single pieces from other
+ * models. pieces: [{ vrm, key, mats: string[] ('*' = all their clothes), legwearMaterials }].
+ * Nothing on the body underneath is cut away, so underwear and skin stay where they are.
+ */
+async function wearPieces(ch, pieces, hideOwn, opts = {}) {
+  const isCloth = (n) => (CLOTH_RE.test(n) || LEGWEAR_RE.test(n)) && !SKIN_RE.test(n);
+  const hideAll = hideOwn.includes('*');
+  const hide = new Set(hideOwn);
+  ch.scene.traverse((o) => {
+    if (!o.isMesh || o.userData.fitted) return;
+    const names = (Array.isArray(o.material) ? o.material : [o.material]).map((m) => cleanName(m && m.name));
+    if (names.some((n) => hide.has(n) || (hideAll && isCloth(n)))) {
+      o.visible = false;
+      o.userData.hiddenByClothes = true;
+    }
+  });
+  ch.legwearMeshes = ch.legwearMeshes.filter((m) => !m.userData.hiddenByClothes);
+  for (const pc of pieces) {
+    if (!pc.vrm) continue;
+    try {
+      const tpl = await getTemplate(pc.key || 'piece:' + Math.random(), pc.vrm);
+      const all = !pc.mats || pc.mats.includes('*');
+      const want = new Set(pc.mats || []);
+      const legSet = pc.legwearMaterials?.length ? new Set(pc.legwearMaterials) : null;
+      const meshes = fitClothing(tpl.scene, tpl.humanoid, ch, (o) => {
+        const names = (Array.isArray(o.material) ? o.material : [o.material]).map((m) => cleanName(m && m.name));
+        return names.some((n) => (all ? isCloth(n) : want.has(n)));
+      });
+      for (const m of meshes) {
+        m.userData.fitted = true;
+        m.userData.covers = null; // keep the body (and its underwear) under it
+        const mats = Array.isArray(m.material) ? m.material : [m.material];
+        const nm = cleanName(mats[0].name);
+        const isLeg = legSet ? legSet.has(nm) : LEGWEAR_RE.test(nm);
+        m.userData.isLegwear = isLeg;
+        if (isLeg) ch.legwearMeshes.push(m);
+        if (/shoe|boot/i.test(nm)) ch.shoeMeshes?.push(m);
+        const added = mats.map((mm) => ({ m: mm, leg: isLeg, name: cleanName(mm.name), base: mm.color?.clone(), baseShade: mm.shadeColorFactor?.clone() }));
+        ch.mats.push(...added);
+        // the outfit's colors reach the borrowed piece too (bundled bodies' white clothes take them fully)
+        applyTints({ mats: added }, { ...opts, tintable: !!pc.tintable && !!opts.tintable, cfg: null, randomize: false });
+      }
+    } catch (e) {
+      console.warn('could not fit a clothing piece', e);
+    }
+  }
+  ch.setLegwear(ch.legwearOn);
+}
+
+/**
+ * What an outfit borrows from other models, ready for createCharacter: { pieces, hideOwn }.
+ * Outfits store pieces as [{ src: model ref, mat: material name or '*' }]; the older
+ * clothesFrom (a whole other outfit) means all of that model's clothes instead of your own.
+ */
+export async function outfitClothes(o, load, keyOf) {
+  let list = o.pieces || [];
+  let hideOwn = o.hideOwn || [];
+  if (o.clothesFrom && !o.pieces) {
+    list = [{ src: o.clothesFrom, mat: '*' }];
+    hideOwn = ['*'];
+  }
+  const groups = new Map();
+  for (const pc of list) {
+    const k = keyOf(pc.src);
+    if (!k) continue;
+    if (!groups.has(k)) groups.set(k, { src: pc.src, mats: [] });
+    groups.get(k).mats.push(pc.mat);
+  }
+  const pieces = [];
+  for (const [key, g] of groups) {
+    const vrm = await load(g.src);
+    if (vrm) pieces.push({ vrm, key, mats: g.mats, legwearMaterials: g.src.legwearMaterials || null, tintable: !!g.src.asset || !!g.src.tintable });
+  }
+  return { pieces, hideOwn };
 }
 
 /** Put the lender's legwear on the borrower. Returns an undo function. */

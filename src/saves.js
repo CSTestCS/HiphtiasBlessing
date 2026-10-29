@@ -53,6 +53,7 @@ export function modelKeys(profile) {
     for (const o of d?.outfits || []) {
       if (o.model?.key) keys.push(o.model.key);
       if (o.clothesFrom?.key) keys.push(o.clothesFrom.key);
+      for (const pc of o.pieces || []) if (pc.src?.key) keys.push(pc.src.key);
     }
   }
   return keys;

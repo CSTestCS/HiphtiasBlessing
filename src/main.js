@@ -5,7 +5,7 @@ import { ui, esc } from './ui.js';
 import { storage, newId } from './storage.js';
 import { dyeName, coordinatedColors } from './dyes.js';
 import { randomApartment, randomWorkSlot, civBodyFrom, randomBodyFor, aptById, UNDERWEAR, UNDERWEAR_COLORS, prettyUnderwear, randomUnderwear, JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, FEMALE_NAMES, MALE_NAMES, nameFor, guessGender, guessModelGender, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
-import { createCharacter, inspectVRM, randomColors, addAngelic, clearTemplates, setOutlines } from './character.js';
+import { createCharacter, inspectVRM, outfitClothes, randomColors, addAngelic, clearTemplates, setOutlines } from './character.js';
 import { Game, controlsTable } from './game.js';
 import { listSlots, loadSlot, createSlot, writeProfile, deleteSlot, otherSlotPeople } from './saves.js';
 import { modelBuffer, modelKey } from './assets.js';
@@ -174,7 +174,7 @@ async function outfitOpts(o, tint = {}, gender = null, underwear = null) {
     wetMaterials: m?.wetMaterials || [],
     keepMaterials: m?.keepMaterials || null,
     gender,
-    clothes: o.clothesFrom ? { vrm: await getModel(o.clothesFrom), key: modelKey(o.clothesFrom), legwearMaterials: o.clothesFrom.legwearMaterials || null } : null,
+    ...(await outfitClothes(o, getModel, modelKey)),
   };
 }
 
@@ -227,6 +227,22 @@ document.addEventListener('click', (ev) => {
   det.querySelector('summary .swname').textContent = c ? dyeName(c) : 'Original colors';
   det.open = false;
 });
+
+// ---- mix-and-match clothing pieces
+const pieceSrc = {}; // editor prefix -> the model picked in "add a piece"
+const pieceMats = new Map(); // that model -> its material names
+const NOT_CLOTHES = /(skin|body|face|eye|hair|brow|mouth|lash|teeth|tooth|tongue|outline)/i;
+const clothingParts = (mats) => (mats || []).filter((n) => n && !NOT_CLOTHES.test(n));
+const prettyPart = (n) => (n === '*' ? 'all clothes' : n.replace(/^N\d+_\d+_\d+_/, '').replace(/_\d+_[A-Z]+$/, '').replace(/_/g, ' '));
+const ownWorn = (o, n) => !(o.hideOwn || []).includes('*') && !(o.hideOwn || []).includes(n);
+function pieceSrcRef(v) {
+  if (v.startsWith('asset:')) {
+    const b = BUNDLED.bodies.find((x) => x.asset === v.slice(6));
+    return b ? { asset: b.asset, title: b.title } : null;
+  }
+  const c = civModels.find((x) => x.key === v.slice(4));
+  return c ? { key: c.key, title: c.title, legwearMaterials: c.legwearMaterials?.length ? [...c.legwearMaterials] : null } : null;
+}
 
 function matList(model, prefix, field = 'legwearMaterials') {
   if (!model || !model.materials) return '';
@@ -480,7 +496,8 @@ async function showCivilians() {
       <div class="footer"><button class="secondary" id="civ-back">Back</button><span></span></div>
     </div>`);
   previewer = new Previewer(s.querySelector('#pv'));
-  let cur = settings.civilians[0] || { ...BUNDLED.civilians[0] };
+  // preview the most recently added model first
+  let cur = settings.civilians[settings.civilians.length - 1] || { ...BUNDLED.civilians[BUNDLED.civilians.length - 1] };
   const show = async () => {
     if (!cur) return previewer.show({ colors: randomColors() });
     // same settings townsfolk get in-game: colors per part, legwear, underwear...
@@ -833,13 +850,32 @@ function outfitEditor(o, prefix, full) {
     `<option value="simple" ${!m ? 'selected' : ''}>Simple figure</option>`,
     imported && !isCiv ? `<option value="cur" selected>Imported: ${esc(m.title)}</option>` : '',
   ].join('');
-  const cf = o.clothesFrom;
-  const clothesOpts = [
-    `<option value="">Its own clothes</option>`,
-    ...BUNDLED.bodies.map((b) => `<option value="${b.asset}" ${cf?.asset === b.asset ? 'selected' : ''}>Clothes from: ${esc(b.title)}</option>`),
-    ...civs.map((c) => `<option value="civ:${esc(c.key)}" ${cf?.key === c.key ? 'selected' : ''}>Clothes from: ${esc(c.title)}</option>`),
-    cf?.key && !civs.some((c) => c.key === cf.key) ? `<option value="cur" selected>Clothes from: ${esc(cf.title || 'model')}</option>` : '',
+  // older saves: a whole other outfit becomes "all of that model's clothes" instead of your own
+  if (o.clothesFrom && !o.pieces) {
+    o.pieces = [{ src: o.clothesFrom, mat: '*' }];
+    o.hideOwn = ['*'];
+    delete o.clothesFrom;
+  }
+  const srcKey = pieceSrc[prefix];
+  const srcMats = srcKey ? pieceMats.get(srcKey) : null;
+  const srcOpts = [
+    `<option value="">Pick a model...</option>`,
+    ...BUNDLED.bodies.map((b) => `<option value="asset:${b.asset}" ${srcKey === 'asset:' + b.asset ? 'selected' : ''}>${esc(b.title)}</option>`),
+    ...civs.map((c) => `<option value="civ:${esc(c.key)}" ${srcKey === 'civ:' + c.key ? 'selected' : ''}>Townsperson: ${esc(c.title)}</option>`),
   ].join('');
+  const piecesUI = m
+    ? `<label>Clothes</label>
+        ${m.materials ? '' : '<div class="note">(Show the parts list above to pick which of its own clothes this body keeps on.)</div>'}
+        ${m.materials ? `<div class="note">Own clothing parts worn (untick to take one off):</div><div class="matlist">${clothingParts(m.materials)
+          .map((n) => `<label><input type="checkbox" data-${prefix}own="${esc(n)}" ${ownWorn(o, n) ? 'checked' : ''}/> ${esc(prettyPart(n))}</label>`)
+          .join('')}</div>` : ''}
+        <div class="note">Pieces from other models, fitted to this body:</div>
+        <div class="matlist">${(o.pieces || []).length ? o.pieces.map((pc, i) => `<label>${esc(pc.src?.title || 'model')}: ${pc.mat === '*' ? 'all clothes' : esc(prettyPart(pc.mat))} <button class="secondary" data-${prefix}pdel="${i}" style="padding:0 6px;margin-left:6px">✕</button></label>`).join('') : '<span class="note">None yet.</span>'}</div>
+        <div class="row" style="margin-top:6px;gap:6px;flex-wrap:wrap">
+          <select data-${prefix}psrc>${srcOpts}</select>
+          ${srcKey ? (srcMats ? `<select data-${prefix}ppiece><option value="*">All their clothes</option>${clothingParts(srcMats).map((n) => `<option value="${esc(n)}">${esc(prettyPart(n))}</option>`).join('')}</select><button class="secondary" data-${prefix}padd>Add piece</button>` : '<span class="note">Reading model...</span>') : ''}
+        </div>`
+    : '';
   return `
     <label>Usual legwear</label>
     <select data-${prefix}lw><option value="pants" ${o.legwearType === 'pants' ? 'selected' : ''}>Pants</option><option value="skirt" ${o.legwearType === 'skirt' ? 'selected' : ''}>Skirt</option></select>
@@ -859,8 +895,7 @@ function outfitEditor(o, prefix, full) {
         ${m.materials ? `<div class="note">Parts that turn see-through when wet:</div>${matList(m, prefix + 'wet', 'wetMaterials')}` : ''}
         ${m.materials ? `<div class="note">Parts kept on in underwear, at home and at the pool (glasses, accessories):</div>${matList(m, prefix + 'keep', 'keepMaterials')}` : ''}
         <label><input type="checkbox" data-${prefix}uw ${m.underwearOverlay ? 'checked' : ''}/> Add simple underwear overlay (only if the model has no underwear)</label>
-        <label>Clothes</label><select data-${prefix}clothes>${clothesOpts}</select>
-        <div class="note">Wear another model's clothes, fitted to this body.</div></details>`
+        ${piecesUI}</details>`
         : ''
     }
     ${
@@ -993,14 +1028,49 @@ function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator, onRefr
     };
   if (q('pv')) q('pv').onclick = refresh;
   if (q('uw')) q('uw').onchange = (e) => ((o.model.underwearOverlay = e.target.checked), refresh());
-  if (q('clothes'))
-    q('clothes').onchange = (e) => {
-      const v = e.target.value;
-      if (v === 'cur') return;
-      const c = v.startsWith('civ:') ? civModels.find((x) => x.key === v.slice(4)) : null;
-      const b = BUNDLED.bodies.find((x) => x.asset === v);
-      o.clothesFrom = c ? { key: c.key, title: c.title, legwearMaterials: c.legwearMaterials?.length ? [...c.legwearMaterials] : null } : b ? { asset: b.asset, title: b.title } : null;
+  const redraw = () => {
+    if (!onRefresh) previewTarget = target;
+    rerender();
+  };
+  s.querySelectorAll(`[data-${prefix}own]`).forEach((el) => {
+    el.onchange = () => {
+      const n = el.getAttribute(`data-${prefix}own`);
+      let hide = o.hideOwn || [];
+      if (hide.includes('*')) hide = clothingParts(o.model?.materials);
+      hide = hide.filter((x) => x !== n);
+      if (!el.checked) hide.push(n);
+      o.hideOwn = hide;
       refresh();
+    };
+  });
+  s.querySelectorAll(`[data-${prefix}pdel]`).forEach((el) => {
+    el.onclick = () => {
+      o.pieces.splice(+el.getAttribute(`data-${prefix}pdel`), 1);
+      redraw();
+    };
+  });
+  if (q('psrc'))
+    q('psrc').onchange = async (e) => {
+      const v = e.target.value;
+      pieceSrc[prefix] = v || null;
+      redraw();
+      if (!v || pieceMats.has(v)) return;
+      try {
+        const info = await inspectVRM(await getModel(pieceSrcRef(v)));
+        pieceMats.set(v, info.materials);
+      } catch (err) {
+        pieceMats.set(v, []);
+      }
+      if (pieceSrc[prefix] === v) redraw();
+    };
+  if (q('padd'))
+    q('padd').onclick = () => {
+      const src = pieceSrcRef(pieceSrc[prefix] || '');
+      if (!src) return;
+      const mat = q('ppiece').value;
+      o.pieces = (o.pieces || []).filter((pc) => !(modelKey(pc.src) === modelKey(src) && (pc.mat === mat || mat === '*')));
+      o.pieces.push({ src, mat });
+      redraw();
     };
   if (o.model) {
     bindMatList(s, o.model, prefix + 'mat', refresh);

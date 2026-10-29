@@ -7,7 +7,7 @@ import { ui, esc } from './ui.js';
 import { NPC, angDiff, pick, propMesh } from './npc.js';
 import { drawPortrait } from './portrait.js';
 import { sound, reactionSound, applyVolumeSettings, volumeSlidersHTML, bindVolumeSliders } from './audio.js';
-import { createCharacter, createMannequin, randomColors, addAngelic, setExpressionMax, setWetMaxSee, setOutlines, outlinesOn, borrowLegwear, workKindFor } from './character.js';
+import { createCharacter, createMannequin, outfitClothes, randomColors, addAngelic, setExpressionMax, setWetMaxSee, setOutlines, outlinesOn, borrowLegwear, workKindFor } from './character.js';
 import { buildLobby } from './levels/lobby.js';
 import { buildHallway, buildPool, buildLaundry } from './levels/building.js';
 import { Rain } from './weather.js';
@@ -334,7 +334,7 @@ export class Game {
       bottom = sel.homeBottom || null;
     }
     const lt = (home ? sel.homeLegwearType : sel.legwearType) || o.legwearType;
-    const clothes = o.clothesFrom ? { vrm: await modelBuffer(o.clothesFrom), key: modelKey(o.clothesFrom), legwearMaterials: o.clothesFrom.legwearMaterials || null } : null;
+    const worn = await outfitClothes(o, modelBuffer, modelKey);
     const ch = await createCharacter({
       vrm: await modelBuffer(o.model),
       key: modelKey(o.model),
@@ -352,7 +352,7 @@ export class Game {
       wetMaterials: o.model?.asset && !(o.model.wetMaterials || []).length ? null : o.model?.wetMaterials || [],
       keepMaterials: o.model?.keepMaterials || null,
       gender: def.gender,
-      clothes,
+      ...worn,
       cfg: o.model?.cfg || null,
       underwear: def.underwear?.panty ? def.underwear : null,
       underwearRes: 1024,
