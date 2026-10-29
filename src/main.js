@@ -904,7 +904,9 @@ function outfitEditor(o, prefix, full) {
            <label>Top</label>${swatches('top', o.colors.top, prefix + 'top')}<label>Pants / skirt</label>${swatches('bottom', o.colors.bottom, prefix + 'bottom')}
            <label>Shoes</label>${swatches('top', o.colors.shoe, prefix + 'shoe')}<label>Accents</label>${swatches('top', o.colors.accent, prefix + 'accent')}
            <label>Eyes</label>${swatches('eye', o.colors.eye, prefix + 'eye')}`
-        : ''
+        : tintable
+          ? `<label>Skin</label>${swatches('skin', o.colors.skin, prefix + 'skin')}<label>Hair</label>${swatches('hair', o.colors.hair, prefix + 'hair')}<label>Eyes</label>${swatches('eye', o.colors.eye, prefix + 'eye')}`
+          : ''
     }
     ${full && !m ? `<label>Underwear color</label>${swatches('under', o.colors.under, prefix + 'under')}` : ''}`;
 }
