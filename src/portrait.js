@@ -104,6 +104,7 @@ export function drawPortrait(renderer, char, look, canvas2d, restore) {
     pos: root.position.clone(),
     rot: root.rotation.clone(),
     visible: root.visible,
+    auto: root.matrixWorldAutoUpdate,
     mood: { ...(char.mood || {}) },
     propVis: char.prop ? char.prop.visible : null,
     overHead: char.propOverHead,
@@ -114,6 +115,8 @@ export function drawPortrait(renderer, char, look, canvas2d, restore) {
     root.position.set(0, look.frame === 'full' && look.pose === 'float' ? 0.12 : 0, 0);
     root.rotation.set(0, look.turn ?? 0.45, 0);
     root.visible = true;
+    // off-screen people skip pose updates; make sure this one is fully posed and placed
+    root.matrixWorldAutoUpdate = true;
     if (char.prop) char.prop.visible = false;
     char.setMood(look.mood || {});
     // settle into the pose and expression
@@ -167,6 +170,7 @@ export function drawPortrait(renderer, char, look, canvas2d, restore) {
     root.position.copy(saved.pos);
     root.rotation.copy(saved.rot);
     root.visible = saved.visible;
+    root.matrixWorldAutoUpdate = saved.auto;
     if (char.prop && saved.propVis != null) char.prop.visible = saved.propVis;
     char.setMood(saved.mood);
     char.resetPhysics?.();

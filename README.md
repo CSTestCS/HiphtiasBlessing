@@ -70,7 +70,7 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 - **Shame** rises when people outside work see you and when you're caught at work. Fill it and you lose. Sleeping lowers it. The Settings screen scales how fast it builds.
 - **Makeshift skirts**: tie a carried box, newspaper, folder, tote bag, towel or tablecloth on with F. Each fails in its own way: boxes crack, paper blows away, bags tear, cloth snags on chairs. People find it odd, so it still drains Composure.
 - **Excuses**: when someone comes over because you're acting strange, pick an excuse ("Posture exercise.", "Workplace ergonomics."...). Whether it works depends on who's asking.
-- **Hiding**: carry a box, tray, bag, newspaper, umbrella... in front of you (E to pick up, G to put down), sit at desks, tables and benches (nobody can tell while you're seated), duck into hiding spots, or crouch behind low furniture.
+- **Hiding**: carry a box, tray, bag, newspaper, pillow, towel... in front of you (umbrellas keep the rain off but don't hide you) (E to pick up, G to put down), sit at desks, tables and benches (nobody can tell while you're seated), duck into hiding spots, or crouch behind low furniture.
 - **Composure** drains when you crouch or run in plain view at work. At zero, someone comes over to check on you.
 - **Stamina** limits running.
 - **Coworker personalities** when they catch you:
@@ -85,10 +85,14 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 - **Sneaking coworkers** (oddballs and blessed coworkers) face the same stakes. They use every trick you can: they grab something to hold, face onlookers with it, dash behind cover, and sit down at a desk when surrounded until it's safe to move.
 - **Coworkers sit at their own desks**, so those chairs are usually taken. Sitting in someone's chair when they come back is suspicious.
 - **Vision**: everyone sees 180°, but not through walls. The sight cones show exactly what they can see. Strict coworkers, customers and the manager can catch them, they get written up, and three write-ups gets them fired.
+- **Managers** have a hidden personality that changes how they talk to you, but they always write you up. An oddball manager sneaks around too: spot them and they get reported to HR, and after three reports they're let go. A coworker with a clean record gets promoted (their old job is filled a few days later); if everyone has a write-up, a new manager is hired.
+- **Fitting rooms** (retail): shoppers change in them piece by piece and try on other colors (people from your other saves try on their other outfits). Barge into an occupied one and they complain at once.
+- **Borrowing**: if a friend says no because it's too public, they walk to the nearest empty room and offer the swap there.
 - **Blessed coworkers** never report you, but blessed friends can't help you anymore either.
 
 ## Getting around town
 The city is a 4×4 grid of blocks with named streets, parks and shops, full of hedges, kiosks, phone booths, food carts, parked cars and benches. You leave and come home through your building: the elevator and the lobby (with a doorman), or the back stairs and the residents' pool, through a side gate on the street. The pool showers soak you, which makes "I was swimming" a much better excuse. Watch out for your neighbor in 7F-06, who has a habit of opening his door at exactly the wrong moment. You need to be at work by 9:00 AM. A **minimap and compass** point to your objective.
+- **Free movement**: leave home before finishing your routine, go back anytime, and carry things out with you. Take the elevator to other floors, knock on coworkers' doors (they invite you in if they're home and like you), and walk into other buildings and workplaces. Before you're dressed the usual stealth rules apply, and being seen fully undressed outside doubles the shame (the hallway and pool still pass as swimwear).
 - **Weather**: sunny, cloudy or rain, and it can change during the day. Hold a carried item over your head with T to keep the rain off (it stops covering your front).
   Rain (and splashing cars) soaks your clothes with a wet sheen; parts you marked (tops on the bundled models) turn see-through. An umbrella keeps you dry.
 - **Buses**: 3 lines (Red Ring, Blue Crosstown, Green Midtown). They loop on fixed routes and stop at every stop. None of them goes straight to your job.

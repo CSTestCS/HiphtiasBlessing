@@ -25,7 +25,7 @@ import { buildShop } from './levels/shop.js';
 import { BusSystem, DOOR } from './bus.js';
 import {
   JOBS, GENERIC_TASKS, STORY, REPORT_REASONS, ERRANDS, PLACES,
-  WEEKDAYS, weekday, isWorkday, CELESTI_DAY, ROLE_TASKS, mishapFor, SHAME, weatherFor, WEATHER, pronouns, BUNDLED, guessGender, guessModelGender, nameFor, randomUnderwear, randomBodyFor, APARTMENTS, aptById, randomApartment } from './data.js';
+  WEEKDAYS, weekday, isWorkday, CELESTI_DAY, ROLE_TASKS, mishapFor, SHAME, weatherFor, WEATHER, pronouns, BUNDLED, guessGender, guessModelGender, nameFor, randomUnderwear, randomBodyFor, APARTMENTS, aptById, randomApartment, WORK_SLOTS } from './data.js';
 
 const WALK = 2.0;
 const RUN = 4.3;
@@ -101,6 +101,11 @@ export class Game {
     this.shops = {};
     this.cwChars = [];
     this.cwRuntime = this.profile.coworkers.map(() => ({ lendCd: 0, distractCd: 0, bond: 0, complaints: 0 }));
+    // the manager has a personality too, never shown to the player
+    if (!this.profile.manager.personality) {
+      const ks = ['friend', 'sympathetic', 'neutral', 'strict', 'distant', 'oddball'];
+      this.profile.manager.personality = ks[Math.floor(Math.random() * ks.length)];
+    }
     this.civPool = [];
     this.clock = 450;
     this.stamina = 100;
@@ -153,7 +158,7 @@ export class Game {
     this.levels.hallway = buildHallway(this.homeApt, this.homeFloor);
     this.levels.pool = buildPool(this.homeApt, this.homeFloor);
     this.levels.laundry = buildLaundry();
-    this.levels.city = buildCity({ workplaceName: this.job.workplaceName, jobColor: '#273c75', homeId: this.profile.home || 'maple', workSlot: this.profile.workSlot || 0 });
+    this.levels.city = buildCity({ workplaceName: this.job.workplaceName, jobColor: '#273c75', homeId: this.profile.home || 'maple', workSlot: this.profile.workSlot || 0, otherJobs: this.otherWorkplaces() });
     ui.setScreen('<div class="loading">Building your workplace...</div>');
     await new Promise((r) => setTimeout(r, 30));
     this.levels.work = buildWorkplace(this.jobId, this.job, { coworkers: this.profile.coworkers, seed: this.state.seed });
@@ -625,6 +630,13 @@ export class Game {
       lk.name = this.celestiName();
       lk.bg = lk.bg || 'holy';
     } else if (w.char) {
+      // someone without a model right now (off screen) gets one so they can be drawn
+      if (w.char.placeholder && w.swapChar && this.civPool.length) {
+        const stub = w.char;
+        w.swapChar(this.acquireCivilian(), true);
+        if (stub.isStub) this.stubPool.push(stub);
+        if (w.kind === 'pedestrian') this.dressCivilian(w);
+      }
       lk.char = w.char;
       lk.name = this.speakerName(w);
     }
@@ -678,6 +690,163 @@ export class Game {
     return ['commute_am', 'commute_pm', 'dayoff'].includes(this.phase);
   }
 
+  /** The other kinds of workplace in town (visitable), each on a free lot picked per save. */
+  otherWorkplaces() {
+    const homeBlock = this.homeApt.block;
+    const mine = this.profile.workSlot || 0;
+    const free = WORK_SLOTS.map((_, i) => i).filter((i) => i !== mine && WORK_SLOTS[i][0] !== homeBlock && WORK_SLOTS[i][0] !== WORK_SLOTS[mine][0]);
+    let seed = (this.profile.layoutSeed || 1) * 9301 + 49297;
+    const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+    for (let i = free.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [free[i], free[j]] = [free[j], free[i]];
+    }
+    const colors = ['#8e44ad', '#16a085', '#c0392b', '#d35400', '#2c3e50', '#27ae60', '#7f8c8d'];
+    return Object.keys(JOBS)
+      .filter((j) => j !== this.jobId)
+      .map((j, k) => ({ id: j, name: JOBS[j].workplaceName, slot: free[k], color: colors[k % colors.length] }))
+      .filter((j) => j.slot !== undefined);
+  }
+
+  /** Which floor a coworker lives on (picked once from their name; never your own floor in your building). */
+  cwFloor(i) {
+    const def = this.profile.coworkers[i];
+    if (!def) return 2;
+    if (!def.homeFloor) {
+      let h = 0;
+      for (const ch of def.name || 'x') h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+      def.homeFloor = 2 + (h % 11);
+      if (def.home === (this.profile.home || 'maple') && def.homeFloor === this.homeFloor) def.homeFloor = def.homeFloor === 12 ? 2 : def.homeFloor + 1;
+    }
+    return def.homeFloor;
+  }
+
+  /** Is coworker i at home right now (not at work or on the way)? */
+  cwAtHome(i) {
+    const cw = this.state.cw[i];
+    if (!cw) return false;
+    if (this.clock > 1350 || this.clock < 420) return false; // asleep
+    if (!this.isWorkday || cw.fired) return true;
+    const sc = this.daySchedule(i);
+    return !(this.clock > sc.start - 45 && this.clock < sc.end + 40);
+  }
+
+  /** Would coworker i invite you in? */
+  cwGoodTerms(i) {
+    const cw = this.state.cw[i];
+    const pers = this.profile.coworkers[i]?.personality;
+    if (cw.ally || cw.blessed || cw.joined || cw.playing || cw.toldCurse) return true;
+    if (['friend', 'sympathetic', 'oddball'].includes(pers)) return true;
+    return pers === 'neutral' && !cw.warned && !this.playerExposed();
+  }
+
+  /** In a lobby: whose floor to ride up to. */
+  async pickFloor() {
+    const bld = this.visitApt || this.profile.home || 'maple';
+    const opts = [];
+    if (!this.visitApt) opts.push({ label: `Your floor (${this.homeFloor}F)`, value: this.homeFloor });
+    this.profile.coworkers.forEach((c, i) => {
+      if ((c.home || 'maple') !== bld) return;
+      opts.push({ label: `${this.cwFloor(i)}F: ${c.name}'s apartment`, value: this.cwFloor(i) });
+    });
+    opts.push({ label: 'Some other floor', value: 'rand' });
+    let f = opts.length === 2 && !this.visitApt ? opts[0].value : await this.dialog('Elevator', 'Which floor?', opts, false);
+    if (f === 'rand') {
+      const taken = new Set(opts.map((o) => o.value));
+      const free = Array.from({ length: 11 }, (_, k) => k + 2).filter((x) => !taken.has(x));
+      f = free[Math.floor(Math.random() * free.length)] || 3;
+    }
+    if (!this.visitApt && f === this.homeFloor) return this.enterPhase('hallway', { dir: 'in', from: 'elevator', floor: null });
+    return this.enterPhase('hallway', { dir: 'in', from: 'elevator', floor: f });
+  }
+
+  /** Knock on the door at the end of someone else's hallway. */
+  async knock() {
+    sound.play('door');
+    const bld = this.visitApt || this.profile.home || 'maple';
+    const i = this.profile.coworkers.findIndex((c, k) => (c.home || 'maple') === bld && this.cwFloor(k) === this.visitFloor);
+    const exposed = this.playerExposed();
+    if (i < 0) {
+      // a stranger's door
+      if (Math.random() < 0.4) return ui.toast('No one answers.', '', 2500);
+      if (exposed) {
+        this.addShame(SHAME.pedestrian);
+        return this.dialog('A stranger opens the door', pick(['The door opens. A stranger looks you up and down, says nothing, and very slowly closes the door again.', '"Can I hel— oh. OH." The door slams shut.', '"...Wrong apartment, I think." Click.']), undefined, { who: 'player', pose: 'cover', mood: { sad: 0.7, surprised: 0.5 }, bg: 'dark' });
+      }
+      return this.dialog('A stranger opens the door', pick(['"Yes?" ...Wrong door. You mumble an apology.', '"I didn\'t order anything." The door closes.', 'A sleepy neighbor peeks out. "Who are you looking for? Not here, sorry."']), undefined, false);
+    }
+    const def = this.profile.coworkers[i];
+    if (!this.cwAtHome(i)) return ui.toast(`You knock... no answer. ${def.name} isn't home${this.clock > 1350 || this.clock < 420 ? ' (or is asleep)' : ''}.`, '', 3500);
+    const pr = pronouns(def.gender);
+    if (!this.cwGoodTerms(i)) {
+      return this.dialog(`${def.name} opens the door`, exposed
+        ? `${def.name} opens the door a crack, takes one look at you, and sighs. "${this.profile.name}. No. Whatever this is, no." The door shuts.`
+        : `${def.name} opens the door a crack. "${this.profile.name}? Uh... it's not a great time." ${pr.They} doesn't invite you in.`, undefined, false);
+    }
+    await this.dialog(`${def.name} opens the door`, exposed
+      ? `${def.name} opens the door, blinks, and hurriedly pulls you inside before anyone in the hall sees. "Get in, get in!"`
+      : `"${this.profile.name}! What a surprise. Come in!"`, undefined, false);
+    return this.enterPhase('visit', { host: i });
+  }
+
+  /** Talking with the coworker you're visiting. */
+  async chatHost(i) {
+    const def = this.profile.coworkers[i];
+    const cw = this.state.cw[i];
+    const n = this.npcs.find((x) => x.kind === 'host');
+    const look = { who: n, pose: 'clasp', mood: { happy: 0.5 } };
+    const v = await this.dialog(def.name, pick([`"Want something to drink? Make yourself at home."`, `"So, what brings you by?"`, `"It's nice to see someone from work outside of work."`]), [
+      { label: '"Just wanted to hang out."', value: 'chat' },
+      { label: '"About my... situation."', value: 'help' },
+      { label: '"I should get going."', value: 'bye' },
+    ], look);
+    if (v === 'chat') {
+      if (this.cwRuntime[i]) this.cwRuntime[i].bond = (this.cwRuntime[i].bond || 0) + 30;
+      this.state.shame = Math.max(0, this.state.shame - 2);
+      return this.dialog(def.name, pick([`You chat for a while about nothing in particular. It's... nice. You feel a little better.`, `${def.name} puts on some music and tells you all the office gossip. You laugh more than you have all week.`]), undefined, { ...look, mood: { happy: 0.8 } });
+    }
+    if (v === 'help') {
+      if (this.state.celestiMet && !cw.toldCurse) {
+        cw.toldCurse = true;
+        await this.dialog(`${this.profile.name} explains`, `You tell ${def.name} everything: ${this.celestiName()}, Hiphtia, the 'blessing'. ${def.name} listens without laughing once.`, undefined, { who: 'player', pose: 'cover', mood: { sad: 0.5 } });
+      }
+      const help = ['friend', 'sympathetic'].includes(def.personality) || cw.blessed || cw.toldCurse;
+      if (help && !cw.ally) {
+        cw.ally = true;
+        ui.toast(`${def.name} is now your ally!`, 'good', 4000);
+        return this.dialog(def.name, `"Okay. I'll keep an eye out for you at work. If anyone's heading your way, I'll head them off."`, undefined, { ...look, pose: 'fist' });
+      }
+      if (def.personality === 'oddball') return this.dialog(def.name, `"Honestly? I think you're handling it great. Very bold. Ten out of ten."`, undefined, { ...look, pose: 'fist', mood: { happy: 1 } });
+      return this.dialog(def.name, help ? `"I'm already on your side, you know that."` : `${def.name} shifts awkwardly. "I... don't really know what to say about that."`, undefined, look);
+    }
+    return this.enterPhase('hallway', { dir: 'in', from: 'apt' });
+  }
+
+  /** The street right now: before work, after work, or a day off. */
+  streetPhaseNow() {
+    if (!this.isWorkday) return 'dayoff';
+    const w = this.work && this.work.day === this.state.day ? this.work : null;
+    if ((w && w.clockedOut) || this.clock >= SHIFT.end) return 'commute_pm';
+    return 'commute_am';
+  }
+
+  /** Home right now: the morning apartment until the day's done, the evening one after. */
+  homePhaseNow() {
+    const w = this.work && this.work.day === this.state.day ? this.work : null;
+    if (this.night || this.clock >= SHIFT.end || (w && w.clockedOut) || (this.isWorkday === false && this.clock >= 1020)) return 'evening';
+    return 'morning';
+  }
+
+  /** What the player has on: the day's outfit if they got dressed, otherwise what they wear at home. */
+  applyClothes(phase) {
+    const st = this.state;
+    if (st.day === 1 && phase === 'evening') this.legwearGone = true; // the first night ruins the rest
+    const lw = st.day === 1 && !this.legwearGone;
+    // the laundry run is done in home clothes
+    if (this.night && this.night.stage !== 'done' && ['evening', 'hallway', 'laundry'].includes(phase)) return this.wear('home', false);
+    this.wear(this.dressed ? 'out' : 'home', lw);
+  }
+
   async enterPhase(phase, opts = {}) {
     this.transitioning = true;
     this.keys.clear();
@@ -687,7 +856,13 @@ export class Game {
     if (this.player.bus) this.leaveBus(null, true);
     this.standUp(true);
     this.stopHiding(true);
-    this.dropItem(false, true);
+    // a held item comes along through the door (a new day starts with empty hands)
+    const carried = (phase !== 'morning' || opts.back) && !opts.first && this.player.pickup ? this.player.pickup : null;
+    if (carried && this.level) {
+      this.level.pickups = (this.level.pickups || []).filter((k) => k !== carried);
+      carried.mesh.removeFromParent();
+      this.player.pickup = null;
+    } else this.dropItem(false, true);
     this.releaseMovable();
     if (this.player.makeshift) {
       this.player.makeshift.mesh.removeFromParent();
@@ -705,7 +880,7 @@ export class Game {
       this.dog = null;
     }
     const st = this.state;
-    if (phase === 'morning') await this.prepareMorning();
+    if (phase === 'morning' && !opts.back) await this.prepareMorning();
     this.phase = phase;
     // arriving somewhere: through a door, or out of the elevator
     if (!opts.first) {
@@ -728,9 +903,29 @@ export class Game {
     ui.set('hud-prompt', '');
 
     let L;
+    if (['morning', 'evening', 'commute_am', 'commute_pm', 'dayoff', 'work', 'shop', 'visitwork', 'pool', 'laundry'].includes(phase)) {
+      this.lastVisitApt = this.visitApt;
+      this.visitApt = null;
+      this.visitFloor = null;
+    }
     if (phase === 'morning' || phase === 'evening') L = this.levels.apartment;
-    else if (phase === 'lobby') L = this.levels.lobby;
-    else if (phase === 'hallway') L = this.levels.hallway;
+    else if (phase === 'lobby') {
+      // which building: yours, or one you're visiting
+      if (opts.apt !== undefined) this.visitApt = opts.apt && opts.apt !== (this.profile.home || 'maple') ? opts.apt : null;
+      const a = this.visitApt;
+      L = a ? this.levels['lobby:' + a] || (this.levels['lobby:' + a] = buildLobby(aptById(a))) : this.levels.lobby;
+    } else if (phase === 'hallway') {
+      if (opts.floor !== undefined) this.visitFloor = opts.floor;
+      if (!this.visitApt && (this.visitFloor == null || this.visitFloor === this.homeFloor)) this.visitFloor = null;
+      const a = this.visitApt;
+      const f = this.visitFloor;
+      L = a || f ? this.levels[`hallway:${a || 'home'}:${f}`] || (this.levels[`hallway:${a || 'home'}:${f}`] = buildHallway(a ? aptById(a) : this.homeApt, f)) : this.levels.hallway;
+    } else if (phase === 'visit') L = this.levels.visitHome || (this.levels.visitHome = buildApartment());
+    else if (phase === 'visitwork') {
+      const j = (this.visitJob = opts.job || this.visitJob);
+      this.visitLevels ||= {};
+      L = this.visitLevels[j] || (this.visitLevels[j] = buildWorkplace(j, JOBS[j], { coworkers: this.visitStaff(j), seed: 17 + j.length * 31 }));
+    }
     else if (phase === 'pool') L = this.levels.pool;
     else if (phase === 'laundry') L = this.levels.laundry;
     else if (phase === 'work') L = this.levels.work;
@@ -738,6 +933,13 @@ export class Game {
     else L = this.levels.city;
     this.level = L;
     this.scene.add(L.group);
+    if (carried) {
+      (L.pickups ||= []).push(carried);
+      L.group.add(carried.mesh);
+      carried.mesh.visible = false;
+      carried.taken = true;
+      carried.home = { x: L.spawn?.x ?? 0, z: L.spawn?.z ?? 0, y: 0.02 };
+    }
     // items torn up or worn last time are back (someone tidied up)
     for (const k of L.pickups || []) {
       if (!k.broken && !k.taken) continue;
@@ -749,15 +951,17 @@ export class Game {
       k.mesh.visible = true;
     }
     let spawn = L.spawn;
-    if (phase === 'evening') spawn = L.doorSpawn;
+    if (phase === 'evening' || (phase === 'morning' && opts.back)) spawn = L.doorSpawn;
     if (phase === 'lobby') spawn = this.lobbyDir === 'in' ? L.spawnFromStreet : L.spawnFromHome;
-    if (outdoor && prev === 'lobby') spawn = L.spawnHome;
+    if (outdoor && prev === 'lobby') spawn = this.lastVisitApt && L.apartments[this.lastVisitApt] ? L.apartments[this.lastVisitApt].out : L.spawnHome;
+    if (outdoor && prev === 'visitwork') spawn = L.places['job:' + this.visitJob]?.out || spawn;
+    if (phase === 'visit') spawn = L.doorSpawn;
     if (outdoor && prev === 'pool') spawn = L.places.poolgate.out;
     if (phase === 'hallway') spawn = opts.from === 'stairs' ? L.spawnFromStairs : opts.from === 'elevator' ? L.spawnFromElevator : L.spawnFromApt;
     if (phase === 'pool') spawn = opts.from === 'stairs' ? L.spawnFromStairs : L.spawnFromGate;
     if (phase === 'lobby' && prev === 'hallway' && this.lobbyDir === 'out') spawn = L.spawnFromHome;
-    if (phase === 'commute_pm' && prev === 'work') spawn = L.spawnWork;
-    if (phase === 'dayoff' && prev === 'shop') spawn = L.places[this.shopPlace].out;
+    if (outdoor && prev === 'work') spawn = L.spawnWork;
+    if (outdoor && prev === 'shop') spawn = L.places[this.shopPlace].out;
     p.x = spawn.x;
     p.z = spawn.z;
     p.yaw = spawn.yaw;
@@ -769,29 +973,25 @@ export class Game {
     if (this.minimap) this.minimap.setLevel(L);
     this.showMinimap();
 
-    // which clothes: home outfit in the apartment, the day's outfit everywhere else
-    const exposedDay = st.day > 1;
-    if (phase === 'morning') this.wear('home', !exposedDay);
-    else if (phase === 'evening') this.wear('home', false);
-    else if (phase === 'lobby') this.wear('out', this.lobbyDir === 'out' && st.day === 1);
-    else if (phase === 'hallway' || phase === 'pool') {
-      const d = this.bldgDir;
-      if (d === 'out') this.wear('out', st.day === 1);
-      else if (d === 'down' || d === 'up') this.wear('home', false);
-      else this.wear('out', false);
-    } else if (phase === 'laundry') this.wear('home', false);
-    else if (phase === 'commute_am') this.wear('out', st.day === 1);
-    else if (phase === 'work') this.wear('out', st.day === 1);
-    else this.wear('out', false);
+    // which clothes: whatever you're actually wearing (getting dressed is up to you)
+    if (phase === 'morning' && !opts.back) this.dressed = false;
+    if (phase === 'evening' && prev !== 'evening' && !opts.keepClothes) this.dressed = false; // home: out of the day clothes
+    this.applyClothes(phase);
+    if (carried) {
+      p.pickup = carried;
+      this.holdProp(carried.kind);
+    }
     p.char.root.position.set(p.x, 0, p.z);
     p.char.root.rotation.y = p.yaw;
     this.scene.add(p.char.root);
 
     if (phase === 'morning') {
-      this.morning = { wash: false, eat: false, dress: false };
+      if (!opts.back || !this.morning) {
+        this.morning = { wash: false, eat: false, dress: false };
+        this.clock = 450;
+        p.wet = 0;
+      }
       this.cam.dist = 3.2;
-      this.clock = 450;
-      p.wet = 0;
     } else if (phase === 'hallway' || phase === 'pool' || phase === 'laundry') {
       if (this.bldgDir === 'out' && phase !== 'laundry') this.clock = Math.max(this.clock, 460);
       if (phase === 'laundry') this.clock = Math.max(this.clock, 1380);
@@ -813,12 +1013,21 @@ export class Game {
       this.spawnPedestrians(true);
       this.cam.dist = 4.5;
     } else if (phase === 'work') {
-      this.lateMins = Math.round(this.clock - 540);
-      this.clock = Math.max(this.clock, 530);
-      this.work = {
-        clockedIn: false, clockedOut: false, done: 0, task: null, step: 0, lastTpl: null, sneakT: 0,
-        mishapPending: st.day === 1, coverT: 0, requests: [], active: null, reqT: 20, events: {}, pendingStaff: [],
-      };
+      const resume = this.work && this.work.day === st.day;
+      if (resume) {
+        // back after stepping out: the shift carries on where it was
+        this.lateMins = 0;
+        this.work.task = null;
+        this.work.step = 0;
+        this.work.pendingStaff = [];
+      } else {
+        this.lateMins = Math.round(this.clock - 540);
+        this.clock = Math.max(this.clock, 530);
+        this.work = {
+          day: st.day, clockedIn: false, clockedOut: false, done: 0, task: null, step: 0, lastTpl: null, sneakT: 0,
+          mishapPending: st.day === 1, coverT: 0, requests: [], active: null, reqT: 20, events: {}, pendingStaff: [],
+        };
+      }
       // complaints count per day: leaving and coming back doesn't wipe them, a new day does
       if (this.complaintsDay !== st.day) {
         this.complaintsDay = st.day;
@@ -826,14 +1035,22 @@ export class Game {
         this.complainedBy = new Set();
       }
       this.mgrGrace = 0;
-      this.cwRuntime.forEach((r) => {
-        r.bond = 0;
-        r.complaints = 0;
-      });
+      if (!resume)
+        this.cwRuntime.forEach((r) => {
+          r.bond = 0;
+          r.complaints = 0;
+        });
       this.spawnStaff();
       this.spawnInitialCustomers();
       this.customerTimer = 4;
       this.cam.dist = 3.8;
+    } else if (phase === 'visitwork') {
+      this.spawnVisitPlace();
+      this.customerTimer = 4;
+      this.cam.dist = 3.8;
+    } else if (phase === 'visit') {
+      await this.spawnHost(opts.host);
+      this.cam.dist = 3.2;
     } else if (phase === 'shop') {
       this.shopPlace = opts.place;
       this.errand = (this.errands || []).find((e) => e.place === opts.place && !e.done) || null;
@@ -855,7 +1072,7 @@ export class Game {
     await ui.fade(false);
     this.transitioning = false;
     this.last = performance.now();
-    await this.phaseIntro(phase, prev);
+    await this.phaseIntro(phase, prev, opts);
   }
 
   get isRaining() {
@@ -917,8 +1134,9 @@ export class Game {
     await this.saveGame();
   }
 
-  async phaseIntro(phase, prev) {
+  async phaseIntro(phase, prev, opts = {}) {
     const st = this.state;
+    if (opts.back) return; // just popping back in: nothing new to announce
     const name = this.profile.name;
     const wd = WEEKDAYS[weekday(st.day)];
     if (phase === 'morning') {
@@ -939,10 +1157,14 @@ export class Game {
       }
       sound.play('alarm');
       await this.dialog(`Day ${st.day} — ${wd}`, text);
+    } else if (phase === 'lobby' && this.visitApt) {
+      ui.toast(`The lobby of ${aptById(this.visitApt).name}. Take the elevator to visit someone.`, '', 4000);
+    } else if (phase === 'visitwork') {
+      ui.toast(`${JOBS[this.visitJob].workplaceName}. You're just a visitor here, but people will still notice you.`, '', 5000);
     } else if (phase === 'lobby') {
       if (this.lobbyDir === 'out') ui.toast('The building lobby. The street door is to the south.', '', 4000);
       else ui.toast('Take the elevator up to your apartment.', '', 4000);
-    } else if (phase === 'commute_am') {
+    } else if (phase === 'commute_am' && prev !== 'work') {
       ui.toast(`Get to ${this.job.workplaceName} by 9:00. Bus stops are marked with colored BUS signs.`, '', 6000);
       if (st.day > 1) ui.toast('People who notice you raise your Shame. Hedges, bushes and parks give cover.', 'bad', 6000);
     } else if (phase === 'work') {
@@ -956,6 +1178,9 @@ export class Game {
     } else if (phase === 'shop') {
       if (this.errand) ui.toast(`Errand: ${this.errand.name}`, '', 4000);
       else ui.toast('Nothing to do here today.', '', 3000);
+    } else if (phase === 'hallway' && (this.visitApt || this.visitFloor)) {
+      const bld = this.visitApt ? aptById(this.visitApt).short : this.homeApt.short;
+      ui.toast(`${bld}, floor ${this.visitFloor}. Knock on ${this.visitFloor}F-05 at the end of the hall.`, '', 4000);
     } else if (phase === 'hallway') {
       const d = this.bldgDir;
       if (d === 'down') ui.toast('Quietly now. Take the elevator down to the basement.', '', 4500);
@@ -1276,7 +1501,8 @@ export class Game {
     const watchers = this.npcs.filter((o) => o !== n && o.kind !== 'pedestrian');
     const reach = spots.filter((h) => this.level.findPath(n.x, n.z, h.x, h.z));
     const ok = reach.filter((h) => watchers.every((o) => !this.level.lineOfSight(o.eye(), new THREE.Vector3(h.x, 0.9, h.z))));
-    return this.nearest(ok.length ? ok : reach.length ? reach : [n.station], n) || n.station;
+    const here = { x: n.x, z: n.z };
+    return this.nearest(ok.length ? ok : reach.length ? reach : [n.station || here], n) || n.station || here;
   }
 
   coworkerBrain(n) {
@@ -1425,6 +1651,8 @@ export class Game {
       if (!spot) break;
       spot.taken = true;
       steps.push({ go: spot }, { sit: !!spot.sit, t: 15 + Math.random() * 30, yaw: spot.yaw, call: () => {} }, { t: 0, call: () => (spot.taken = false) });
+      // shoppers try things on now and then
+      if (i === 0 && Math.random() < 0.45) steps.push(...this.fittingSteps(c));
     }
     c.plan(steps);
   }
@@ -1436,7 +1664,7 @@ export class Game {
     for (let i = 0; i < n; i++) {
       const spot = this.freeSpot();
       if (!spot) break;
-      const c = new NPC(this, this.acquireCivilian(), { kind: 'customer', name: this.job.customerWord, x: spot.x, z: spot.z, yaw: spot.yaw, range: 9, speed: 1.3 + Math.random() * 0.4 });
+      const c = new NPC(this, this.acquireCivilian(), { kind: 'customer', name: this.phase === 'visitwork' ? JOBS[this.visitJob].customerWord : this.job.customerWord, x: spot.x, z: spot.z, yaw: spot.yaw, range: 9, speed: 1.3 + Math.random() * 0.4 });
       spot.taken = true;
       c.plan([{ sit: !!spot.sit, t: 10 + Math.random() * 40, yaw: spot.yaw }, { t: 0, call: () => (spot.taken = false) }]);
       c.sitting = !!spot.sit;
@@ -1480,6 +1708,48 @@ export class Game {
       n.plan([{ sit: !!spot.sit, t: 10 + Math.random() * 30, yaw: spot.yaw }, { t: 0, call: () => (spot.taken = false) }]);
       this.npcs.push(n);
     }
+  }
+
+  /** Name tags for the staff of a workplace you're only visiting. */
+  visitStaff(job) {
+    const used = new Set();
+    return Array.from({ length: 6 }, (_, i) => {
+      const g = i % 2 ? 'male' : 'female';
+      const name = nameFor(g, used);
+      used.add(name);
+      return { name, gender: g, personality: 'neutral', outfits: [] };
+    });
+  }
+
+  /** Another workplace: staff at their stations and customers, none of whom know you. */
+  spawnVisitPlace() {
+    const L = this.level;
+    const stations = [...(L.stations || [])].filter((st) => !/desk|mydesk|timeclock/.test(st.tag || '')).sort(() => Math.random() - 0.5).slice(0, 5);
+    for (const st of stations) {
+      const n = new NPC(this, this.acquireCivilian(), { kind: 'clerk', name: 'staff', x: st.x, z: st.z, yaw: st.yaw || 0, range: 10 });
+      n.plan([{ work: true, t: 9999, yaw: st.yaw || 0 }]);
+      this.npcs.push(n);
+    }
+    this.spawnInitialCustomers();
+  }
+
+  /** The coworker whose home you're visiting, waiting in their living room. */
+  async spawnHost(i) {
+    const L = this.level;
+    const def = this.profile.coworkers[i];
+    if (!def) return;
+    this.visitHost = i;
+    const ch = this.cwChars[i] || (this.cwChars[i] = await this.charFromDef(def, 'cw' + i, false));
+    ch.root.visible = true;
+    ch.root.matrixWorldAutoUpdate = true;
+    ch.setLegwear(!(this.state.cw[i].blessed || this.state.cw[i].playing));
+    const s = L.pois.celesti;
+    const n = new NPC(this, ch, { kind: 'host', name: def.name, personality: def.personality, index: i, x: s.x, z: s.z, yaw: s.yaw, range: 6 });
+    n.gender = def.gender;
+    n.vision = false;
+    n.plan([{ t: 9999, yaw: s.yaw }]);
+    this.npcs.push(n);
+    L.interactable('host', s.x, s.z, def.name, { r: 2 });
   }
 
   // ---- pedestrians (city) ----
@@ -1582,6 +1852,7 @@ export class Game {
     if (!L) return;
     if (['commute_am', 'commute_pm', 'dayoff', 'shop', 'lobby', 'hallway', 'pool', 'laundry', 'work'].includes(this.phase)) this.clock += dt * this.minPerSec;
     if (this.phase === 'work') this.updateShift(dt);
+    if (this.phase === 'work') this.updateSwapLead();
     if (this.phase === 'laundry') this.updateLaundry(dt);
     this.mgrGrace = Math.max(0, this.mgrGrace - dt);
     if (this.weatherChange && this.clock >= this.weatherChange.at) {
@@ -1645,11 +1916,11 @@ export class Game {
       r.lendCd = Math.max(0, r.lendCd - dt);
       r.distractCd = Math.max(0, r.distractCd - dt);
     }
-    if (this.phase === 'work' || this.phase === 'shop' || this.phase === 'lobby') {
+    if (this.phase === 'work' || this.phase === 'shop' || this.phase === 'lobby' || this.phase === 'visitwork') {
       this.customerTimer -= dt;
       if (this.customerTimer <= 0) {
         this.customerTimer = (this.phase === 'lobby' ? 12 : 5) + Math.random() * 9;
-        this.spawnCustomer(this.phase === 'work' ? null : this.phase === 'lobby' ? 'resident' : 'shopper');
+        this.spawnCustomer(this.phase === 'work' ? null : this.phase === 'lobby' ? 'resident' : this.phase === 'visitwork' ? JOBS[this.visitJob].customerWord : 'shopper');
       }
     }
     if (this.outdoors) {
@@ -1706,7 +1977,7 @@ export class Game {
   /** Is the player's underwear showing? (borrowed legwear and makeshift skirts count as covered) */
   playerExposed() {
     const p = this.player;
-    return !!p.char && !p.char.legwearOn && !p.borrow && !p.makeshift;
+    return !!p.char && (!p.char.legwearOn || !!p.char.undressed) && !p.borrow && !p.makeshift;
   }
 
   // ---- makeshift skirts (box, paper, towel, tote bag...) ----
@@ -2308,7 +2579,7 @@ export class Game {
 
   stealthActive() {
     if (!this.playerExposed() && !this.player.makeshift) return false;
-    return ['work', 'commute_am', 'commute_pm', 'dayoff', 'shop', 'lobby', 'hallway', 'pool', 'laundry'].includes(this.phase);
+    return ['work', 'commute_am', 'commute_pm', 'dayoff', 'shop', 'lobby', 'hallway', 'pool', 'laundry', 'visitwork'].includes(this.phase);
   }
 
   detect(dt) {
@@ -2324,7 +2595,8 @@ export class Game {
     const rainMul = this.outdoors && this.isRaining ? 0.75 : 1;
     const seated = !!p.sitAt;
     for (const n of this.npcs) {
-      n.updateConeVisual(this.stealthActive() && !p.bus && n.inView !== false && Math.hypot(n.x - p.x, n.z - p.z) < 20);
+      // shown for anyone getting near seeing range of the player (wherever the camera points)
+      n.updateConeVisual(this.stealthActive() && !p.bus && !n.away && Math.hypot(n.x - p.x, n.z - p.z) < n.range * rainMul + 8);
       if (!active || !n.canSee()) {
         n.suspicion = Math.max(0, n.suspicion - dt);
         continue;
@@ -2345,7 +2617,8 @@ export class Game {
       }
       if (seesBody) watchers.push(n);
       let covered = false;
-      if (p.carry && seesHip && !p.overHead) {
+      // an umbrella is held up, not in front of you: it hides nothing
+      if (p.carry && p.carry !== 'umbrella' && seesHip && !p.overHead) {
         const toN = Math.atan2(n.x - p.x, n.z - p.z);
         if (Math.abs(angDiff(toN, p.yaw)) < (p.carryCover || 1)) covered = true;
       }
@@ -2412,7 +2685,7 @@ export class Game {
     const step = 0.2;
     this.work.sneakT = step;
     const L = this.level;
-    const sneakers = this.npcs.filter((n) => n.kind === 'coworker' && n.sneaking && !n.away && !n.char.legwearOn && n.state !== 'hiding' && n.state !== 'talk');
+    const sneakers = this.npcs.filter((n) => (n.kind === 'coworker' || n.kind === 'manager') && n.sneaking && !n.away && !n.char.legwearOn && n.state !== 'hiding' && n.state !== 'talk');
     if (!sneakers.length) return;
     for (const o of this.npcs) {
       if (!o.canSee() || o.sneaking) continue;
@@ -2426,7 +2699,7 @@ export class Game {
         if (d < o.range && Math.abs(angDiff(Math.atan2(dx, dz), o.lookYaw)) < o.fov / 2) sees = L.lineOfSight(o.eye(), s.hip());
         // the same tricks the player uses: sitting hides completely, a carried item covers the front
         if (sees && s.sitting && s.cur && s.cur.seatRef?.underTable !== false) sees = false;
-        if (sees && s.carry && Math.abs(angDiff(Math.atan2(o.x - s.x, o.z - s.z), s.yaw)) < 1.0) sees = false;
+        if (sees && s.carry && s.carry !== 'umbrella' && Math.abs(angDiff(Math.atan2(o.x - s.x, o.z - s.z), s.yaw)) < 1.0) sees = false;
         if ((s.graceT || 0) > performance.now()) sees = false;
         let v = o.npcSusp.get(s) || 0;
         if (sees) {
@@ -2779,6 +3052,7 @@ export class Game {
   }
 
   npcCaught(o, s) {
+    if (s.kind === 'manager') return this.hrReport(o, s);
     const cw = this.state.cw[s.index];
     const rt = this.cwRuntime[s.index];
     this.spottedToday(rt, 1);
@@ -2808,6 +3082,76 @@ export class Game {
     this.bubble(o, `${s.name}?! I'm telling the manager.`);
     this.writeupNPC(s, `${o.name} reported ${s.name} to the manager!`);
     void cw;
+  }
+
+  /** The manager's own take on writing you up (their personality is never shown, only heard). */
+  mgrFlavor(text) {
+    const m = this.profile.manager;
+    const n = m.name;
+    const intro = {
+      friend: `${n} looks genuinely miserable. "I'm so sorry. I really am. But if I don't do this, HR does it for me, and they're worse."\n\n`,
+      sympathetic: `${n} speaks softly. "I can tell this isn't easy for you. I'll keep it as quiet as I can... but I still have to file it."\n\n`,
+      strict: `${n} doesn't sit down. "Rules exist for a reason, and I enforce them. No exceptions. Not for anyone."\n\n`,
+      distant: `${n} barely looks up from the screen. "Let's just get this over with."\n\n`,
+      oddball: `${n} is fighting a grin and losing. "Honestly? Kind of iconic. Unfortunately I'm legally required to be horrified."\n\n`,
+    }[m.personality];
+    return (intro || '') + text;
+  }
+
+  /** Someone spotted the (oddball) manager without their legwear: HR hears about it. */
+  hrReport(o, s) {
+    const st = this.state;
+    const nm = this.profile.manager.name;
+    s.graceT = performance.now() + 25000;
+    if (this.letsItSlide(o, s.gender)) return this.slideLine(o, nm);
+    st.mgrReports = (st.mgrReports || 0) + 1;
+    this.bubble(o, pick([`${nm}?! I'm calling HR.`, `Is that... the MANAGER? Without ${s.legwearType}?`, 'Who do you even report the manager to? ...HR. Right.']));
+    this.talkMood(s, { surprised: 1, sad: 0.4 }, 6);
+    ui.toast(`${o.name} reported ${nm} to HR! (${Math.min(3, st.mgrReports)}/3)`, 'bad', 5000);
+    if (st.mgrReports >= 3) this.fireManager();
+  }
+
+  /** Three HR reports and the manager is out: a coworker with a clean record is promoted (or someone is hired). */
+  fireManager() {
+    const st = this.state;
+    const p = this.profile;
+    const old = p.manager;
+    st.mgrReports = 0;
+    const clean = p.coworkers.map((c, i) => i).filter((i) => !st.cw[i].fired && !(st.cw[i].writeups > 0));
+    let news;
+    if (clean.length) {
+      const i = clean[Math.floor(Math.random() * clean.length)];
+      const c = p.coworkers[i];
+      p.manager = { ...JSON.parse(JSON.stringify(c)), hiredDay: st.day };
+      // their old job opens up; it's filled a couple of days later
+      st.cw[i].fired = true;
+      st.cw[i].promoted = true;
+      st.cw[i].firedDay = st.day;
+      news = `${old.name} was let go after one too many HR reports. ${c.name} has been promoted to manager!`;
+    } else {
+      const g = Math.random() < 0.5 ? 'female' : 'male';
+      const used = new Set([p.player.name, old.name, ...p.coworkers.map((c) => c.name)]);
+      const ks = ['friend', 'sympathetic', 'neutral', 'strict', 'distant', 'oddball'];
+      p.manager = {
+        name: (g === 'female' ? 'Ms. ' : 'Mr. ') + nameFor(g, used), gender: g, personality: ks[Math.floor(Math.random() * ks.length)],
+        outfits: [{ model: randomBodyFor(g, this.settings.civilians), legwearType: g === 'female' && Math.random() < 0.5 ? 'skirt' : 'pants', colors: randomColors() }],
+        underwear: randomUnderwear(g), home: randomApartment(), hiredDay: st.day,
+      };
+      news = `${old.name} was let go after one too many HR reports. A new manager, ${p.manager.name}, starts tomorrow.`;
+    }
+    if (!p.manager.personality) p.manager.personality = 'neutral';
+    st.news = st.news || [];
+    st.news.push(news);
+    ui.toast(news, 'good', 8000);
+    // security walks the old manager out
+    const m = this.manager;
+    if (m && !m.removed) {
+      this.setSneaking(m, false);
+      const e = this.level.pois.entrance;
+      m.plan([{ go: e }, { call: () => this.removeNPC(m) }]);
+    }
+    this.manager = null;
+    if (this.slotId) writeProfile(this.slotId, p);
   }
 
   flee(s) {
@@ -2857,6 +3201,8 @@ export class Game {
 
   addShame(v, silent = false) {
     v *= this.settings.shameScale ?? 1;
+    // seen in nothing but underwear: twice as bad, except where swimwear is a believable excuse
+    if (v > 0 && this.player.char?.undressed && !['hallway', 'pool', 'morning', 'evening', 'visit'].includes(this.phase)) v *= 2;
     this.state.shame = Math.max(0, Math.min(100, this.state.shame + v));
     if (!silent && v >= 0.5) ui.toast(`Shame +${Math.round(v * 10) / 10}`, 'bad', 2200);
     if (this.state.shame >= 100 && !this.ended) {
@@ -2905,6 +3251,11 @@ export class Game {
     sound.play('shock');
     if (n.kind === 'manager') {
       await this.managerTalk('manager');
+      // an oddball manager still writes you up... and then gets ideas
+      if (!this.ended && this.manager && this.profile.manager.personality === 'oddball' && !this.manager.sneaking && Math.random() < 0.5) {
+        ui.toast(`${this.profile.manager.name} gives you a strange, thoughtful look as you leave...`, '', 5000);
+        this.later(8, () => this.manager && !this.manager.removed && this.stripPrivately(this.manager, false));
+      }
       return;
     }
     if (n.kind === 'customer' || n.kind === 'guard') {
@@ -3015,7 +3366,9 @@ export class Game {
       reason === 'complaints' ? REPORT_REASONS.complaints() :
       reason === 'late' ? REPORT_REASONS.late(who) :
       reason === 'weekend' ? REPORT_REASONS.weekend(who) :
-      reason === 'commute' ? REPORT_REASONS.commute(who) : REPORT_REASONS.manager();
+      reason === 'commute' ? REPORT_REASONS.commute(who) :
+      reason === 'absent' ? REPORT_REASONS.absent() :
+      reason === 'walkout' ? REPORT_REASONS.walkout() : REPORT_REASONS.manager();
     if (this.player.borrow) this.endBorrow(true);
     this.transitioning = true;
     await ui.fade(true);
@@ -3026,7 +3379,7 @@ export class Game {
       await ui.fade(false);
       this.transitioning = false;
       this.addShame(SHAME.managerTalk, true);
-      await this.dialog(`${mgrName} calls`, STORY.managerTalk(mgrName, this.profile.name, this.lw, Math.min(3, st.writeups), why), undefined, { who: 'player', pose: 'cover', mood: { sad: 0.8 }, bg: 'dark' });
+      await this.dialog(`${mgrName} calls`, this.mgrFlavor(STORY.managerTalk(mgrName, this.profile.name, this.lw, Math.min(3, st.writeups), why)), undefined, { who: 'player', pose: 'cover', mood: { sad: 0.8 }, bg: 'dark' });
       if (st.writeups >= 3) this.lose('Fired!', `${mgrName} doesn't even make you come back in.\n\nThree write-ups. Fired.`);
       else ui.toast(`Write-up ${st.writeups}/3.`, 'bad', 5000);
       return;
@@ -3053,7 +3406,7 @@ export class Game {
     await ui.fade(false);
     this.transitioning = false;
     this.addShame(SHAME.managerTalk, true);
-    await this.dialog(`${mgrName}'s Office`, STORY.managerTalk(mgrName, this.profile.name, this.lw, Math.min(3, st.writeups), why), undefined, { who: this.manager || 'player', pose: st.writeups >= 3 ? 'facepalm' : 'arms', mood: { angry: 0.6 }, bg: 'dark' });
+    await this.dialog(`${mgrName}'s Office`, this.mgrFlavor(STORY.managerTalk(mgrName, this.profile.name, this.lw, Math.min(3, st.writeups), why)), undefined, { who: this.manager || 'player', pose: st.writeups >= 3 ? 'facepalm' : 'arms', mood: { angry: 0.6 }, bg: 'dark' });
     if (st.writeups >= 3) {
       this.lose('Fired!', `${this.profile.name} is escorted out of ${this.job.workplaceName} by security, holding a cardboard box of belongings strategically in front of them.\n\nThree write-ups. Fired.`);
       return;
@@ -3087,14 +3440,45 @@ export class Game {
     });
   }
 
+  /** A friend who led you somewhere private offers the swap once you catch up and nobody's looking. */
+  updateSwapLead() {
+    const p = this.player;
+    if (p.borrow || ui.dialogOpen || this.transitioning) return;
+    for (const n of this.npcs) {
+      const ls = n.leadSwap;
+      if (!ls) continue;
+      if (performance.now() > ls.until || n.state === 'talk') {
+        n.leadSwap = null;
+        continue;
+      }
+      if (ls.offered || Math.hypot(n.x - p.x, n.z - p.z) > 1.8 || n.cur?.go) continue;
+      if (!this.isPrivate(n)) continue;
+      ls.offered = true;
+      (async () => {
+        const v = await this.dialog(n.name, pick(['"Okay, nobody can see us here. Quick, let\'s swap!"', '"Here. Hurry, before someone walks in."']), [
+          { label: '"Thank you!"', value: true },
+          { label: '"Actually, never mind."', value: false },
+        ], { who: n, pose: 'clasp', mood: { surprised: 0.3, happy: 0.3 } });
+        n.leadSwap = null;
+        if (v) this.startLend(n);
+        else n.brain?.();
+      })();
+    }
+  }
+
   startLend(n) {
     const p = this.player;
     if (p.borrow) return;
     if (!this.isPrivate(n)) {
-      this.bubble(n, pick(['Not here! Somewhere private first.', "Everyone would see! Let's find an empty room.", 'Meeting room. Supply closet. Anywhere but here!']), 4);
-      ui.toast(`Find somewhere nobody can see you, then ask ${n.name} again to swap.`, '', 4500);
+      // not out here: they lead the way to the nearest place nobody can see, and wait there
+      const spot = this.privateSpot(n);
+      this.bubble(n, pick(['Not here! Follow me.', "Everyone would see! There's an empty room this way.", 'Come on, somewhere private. This way!']), 4);
+      ui.toast(`Follow ${n.name} somewhere private to swap.`, '', 4500);
+      n.leadSwap = { until: performance.now() + 40000, offered: false };
+      n.plan([{ go: spot }, { t: 40, yaw: n.yaw, call: () => (n.leadSwap = null) }]);
       return;
     }
+    n.leadSwap = null;
     p.borrow = { npc: n, t: LEND_TIME, warned: false, due: false, overdue: 0 };
     // the player actually wears the lender's pants/skirt, fitted to their body
     let undo = null;
@@ -3911,9 +4295,88 @@ export class Game {
     }
   }
 
+  /** A free fitting room (nobody changing in it, and you're not hiding in it). */
+  freeStall() {
+    const stalls = (this.level.pois.hideSpots || []).filter((h) => h.room === 'fitting' && !(h.occupant && !h.occupant.removed) && this.player.hidden !== h);
+    return stalls[Math.floor(Math.random() * stalls.length)] || null;
+  }
+
+  /** Into a fitting room: off comes one piece at a time, on goes the same thing in another color (or another outfit). */
+  fittingSteps(c) {
+    const h = this.freeStall();
+    if (!h) return [];
+    h.occupant = c; // reserved on the way there
+    const inYaw = Math.PI;
+    const free = () => {
+      if (h.occupant === c) h.occupant = null;
+      c.inFitting = null;
+    };
+    return [
+      { go: { x: h.x, z: h.z } },
+      { t: 2.5, yaw: inYaw, call: () => (c.inFitting = h) },
+      { t: 3, yaw: inYaw, call: () => c.char.setLegwear(false) },
+      { t: 3, yaw: inYaw, call: () => c.char.setUndressed?.(true) },
+      { t: 3, yaw: inYaw, call: () => this.tryOn(c) },
+      { t: 3, yaw: inYaw, call: () => c.char.setUndressed?.(false) },
+      { t: 2.5, yaw: inYaw, call: () => c.char.setLegwear(true) },
+      { t: 2, yaw: 0, call: () => this.bubble(c, pick(['Hmm. Maybe.', 'Oh, I like this one.', 'Not my color...', '*checks the mirror*'])) },
+      { t: 0, call: free },
+    ];
+  }
+
+  /** What a customer puts on in the fitting room: the same clothes in new colors, or (people from your other saves) another of their outfits. */
+  async tryOn(c) {
+    const ch = c.char;
+    const named = ch.civName && (this.namedCivs || []).find((e) => e.name === ch.civName);
+    if (named && named.def.outfits.length > 1) {
+      const o = named.def.outfits[1 + Math.floor(Math.random() * (named.def.outfits.length - 1))];
+      try {
+        const g = named.def.gender || guessGender(named.name);
+        const nc = await createCharacter({
+          vrm: await modelBuffer(o.model), key: modelKey(o.model), legwearMaterials: o.model?.legwearMaterials || null,
+          underwearOverlay: !!o.model?.underwearOverlay, colors: o.colors, tintable: !!o.model?.tintable || !!o.model?.asset,
+          legwearType: o.legwearType, gender: g, wetMaterials: o.model?.wetMaterials, cfg: o.model?.cfg || null,
+          underwear: named.def.underwear?.panty ? named.def.underwear : randomUnderwear(g), underwearRes: 512,
+        });
+        if (c.removed) return nc.dispose?.();
+        nc.civilian = true;
+        nc.civName = named.name;
+        nc.gender = g;
+        // still mid-change: the new outfit goes on in the next steps
+        nc.setLegwear(false);
+        nc.setUndressed?.(true);
+        c.swapChar(nc);
+        return;
+      } catch (e) {
+        console.warn('alternate outfit failed', e);
+      }
+    }
+    ch.retint?.();
+  }
+
+  /** You barged into a fitting room someone's changing in: they complain at once, for their own modesty. */
+  async fittingIntrusion(h) {
+    const n = h.occupant;
+    this.stopHiding(true);
+    sound.play('gasp', { x: n.x, z: n.z, pitch: this.voicePitch(n) });
+    this.talkMood(n, { angry: 0.9, surprised: 1 }, 6);
+    this.addShame(SHAME.customer * 0.5);
+    if (this.phase === 'work') {
+      this.complaints = (this.complaints || 0) + 1;
+      await this.dialog('Occupied!', `"EXCUSE ME! It's OCCUPIED! Get out!" The ${n.name} clutches the curtain around themselves and storms off to find a manager.\n\n(${this.complaints}/3 complaints today)`, undefined, { who: n, pose: 'cover', mood: { angry: 0.9, surprised: 1 }, bg: 'speed' });
+      if (this.complaints >= 3 && !this.ended) {
+        this.complaints = 0;
+        await this.managerTalk('complaints');
+      }
+    } else {
+      await this.dialog('Occupied!', `"EXCUSE ME! It's OCCUPIED!" You back out of the fitting room as fast as you can.`, undefined, { who: n, pose: 'cover', mood: { angry: 0.9, surprised: 1 }, bg: 'speed' });
+    }
+  }
+
   hideIn(h) {
     const p = this.player;
     this.cancelInteract();
+    if (h.occupant && !h.occupant.removed && h.occupant.inFitting === h) return this.fittingIntrusion(h);
     p.hidden = h;
     p.restNoted = false;
     sound.play('hide');
@@ -4030,28 +4493,34 @@ export class Game {
     const st = this.state;
     const ph = this.phase;
     const id = it.id;
+    // getting dressed (or back into home clothes) at the wardrobe, any time you're home
+    const wardrobe = () => {
+      const m = this.morning || {};
+      if (this.dressed) return { label: 'Change into your at-home clothes', time: 1.5, run: () => ((this.dressed = false), this.applyClothes(ph), ui.toast('Comfy.', '', 2000)) };
+      if (st.day > 1 && ph === 'morning' && !m.dress)
+        return {
+          label: 'Look for something to wear', time: 1.5,
+          run: async () => {
+            m.dress = true;
+            this.dressed = true;
+            this.applyClothes(ph);
+            await this.dialog('The Wardrobe', STORY.morningNoClothes, undefined, { who: 'player', pose: 'startled', mood: { surprised: 1, sad: 0.4 }, bg: 'speed', frame: 'full' });
+          },
+        };
+      return { label: 'Get dressed', time: 2, run: () => ((m.dress = true), (this.dressed = true), this.applyClothes(ph), ui.toast(st.day === 1 && !this.legwearGone ? 'Looking sharp!' : 'Dressed... from the waist up.', 'good')) };
+    };
+    const goOut = (label) => ({ label, time: 0, run: () => this.enterPhase('hallway', { dir: 'out', from: 'apt' }) });
     if (ph === 'morning') {
       const m = this.morning;
       if (id === 'celesti') return { label: 'Talk to the winged stranger', time: 0, run: () => this.celestiTalk() };
       if (this.celestiChar) return { label: 'Someone is in your living room!', disabled: true };
       if (id === 'sink' && !m.wash) return { label: 'Wash up', time: 2, run: () => ((m.wash = true), ui.toast('Fresh and clean!', 'good')) };
       if (id === 'kitchen' && !m.eat) return { label: 'Eat breakfast', time: 2.5, run: () => ((m.eat = true), ui.toast('Delicious toast.', 'good')) };
-      if (id === 'wardrobe' && !m.dress) {
-        if (st.day === 1)
-          return { label: 'Get dressed', time: 2, run: () => ((m.dress = true), this.wear('out', true), ui.toast('Looking sharp!', 'good')) };
-        return {
-          label: 'Look for something to wear', time: 1.5,
-          run: async () => {
-            m.dress = true;
-            this.wear('out', false);
-            await this.dialog('The Wardrobe', STORY.morningNoClothes, undefined, { who: 'player', pose: 'startled', mood: { surprised: 1, sad: 0.4 }, bg: 'speed', frame: 'full' });
-          },
-        };
-      }
+      if (id === 'wardrobe') return wardrobe();
       if (id === 'door') {
-        const ready = m.wash && m.eat && m.dress;
-        if (!ready) return { label: 'Get ready first (wash, eat, get dressed)', disabled: true };
-        return { label: this.isWorkday ? 'Leave for work' : 'Head out to run errands', time: 0, run: () => this.enterPhase('hallway', { dir: 'out', from: 'apt' }) };
+        const ready = m.wash && m.eat && this.dressed;
+        if (ready) return goOut(this.isWorkday ? 'Leave for work' : 'Head out to run errands');
+        return goOut(this.dressed ? 'Head out (without finishing your routine)' : 'Head out... in what you have on');
       }
       if (id === 'bed') return { label: 'No time to sleep in!', disabled: true };
       return null;
@@ -4064,36 +4533,34 @@ export class Game {
         if (id === 'bed') return { label: 'Do the laundry first', disabled: true };
         return null;
       }
+      if (id === 'wardrobe') return wardrobe();
+      if (id === 'door') return goOut('Go out');
       if (id === 'bed') return { label: 'Go to sleep', time: 0, run: () => this.sleep() };
       return null;
     }
-    if (ph === 'hallway') {
-      const d = this.bldgDir;
-      if (id === 'aptdoor') {
-        if (d === 'in' || d === 'up') return { label: 'Go inside your apartment', time: 0, run: () => this.enterPhase('evening') };
-        return { label: d === 'down' ? 'Laundry first' : 'No time to go back in!', disabled: true };
-      }
-      if (id === 'elevator') {
-        if (d === 'out') return { label: 'Take the elevator down to the lobby', time: 0, run: () => this.enterPhase('lobby', { dir: 'out' }) };
-        if (d === 'down') return { label: 'Take the elevator to the basement', time: 0, run: () => this.enterPhase('laundry') };
-        return { label: 'Your door is just down the hall', disabled: true };
-      }
+    if (ph === 'hallway' && (this.visitApt || this.visitFloor)) {
+      // someone else's floor
+      if (id === 'aptdoor') return { label: `Knock on ${this.visitFloor}F-05`, time: 0.8, run: () => this.knock() };
+      if (id === 'elevator') return { label: 'Take the elevator down to the lobby', time: 0, run: () => this.enterPhase('lobby', { dir: 'out' }) };
       if (id === 'stairs') {
-        if (d === 'out') return { label: "Take the back stairs down to the residents' pool", time: 0, run: () => this.enterPhase('pool', { dir: 'out', from: 'stairs' }) };
-        return { label: d === 'down' ? 'The laundry room is reached by elevator' : 'Your door is just down the hall', disabled: true };
+        if (this.visitApt) return { label: 'The back stairs: residents only', disabled: true };
+        return { label: "Take the back stairs down to the residents' pool", time: 0, run: () => this.enterPhase('pool', { dir: 'out', from: 'stairs' }) };
       }
       return null;
     }
+    if (ph === 'hallway') {
+      const carryingLaundry = this.night && this.night.stage === 'carry';
+      if (id === 'aptdoor') return { label: 'Go into your apartment', time: 0, run: () => this.enterPhase(this.homePhaseNow(), { back: true }) };
+      if (id === 'elevator') {
+        if (carryingLaundry) return { label: 'Take the elevator to the basement', time: 0, run: () => this.enterPhase('laundry') };
+        return { label: 'Take the elevator down to the lobby', time: 0, run: () => this.enterPhase('lobby', { dir: 'out' }) };
+      }
+      if (id === 'stairs') return { label: "Take the back stairs down to the residents' pool", time: 0, run: () => this.enterPhase('pool', { dir: 'out', from: 'stairs' }) };
+      return null;
+    }
     if (ph === 'pool') {
-      const out = this.bldgDir === 'out';
-      if (id === 'backstairs') {
-        if (!out) return { label: `Take the back stairs up to the ${ordinal(this.homeFloor)} floor`, time: 0, run: () => this.enterPhase('hallway', { dir: 'in', from: 'stairs' }) };
-        return { label: "You're on your way out", disabled: true };
-      }
-      if (id === 'poolgate') {
-        if (out) return { label: 'Out through the gate to the street', time: 0, run: () => this.enterPhase(this.isWorkday ? 'commute_am' : 'dayoff') };
-        return { label: 'Go back out to the street', time: 0, run: () => this.enterPhase(this.streetPhase || 'commute_pm') };
-      }
+      if (id === 'backstairs') return { label: `Take the back stairs up to the ${ordinal(this.homeFloor)} floor`, time: 0, run: () => this.enterPhase('hallway', { dir: 'in', from: 'stairs' }) };
+      if (id === 'poolgate') return { label: 'Out through the gate to the street', time: 0, run: () => this.enterPhase(this.streetPhaseNow()) };
       if (id.startsWith('shower')) {
         return {
           label: 'Rinse off under the shower', time: 1.5,
@@ -4118,15 +4585,8 @@ export class Game {
       return null;
     }
     if (ph === 'lobby') {
-      const out = this.lobbyDir === 'out';
-      if (id === 'lobbydoor') {
-        if (out) return { label: this.isWorkday ? 'Head out to the street (to work)' : 'Head out to the street', time: 0, run: () => this.enterPhase(this.isWorkday ? 'commute_am' : 'dayoff') };
-        return { label: 'Go back out to the street', time: 0, run: () => this.enterPhase(this.streetPhase || 'commute_pm') };
-      }
-      if (id === 'elevator' || id === 'elevator2') {
-        if (out) return { label: 'No time to go back up!', disabled: true };
-        return { label: 'Take the elevator up to your floor', time: 0, run: () => this.enterPhase('hallway', { dir: 'in', from: 'elevator' }) };
-      }
+      if (id === 'lobbydoor') return { label: 'Out to the street', time: 0, run: () => this.enterPhase(this.streetPhaseNow()) };
+      if (id === 'elevator' || id === 'elevator2') return { label: this.visitApt ? 'Take the elevator up' : 'Take the elevator up to your floor', time: 0, run: () => this.pickFloor() };
       if (id === 'mailbox') return { label: 'Check your mailbox', time: 1, run: () => ui.toast(pick(['Just bills.', 'A pizza coupon.', 'A catalog... full of pants. How cruel.', 'Nothing today.']), '', 3000) };
       return null;
     }
@@ -4138,29 +4598,39 @@ export class Game {
         const eta = this.busETA(it.lineId, it.stop);
         return { label: `${line.name} stop: ${it.stop.name} — next bus in ~${Math.max(1, Math.round(eta))}s`, disabled: true };
       }
-      if (ph === 'commute_am' && id === 'workdoor') return { label: `Go inside ${this.job.workplaceName}`, time: 0, run: () => this.enterPhase('work') };
-      if (id === 'poolgate') {
-        if (ph === 'commute_am') return { label: "The residents' pool gate", disabled: true };
-        if (ph === 'dayoff' && this.errands.some((e) => !e.done)) return { label: 'Finish your errands first', disabled: true };
-        return { label: "Slip in through the residents' pool gate (back way)", time: 0, run: () => ((this.streetPhase = ph), this.enterPhase('pool', { dir: 'in', from: 'gate' })) };
+      if (id === 'workdoor') {
+        if (!this.isWorkday) return { label: `${this.job.workplaceName} is closed today`, disabled: true };
+        return { label: `Go inside ${this.job.workplaceName}`, time: 0, run: () => this.enterPhase('work') };
       }
-      if (ph === 'commute_pm' && id === 'homedoor') return { label: `Go into ${this.homeApt.name}`, time: 0, run: () => ((this.streetPhase = 'commute_pm'), this.enterPhase('lobby', { dir: 'in' })) };
-      if (ph === 'dayoff') {
-        if (id === 'homedoor') {
-          const left = this.errands.filter((e) => !e.done);
-          if (left.length) return { label: `Errands left: ${left.map((e) => e.name).join(', ')}`, disabled: true };
-          return { label: `Go into ${this.homeApt.name}`, time: 0, run: () => ((this.streetPhase = 'dayoff'), this.enterPhase('lobby', { dir: 'in' })) };
-        }
-        if (id.startsWith('place:')) {
-          const place = id.slice(6);
-          const e = this.errands.find((x) => x.place === place && !x.done && !x.stolen);
-          return { label: e ? `Go into ${PLACES[place].name} (${e.name})` : `Go into ${PLACES[place].name}`, time: 0, run: () => this.enterPhase('shop', { place }) };
-        }
+      if (id === 'poolgate') return { label: "Slip in through the residents' pool gate (back way)", time: 0, run: () => this.enterPhase('pool', { dir: 'in', from: 'gate' }) };
+      if (id === 'homedoor') return { label: `Go into ${this.homeApt.name}`, time: 0, run: () => this.enterPhase('lobby', { dir: 'in', apt: null }) };
+      if (id.startsWith('apt:')) {
+        const a = aptById(id.slice(4));
+        return { label: `Go into ${a.name}`, time: 0, run: () => this.enterPhase('lobby', { dir: 'in', apt: a.id }) };
+      }
+      if (id.startsWith('job:')) {
+        const j = id.slice(4);
+        return { label: `Go into ${JOBS[j].workplaceName}`, time: 0, run: () => this.enterPhase('visitwork', { job: j }) };
+      }
+      if (id.startsWith('place:')) {
+        const place = id.slice(6);
+        const e = ph === 'dayoff' ? this.errands.find((x) => x.place === place && !x.done && !x.stolen) : null;
+        return { label: e ? `Go into ${PLACES[place].name} (${e.name})` : `Go into ${PLACES[place].name}`, time: 0, run: () => this.enterPhase('shop', { place }) };
       }
       return null;
     }
+    if (ph === 'visitwork') {
+      if (id === 'exit') return { label: 'Leave', time: 0, run: () => this.enterPhase(this.streetPhaseNow()) };
+      return null;
+    }
+    if (ph === 'visit') {
+      const i = this.visitHost;
+      if (id === 'host') return { label: `Talk to ${this.profile.coworkers[i].name}`, time: 0, run: () => this.chatHost(i) };
+      if (id === 'door') return { label: 'Say goodbye and leave', time: 0, run: () => this.enterPhase('hallway', { dir: 'in', from: 'apt' }) };
+      return null;
+    }
     if (ph === 'shop') {
-      if (id === 'exit') return { label: 'Leave', time: 0, run: () => this.enterPhase('dayoff') };
+      if (id === 'exit') return { label: 'Leave', time: 0, run: () => this.enterPhase(this.streetPhaseNow()) };
       const e = this.errand;
       if (e && !e.done) {
         const step = e.steps[this.errandStep];
@@ -4180,7 +4650,8 @@ export class Game {
       }
       if (id === 'exit') {
         if (w.clockedOut) return { label: 'Head home', time: 0, run: () => this.enterPhase('commute_pm') };
-        return { label: w.clockedIn ? 'Your shift is not over yet' : 'Clock in first', disabled: true };
+        // walking out mid-shift is allowed... the manager will want a word about it
+        return { label: w.clockedIn ? 'Step outside (your shift isn\'t over!)' : 'Leave without clocking in', time: 0, run: () => this.enterPhase(this.streetPhaseNow()) };
       }
       const step = this.currentStep();
       if (step && step.target === id) return { label: step.label, time: step.time, run: () => this.advanceTask() };
@@ -4739,8 +5210,10 @@ export class Game {
       p.wet = 1;
       p.char.setWet(1);
     }
-    await this.dialog('Wardrobe Malfunction!', `${mh.fn(this.profile.name, this.lw)}\n\nYou stuff what's left of them out of sight... and realize your underwear is now on full display. The shift has only just started. Nobody can find out.`);
+    // the legwear is gone before the panel is drawn, so the panel shows it
+    this.legwearGone = true;
     p.char.setLegwear(false);
+    await this.dialog('Wardrobe Malfunction!', `${mh.fn(this.profile.name, this.lw)}\n\nYou stuff what's left of them out of sight... and realize your underwear is now on full display. The shift has only just started. Nobody can find out.`);
     ui.toast('Your underwear is exposed! Stay out of the yellow sight cones. Carry things, sit at tables, hide.', 'bad', 7000);
   }
 
@@ -4822,7 +5295,15 @@ export class Game {
   async sleep() {
     const st = this.state;
     sound.play('sleep');
+    // a workday you skipped or walked out on comes up with the manager next time
+    if (this.isWorkday) {
+      const w = this.work && this.work.day === st.day ? this.work : null;
+      if (!w || !w.clockedIn) st.pendingTalks.push({ reason: 'absent', who: '' });
+      else if (!w.clockedOut) st.pendingTalks.push({ reason: 'walkout', who: '' });
+    }
     st.day++;
+    this.dressed = false;
+    this.legwearGone = false;
     if (this.settings.sleepRecovery !== false) st.shame = Math.max(0, st.shame - SHAME.sleep);
     this.night = null;
     this.homeRuin = false;
@@ -5097,7 +5578,7 @@ export class Game {
     else if (ph === 'commute_am') obj = `Get to ${this.job.workplaceName}`;
     else if (ph === 'commute_pm') obj = `Get home to ${this.homeApt.name}`;
     else if (ph === 'evening') obj = this.night?.stage === 'gather' ? 'Gather your laundry from the wardrobe' : this.night?.stage === 'carry' ? 'Take the laundry down to the basement' : 'Go to bed';
-    else if (ph === 'hallway') obj = this.bldgDir === 'out' ? 'Head down: elevator to the lobby, or back stairs to the pool' : this.bldgDir === 'down' ? 'Take the elevator to the basement' : 'Get to your door (7F-05)';
+    else if (ph === 'hallway') obj = this.bldgDir === 'out' ? 'Head down: elevator to the lobby, or back stairs to the pool' : this.bldgDir === 'down' ? 'Take the elevator to the basement' : `Get to your door (${this.homeFloor}F-05)`;
     else if (ph === 'pool') obj = this.bldgDir === 'out' ? 'Out through the gate' : 'Take the back stairs up';
     else if (ph === 'laundry') {
       const nt = this.night || { stage: 'done' };

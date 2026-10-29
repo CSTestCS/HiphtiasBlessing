@@ -34,7 +34,7 @@ export function streetName(axis, v) {
   return axis === 'x' ? AVES[i] : STS[i];
 }
 
-export function buildCity({ workplaceName = 'Work', jobColor = '#273c75', homeId = 'maple', workSlot = 0 } = {}) {
+export function buildCity({ workplaceName = 'Work', jobColor = '#273c75', homeId = 'maple', workSlot = 0, otherJobs = [] } = {}) {
   const L = new Level('city');
   const rng = mulberry(4242);
   L.indoor = false;
@@ -84,6 +84,11 @@ export function buildCity({ workplaceName = 'Work', jobColor = '#273c75', homeId
   // the workplace: wherever this save put it
   const [wb, ws] = WORK_SLOTS[workSlot] || WORK_SLOTS[0];
   (special[wb] ||= []).push({ kind: 'work', side: ws });
+  // the other kinds of workplaces in town, open to visitors
+  for (const j of otherJobs) {
+    const [jb, js] = WORK_SLOTS[j.slot] || [];
+    if (jb) (special[jb] ||= []).push({ kind: 'job:' + j.id, side: js, name: j.name, color: j.color });
+  }
   // apartment complexes; one of them is home
   for (const a of APARTMENTS) (special[a.block] ||= []).push({ kind: 'apt:' + a.id, side: a.side, home: a.id === homeId });
   L.apartments = {};
@@ -109,6 +114,8 @@ export function buildCity({ workplaceName = 'Work', jobColor = '#273c75', homeId
   door('poolgate', L.places.poolgate);
   door('workdoor', L.places.work);
   for (const k of Object.keys(PLACES)) door('place:' + k, L.places[k]);
+  for (const k of Object.keys(L.places)) if (k.startsWith('job:')) door(k, L.places[k]);
+  for (const [id, pl] of Object.entries(L.apartments)) if (pl !== L.places.home) door('apt:' + id, pl);
   L.spawnHome = { ...L.places.home.out };
   L.spawnWork = { ...L.places.work.out };
   L.spawn = L.spawnHome;
@@ -190,7 +197,7 @@ function buildBlock(L, x0, x1, z0, z1, rng, palette, sp, ctx) {
         continue;
       }
       const h = special ? (spS.kind.startsWith('apt:') ? 16 : 9) : 7 + rng() * 16;
-      const col = special ? (spS.kind.startsWith('apt:') ? (spS.home ? '#c8a27a' : '#d7bfa3') : spS.kind === 'work' ? '#dfe4ea' : PLACES[spS.kind] ? '#ecf0f1' : palette[Math.floor(rng() * palette.length)]) : palette[Math.floor(rng() * palette.length)];
+      const col = special ? (spS.kind.startsWith('apt:') ? (spS.home ? '#c8a27a' : '#d7bfa3') : spS.kind === 'work' || spS.kind.startsWith('job:') ? '#dfe4ea' : PLACES[spS.kind] ? '#ecf0f1' : palette[Math.floor(rng() * palette.length)]) : palette[Math.floor(rng() * palette.length)];
       const ca = a + w / 2;
       const cf = s.fixed + s.dir * (depth / 2);
       const bx = s.axis === 'x' ? ca : cf;
@@ -229,6 +236,10 @@ function placeSpecial(L, kind, s, ca, ctx, spec = {}) {
     label = spec.home ? `Enter ${apt.name} (home)` : apt.name;
     signText = apt.name;
     signBg = apt.color;
+  } else if (kind.startsWith('job:')) {
+    label = `Enter ${spec.name}`;
+    signText = spec.name;
+    signBg = spec.color || '#576574';
   } else if (kind === 'work') {
     label = `Enter ${ctx.workplaceName}`;
     signText = ctx.workplaceName;

@@ -224,6 +224,8 @@ export const REPORT_REASONS = {
   slacking: (n) => `Yesterday you left ${n} requests unfinished. People noticed. And then there's... the other thing.`,
   weekend: (who) => `${who} told me they saw you around town over the weekend. Dressed like... that. People talk, you know.`,
   commute: (who) => `${who} says they passed you in the street on the way to or from work. Dressed like... that. In broad daylight.`,
+  absent: () => `You didn't show up yesterday. No call, nothing. I had to cover your work myself.`,
+  walkout: () => `You clocked in yesterday and then just... left. In the middle of your shift. Explain that.`,
 };
 
 // Errands for days off. Each errand happens inside a shop interior.

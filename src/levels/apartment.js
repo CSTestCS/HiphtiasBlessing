@@ -59,6 +59,13 @@ export function buildApartment() {
   L.box(2.2, 4.73, 1.5, 0.08, 0.85, '#111111', { y: 0.5, collide: false });
   L.plant(-1.0, 4.4);
 
+  // things you can grab and carry (out the door too)
+  L.pickup('umbrella', -1.15, 3.0, 0.2);
+  L.pickup('towel', 3.3, -4.3, 0.5);
+  L.pickup('pillow', 0.2, 0.05, 0.75);
+  L.pickup('newspaper', 1.5, 0.05, 0.75);
+  L.pickup('bag', -4.6, 2.3, 0.02);
+
   L.interactable('bed', -3.0, -3.0, 'Sleep', { r: 1.6 });
   L.interactable('wardrobe', -4.8, 0.5, 'Wardrobe', { r: 1.3 });
   L.interactable('sink', 4.7, -3.2, 'Wash up at the sink', { r: 1.2 });

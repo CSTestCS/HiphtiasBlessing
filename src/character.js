@@ -1060,6 +1060,23 @@ function setupVRMChar(ch, scene, hum, opts) {
     ch.setLegwear(ch.legwearOn);
   };
   applyTints(ch, opts);
+  // trying on the same clothes in other colors (fitting rooms): skin, hair and eyes stay as they are
+  const slots = opts.cfg?.slots || null;
+  ch.retint = () => {
+    const r = randomCivilianTints();
+    const accent = randomCivilianTints().top;
+    for (const { m, leg, name, base, baseShade } of ch.mats) {
+      if (/outline/i.test(m.name || '')) continue;
+      const slot = slots && slots[name];
+      if (slot ? ['none', 'skin', 'hair', 'eye'].includes(slot) : SKIN_RE.test(name) || HAIR_RE.test(name) || IRIS_RE.test(name)) continue;
+      const shoe = slot === 'shoe' || (!slot && /shoe|boot/i.test(name));
+      const bottom = slot === 'bottom' || (!slot && leg);
+      if (!slot && !leg && !shoe && !CLOTH_RE.test(name)) continue;
+      if (base && m.color) m.color.copy(base);
+      if (baseShade && m.shadeColorFactor) m.shadeColorFactor.copy(baseShade);
+      mulColor(m, shoe ? r.shoe : bottom ? r.bottom : slot === 'accent' ? accent : r.top, true);
+    }
+  };
 }
 
 function mulColor(m, c, raw) {
