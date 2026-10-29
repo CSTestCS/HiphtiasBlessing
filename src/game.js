@@ -113,7 +113,8 @@ export class Game {
     const r = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' }));
     this.Q = QUALITY[this.settings.quality] || QUALITY.medium;
     r.setPixelRatio(Math.min(window.devicePixelRatio, this.Q.pr));
-    r.setSize(window.innerWidth, window.innerHeight);
+    // the stylesheet sizes the canvas to the window; only the drawing buffer follows it
+    r.setSize(window.innerWidth, window.innerHeight, false);
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFShadowMap;
 
@@ -166,6 +167,9 @@ export class Game {
     await this.initCivilians();
     ui.hideScreen();
     window.addEventListener('resize', (this._onResize = () => this.resize()));
+    // also catches size changes that send no resize event (maximize, display scaling)
+    if (window.ResizeObserver) (this._ro = new ResizeObserver(() => this.resize())).observe(this.renderer.domElement);
+    this.resize();
   }
 
   async initCivilians() {
@@ -406,8 +410,13 @@ export class Game {
   }
 
   resize() {
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+    const c = this.renderer.domElement;
+    const w = c.clientWidth || window.innerWidth;
+    const h = c.clientHeight || window.innerHeight;
+    this._vw = w;
+    this._vh = h;
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
 
@@ -434,6 +443,7 @@ export class Game {
     this.running = false;
     this.unbindInput();
     window.removeEventListener('resize', this._onResize);
+    this._ro?.disconnect();
     this.clearNPCs();
     if (this.buses) this.buses.dispose();
     ui.showHUD(false);
@@ -1727,8 +1737,62 @@ export class Game {
       steps.push({ go: spot }, { sit: !!spot.sit, t: 15 + Math.random() * 30, yaw: spot.yaw, call: () => {} }, { t: 0, call: () => (spot.taken = false) });
       // shoppers try things on now and then
       if (i === 0 && Math.random() < 0.45) steps.push(...this.fittingSteps(c));
+      // customers with business past the STAFF ONLY doors: a booked room, a meeting, the restroom
+      if (i === 0) steps.push(...this.businessSteps(c));
     }
     c.plan(steps);
+  }
+
+  /** Rooms of a type in this workplace (with their bounds). */
+  roomsOf(type) {
+    return (this.level.rooms || []).filter((r) => r.type === type);
+  }
+
+  /** A trip into a back room a customer has a reason to be in (an empty array if none). */
+  businessSteps(c) {
+    const L = this.level;
+    const inRoom = (r, o) => o.x > r.x0 && o.x < r.x1 && o.z > r.z0 && o.z < r.z1;
+    const stand = (tag) => (L.stations || []).find((st) => st.tag === tag);
+    const roll = Math.random();
+    const job = this.phase === 'visitwork' ? this.visitJob : this.jobId;
+    // hotel guests who book a room: check in at the front desk, then go up and stay a while
+    if (job === 'hotel' && roll < 0.35) {
+      const free = this.roomsOf('guestroom').filter((r) => !(r.guest && !r.guest.removed));
+      const r = free[Math.floor(Math.random() * free.length)];
+      const desk = stand('frontdesk');
+      if (r) {
+        r.guest = c;
+        const seat = (L.seats || []).find((st) => inRoom(r, st) && !st.taken);
+        const bed = (L.stations || []).find((st) => st.tag === 'guestbed' && inRoom(r, st));
+        const spot = seat || bed || { x: (r.x0 + r.x1) / 2, z: (r.z0 + r.z1) / 2, yaw: 0 };
+        return [
+          ...(desk ? [{ go: { x: desk.x + Math.sin(desk.yaw) * 2.4, z: desk.z + Math.cos(desk.yaw) * 2.4 } }, { t: 4, yaw: desk.yaw + Math.PI }] : []),
+          { go: spot },
+          { sit: !!seat, t: 60 + Math.random() * 90, yaw: spot.yaw, call: () => seat && (seat.taken = c), seatRef: seat || undefined },
+          { t: 0, call: () => ((r.guest = null), seat && seat.taken === c && (seat.taken = false)) },
+        ];
+      }
+    }
+    // office clients: sign in at reception, then sit in on a meeting
+    if (job === 'office' && roll < 0.3) {
+      const rooms = this.roomsOf('meeting');
+      const r = rooms[Math.floor(Math.random() * rooms.length)];
+      const seat = r && (L.seats || []).find((st) => inRoom(r, st) && !st.taken);
+      const rec = stand('reception');
+      if (seat)
+        return [
+          ...(rec ? [{ go: { x: rec.x + Math.sin(rec.yaw) * 2.2, z: rec.z + Math.cos(rec.yaw) * 2.2 } }, { t: 3, yaw: rec.yaw + Math.PI }] : []),
+          { go: seat },
+          { sit: true, t: 30 + Math.random() * 40, yaw: seat.yaw, call: () => (seat.taken = c), seatRef: seat },
+          { t: 0, call: () => seat.taken === c && (seat.taken = false) },
+        ];
+    }
+    // anyone might need the restroom
+    if (roll > 0.88) {
+      const sink = (L.stations || []).find((st) => st.room === 'restroom');
+      if (sink) return [{ go: sink }, { t: 6 + Math.random() * 8, yaw: sink.yaw }];
+    }
+    return [];
   }
 
   spawnInitialCustomers() {
@@ -5807,8 +5871,9 @@ export class Game {
 
   updateTags() {
     const cam = this.camera;
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+    // tags sit over the canvas, so they use its size (not the window's)
+    const w = this._vw || window.innerWidth;
+    const h = this._vh || window.innerHeight;
     const p = this.player;
     for (const n of this.npcs) {
       const el = n.el;
