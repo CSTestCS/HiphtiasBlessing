@@ -272,6 +272,17 @@ function alphaSampler(tex) {
   return fn;
 }
 
+/** MToon sends its alpha cutoff, opacity and texture offsets to the shader only in update():
+ *  call this once after loading and whenever one of those changes (not every frame). */
+export function syncMtoon(m) {
+  if (m && m.isMToonMaterial && m.update) m.update(0);
+}
+function syncAllMtoon(ch) {
+  ch.scene?.traverse((o) => {
+    if (o.isMesh) for (const m of Array.isArray(o.material) ? o.material : [o.material]) syncMtoon(m);
+  });
+}
+
 function fixTransparency(mat) {
   for (const m of Array.isArray(mat) ? mat : [mat]) {
     if (!m || m._fixedAlpha) continue;
@@ -321,6 +332,7 @@ export async function createCharacter(opts = {}) {
           console.warn('underwear failed', e);
         }
       }
+      syncAllMtoon(ch);
       return ch;
     } catch (e) {
       console.warn('VRM load failed, using default model', e);
@@ -945,6 +957,7 @@ class CharacterBase {
         m.opacity = (o.opacity ?? 1) * (1 - WET_MAX_SEE * see); // capped by the 'soaked see-through' setting
         // cut-out (MASK) materials would discard everything below the cutoff, making the part vanish
         m.alphaTest = want ? Math.min(o.alphaTest || 0, 0.04) : o.alphaTest;
+        syncMtoon(m);
       }
     }
     if (this.mannequinWet) this.mannequinWet(w);
@@ -1183,11 +1196,12 @@ async function createFullVRM(opts) {
       vrm.springBoneManager?.reset();
     } catch (_) {}
   };
+  // materials are synced on load and when they change (syncMtoon), not every frame
+  vrm.materials = undefined;
   ch.update = (dt, a) => {
     ch.animate(dt, a);
     ch.updateProp();
     vrm.update(Math.min(dt, 1 / 20));
-    for (const m of ch.extraMtoons || []) m.update(dt);
   };
   ch.dispose = () => VRMUtils.deepDispose(vrm.scene);
   finishVRMChar(ch);
@@ -1245,19 +1259,11 @@ async function createClonedVRM(opts) {
   ch.root.add(scene);
   setupVRMChar(ch, scene, hum, opts);
   ch.expressions = em;
-  // MToon only uploads alphaTest/opacity uniforms in material.update(); copies must call it too,
-  // otherwise cut-out parts of clothes render as solid (black) polygons
-  const mtoons = [];
-  scene.traverse((o) => {
-    if (o.isMesh) for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m && m.isMToonMaterial && m.update) mtoons.push(m);
-  });
   ch.update = (dt, a) => {
     ch.animate(dt, a);
     ch.updateProp();
     hum.update();
     if (em) em.update();
-    for (const m of mtoons) m.update(dt);
-    for (const m of ch.extraMtoons || []) m.update(dt);
   };
   ch.dispose = () => {
     scene.traverse((o) => {
@@ -1656,12 +1662,8 @@ export function fitClothing(srcScene, srcHum, dst, filter) {
     const mats = (Array.isArray(o.material) ? o.material : [o.material]).map((m) => {
       const c = m.clone();
       fixTransparency(c);
-      // MToon pushes its alpha cutoff and opacity to the shader only in update(): the wearer
-      // updates these copies every frame, or the cut-out parts draw as solid black shapes
-      if (c.isMToonMaterial && c.update) {
-        c.update(0);
-        (dst.extraMtoons ||= []).push(c);
-      }
+      // without this sync the copy keeps no alpha cutoff and its cut-out parts draw as black shapes
+      syncMtoon(c);
       return c;
     });
     const mesh = new THREE.SkinnedMesh(geo, Array.isArray(o.material) ? mats : mats[0]);
@@ -1756,6 +1758,8 @@ async function wearPieces(ch, pieces, hideOwn, opts = {}) {
         if (/shoe|boot/i.test(nm)) ch.shoeMeshes?.push(m);
         const added = mats.map((mm) => ({ m: mm, leg: isLeg, name: cleanName(mm.name), base: mm.color?.clone(), baseShade: mm.shadeColorFactor?.clone() }));
         ch.mats.push(...added);
+        // a borrowed top goes see-through when soaked, like the body's own would
+        if (ch.wetAuto) for (const e of added) if (/(tops|shirt|blouse|onepiece|dress)/i.test(e.name) && !e.leg) ch.wetSet.add(e.name);
         // the outfit's colors reach the borrowed piece too (bundled bodies' white clothes take them fully)
         applyTints({ mats: added }, { ...opts, tintable: !!pc.tintable && !!opts.tintable, cfg: null, randomize: false });
       }
@@ -1811,8 +1815,6 @@ export function borrowLegwear(lender, borrower) {
     meshes.forEach((m) => {
       m.removeFromParent();
       m.geometry?.dispose?.();
-      const ms = Array.isArray(m.material) ? m.material : [m.material];
-      if (borrower.extraMtoons) borrower.extraMtoons = borrower.extraMtoons.filter((x) => !ms.includes(x));
     });
     borrower.borrowed = null;
     borrower.setLegwear(borrower.legwearOn);
@@ -2420,6 +2422,7 @@ export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
         x.m.alphaTest = 0.5;
       }
       x.m.needsUpdate = true;
+      syncMtoon(x.m);
     }
   }
   ch.underwear = uw;
