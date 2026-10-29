@@ -90,6 +90,7 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 - **Borrowing**: if a friend says no because it's too public, they walk to the nearest empty room and offer the swap there.
 - **Ordinary mishaps**: very rarely, anyone's clothes give out, blessed or not. A coworker it happens to has to sneak around for the rest of the day (an oddball may decide to keep doing it); everyone else is dressed properly again the next day.
 - **Customers with business in back rooms** go past the STAFF ONLY doors: hotel guests check in and go to a booked room, office clients sit in on meetings, and anyone may use the restroom.
+- **Former coworkers**: anyone fired or replaced (managers too) still lives in town. You may pass them on the street, where they recognize you, and they keep turning up as townsfolk in your other saves.
 - **Visiting coworkers**: what they have on depends on the hour. Mid-day they're dressed but barefoot, in the morning and evening barefoot without legwear, and at night in their at-home clothes.
 - **Blessed coworkers** never report you, but blessed friends can't help you anymore either.
 

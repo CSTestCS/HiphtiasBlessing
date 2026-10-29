@@ -187,7 +187,7 @@ export class Game {
     this.civTemplates = tpls;
     // named townsfolk (coworkers from the player's other save slots) are kept as settings only;
     // their model is built when they're picked to walk around
-    this.namedCivs = this.extraCivs.slice(0, 10).filter((e) => e.def.outfits?.[0]);
+    this.refreshNamedCivs();
     // a small stock to start with: more are made as people come into view
     for (let i = 0; i < 12; i++) {
       const ch = tpls.length ? await this.makeCivilian(tpls[i % tpls.length]) : this.makeMannequinCiv();
@@ -3330,6 +3330,8 @@ export class Game {
       m.plan([{ go: e }, { call: () => this.removeNPC(m) }]);
     }
     this.manager = null;
+    this.rememberFormer(old, 'manager');
+    this.refreshNamedCivs();
     if (this.slotId) writeProfile(this.slotId, p);
   }
 
@@ -3347,6 +3349,7 @@ export class Game {
     if (cw.writeups >= 3) {
       cw.fired = true;
       cw.firedDay = this.state.day;
+      this.refreshNamedCivs();
       ui.toast(`${s.name} has been FIRED.`, 'bad', 6000);
       const e = this.level.pois.entrance;
       s.plan([{ go: m.stand }, { t: 6, yaw: Math.PI }, { go: e }, { call: () => this.removeNPC(s) }]);
@@ -3404,6 +3407,7 @@ export class Game {
     if (n.kind === 'resident') return this.residentTalk(n);
     if (n.kind === 'pedestrian' || n.kind === 'clerk' || (n.kind === 'customer' && this.phase !== 'work')) {
       if (n.coworkerEncounter) return this.weekendEncounter(n);
+      if (n.char.civName && this.formerNames?.has(n.char.civName)) return this.formerSighting(n);
       n.noticeCooldown = 25;
       n.temper = n.temper || randomTemperament();
       const kind = reactionFor(n.temper, n.gender && pg && n.gender !== pg);
@@ -5624,7 +5628,9 @@ export class Game {
       if (cw.firedDay == null) cw.firedDay = st.day - 2; // fired in an older version
       if (st.day < cw.firedDay + 2) continue;
       const old = p.coworkers[i];
-      const used = new Set([p.player.name, p.manager.name, ...p.coworkers.map((c) => c.name)]);
+      // they don't vanish: a promoted coworker is the manager now, anyone else stays in town
+      if (!cw.promoted) this.rememberFormer(old, 'coworker');
+      const used = new Set([p.player.name, p.manager.name, ...p.coworkers.map((c) => c.name), ...(p.former || []).map((f) => f.name)]);
       const gender = Math.random() < 0.5 ? 'female' : 'male';
       const model = randomBodyFor(gender, this.settings.civilians);
       const pers = ['friend', 'sympathetic', 'neutral', 'strict', 'distant', 'oddball'];
@@ -5646,6 +5652,41 @@ export class Game {
       changed = true;
     }
     if (changed && this.slotId) await writeProfile(this.slotId, p);
+    if (changed) this.refreshNamedCivs();
+  }
+
+  /** Bumping into someone who used to work with you. */
+  formerSighting(n) {
+    const me = this.profile.name;
+    n.noticeCooldown = 40;
+    sound.play('gasp', { x: n.x, z: n.z, pitch: this.voicePitch(n) });
+    this.talkMood(n, { surprised: 0.9, happy: 0.2 }, 5);
+    this.bubble(n, pick([
+      `${me}?! ...Wow. I see that place hasn't changed.`,
+      `Huh. ${me}. I don't work there anymore, so... not my problem. Good luck.`,
+      `${me}! Still at it, huh? Glad I'm out of there.`,
+      `Oh! ${me}... I'm just going to pretend I didn't see this. For old times' sake.`,
+    ]), 4.5);
+    this.addShame(SHAME.pedestrian * 0.6);
+  }
+
+  /** Someone who used to work with you: kept (settings only) so they still live in town and in your other saves. */
+  rememberFormer(def, role) {
+    const p = this.profile;
+    if (!def?.name || !def.outfits?.[0]) return;
+    p.former = (p.former || []).filter((f) => f.name !== def.name);
+    p.former.push({ name: def.name, role, leftDay: this.state.day, def: JSON.parse(JSON.stringify(def)) });
+  }
+
+  /** Named townsfolk: people you used to work with (fired, replaced) and coworkers from your other saves. */
+  refreshNamedCivs() {
+    const p = this.profile;
+    const st = this.state;
+    const fired = p.coworkers.filter((c, i) => st.cw[i]?.fired && !st.cw[i].promoted).map((c) => ({ name: c.name, def: c }));
+    const own = [...(p.former || []).map((f) => ({ name: f.name, def: f.def })), ...fired];
+    const current = new Set([p.player.name, p.manager.name, ...p.coworkers.filter((c, i) => !st.cw[i]?.fired).map((c) => c.name)]);
+    this.formerNames = new Set(own.map((e) => e.name));
+    this.namedCivs = [...own, ...this.extraCivs.slice(0, 10)].filter((e) => e.def?.outfits?.[0] && !current.has(e.name));
   }
 
   async saveGame() {

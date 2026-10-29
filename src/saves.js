@@ -56,6 +56,12 @@ export function modelKeys(profile) {
       for (const pc of o.pieces || []) if (pc.src?.key) keys.push(pc.src.key);
     }
   }
+  for (const f of profile.former || []) {
+    for (const o of f.def?.outfits || []) {
+      if (o.model?.key) keys.push(o.model.key);
+      if (o.clothesFrom?.key) keys.push(o.clothesFrom.key);
+    }
+  }
   return keys;
 }
 
@@ -82,6 +88,8 @@ export async function otherSlotPeople(exceptId) {
     const { profile } = await loadSlot(s.id);
     if (!profile) continue;
     for (const c of profile.coworkers || []) out.push({ name: c.name, def: c, from: profile.name });
+    // people who were fired or replaced there still exist
+    for (const f of profile.former || []) if (f.def) out.push({ name: f.name, def: f.def, from: profile.name });
   }
   return out;
 }
