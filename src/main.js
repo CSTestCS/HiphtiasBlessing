@@ -25,11 +25,27 @@ async function getModel(model) {
   return b;
 }
 
+// civilian models, kept handy for the (synchronous) outfit editors
+let civModels = [];
 async function getSettings() {
-  return Object.assign({}, DEFAULT_SETTINGS, (await storage.get('settings')) || {});
+  const st = Object.assign({}, DEFAULT_SETTINGS, (await storage.get('settings')) || {});
+  civModels = st.civilians || [];
+  return st;
 }
 async function putSettings(s) {
+  civModels = s.civilians || [];
   await storage.set('settings', s);
+}
+/** A body for an outfit from a civilian model, with that model's part settings. */
+function civBody(c) {
+  return {
+    key: c.key, title: c.title, civ: true, tintable: true, underwearOverlay: false,
+    materials: c.materials ? [...c.materials] : undefined,
+    legwearMaterials: c.legwearMaterials ? [...c.legwearMaterials] : null,
+    wetMaterials: c.wetMaterials ? [...c.wetMaterials] : [],
+    keepMaterials: c.cfg?.keep ? [...c.cfg.keep] : null,
+    cfg: c.cfg ? JSON.parse(JSON.stringify(c.cfg)) : null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -490,7 +506,13 @@ async function showCivilians() {
     (b) =>
       (b.onclick = async () => {
         const [c] = settings.civilians.splice(+b.dataset.cdel, 1);
-        await storage.deleteBlob(c.key);
+        // a player or coworker outfit may be built on this model: keep the file then
+        let used = false;
+        for (const sl of (await listSlots()) || []) {
+          const { profile } = await loadSlot(sl.id);
+          if (profile && JSON.stringify(profile).includes(c.key)) used = true;
+        }
+        if (!used) await storage.deleteBlob(c.key);
         await putSettings(settings);
         clearTemplates();
         showCivilians();
@@ -790,14 +812,20 @@ function outfitEditor(o, prefix, full) {
   const m = o.model;
   const imported = m && m.key;
   const tintable = !m || m.asset || m.tintable;
+  const civs = civModels.filter((c) => c.key);
+  const isCiv = imported && civs.some((c) => c.key === m.key);
   const bodyOpts = [
     ...BUNDLED.bodies.map((b) => `<option value="asset:${b.asset}" ${m?.asset === b.asset ? 'selected' : ''}>${esc(b.title)}</option>`),
+    ...civs.map((c) => `<option value="civ:${esc(c.key)}" ${imported && m.key === c.key ? 'selected' : ''}>Townsperson: ${esc(c.title)}</option>`),
     `<option value="simple" ${!m ? 'selected' : ''}>Simple figure</option>`,
-    imported ? `<option value="cur" selected>Imported: ${esc(m.title)}</option>` : '',
+    imported && !isCiv ? `<option value="cur" selected>Imported: ${esc(m.title)}</option>` : '',
   ].join('');
+  const cf = o.clothesFrom;
   const clothesOpts = [
     `<option value="">Its own clothes</option>`,
-    ...BUNDLED.bodies.map((b) => `<option value="${b.asset}" ${o.clothesFrom?.asset === b.asset ? 'selected' : ''}>Clothes from: ${esc(b.title)}</option>`),
+    ...BUNDLED.bodies.map((b) => `<option value="${b.asset}" ${cf?.asset === b.asset ? 'selected' : ''}>Clothes from: ${esc(b.title)}</option>`),
+    ...civs.map((c) => `<option value="civ:${esc(c.key)}" ${cf?.key === c.key ? 'selected' : ''}>Clothes from: ${esc(c.title)}</option>`),
+    cf?.key && !civs.some((c) => c.key === cf.key) ? `<option value="cur" selected>Clothes from: ${esc(cf.title || 'model')}</option>` : '',
   ].join('');
   return `
     <label>Usual legwear</label>
@@ -904,6 +932,9 @@ function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator, onRefr
     else if (v.startsWith('asset:')) {
       const b = BUNDLED.bodies.find((x) => x.asset === v.slice(6));
       o.model = { asset: b.asset, title: b.title, tintable: true, legwearMaterials: null, underwearOverlay: false, wetMaterials: null };
+    } else if (v.startsWith('civ:')) {
+      const c = civModels.find((x) => x.key === v.slice(4));
+      if (c) o.model = civBody(c);
     }
     if (!onRefresh) previewTarget = target;
     rerender();
@@ -932,8 +963,11 @@ function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator, onRefr
   if (q('uw')) q('uw').onchange = (e) => ((o.model.underwearOverlay = e.target.checked), refresh());
   if (q('clothes'))
     q('clothes').onchange = (e) => {
-      const b = BUNDLED.bodies.find((x) => x.asset === e.target.value);
-      o.clothesFrom = b ? { asset: b.asset, title: b.title } : null;
+      const v = e.target.value;
+      if (v === 'cur') return;
+      const c = v.startsWith('civ:') ? civModels.find((x) => x.key === v.slice(4)) : null;
+      const b = BUNDLED.bodies.find((x) => x.asset === v);
+      o.clothesFrom = c ? { key: c.key, title: c.title, legwearMaterials: c.legwearMaterials?.length ? [...c.legwearMaterials] : null } : b ? { asset: b.asset, title: b.title } : null;
       refresh();
     };
   if (o.model) {
