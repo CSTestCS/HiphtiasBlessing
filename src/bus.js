@@ -218,8 +218,10 @@ export class Bus {
 
     // materialize passengers near the player
     const d = Math.hypot(player.x - this.x, player.z - this.z);
-    if (!this.materialized && (riding || d < 38)) this.materialize();
-    else if (this.materialized && !riding && d > 55) this.dematerialize();
+    // riders only exist as models while the bus is near and on screen (or you're aboard)
+    this._outT = this.inView === false ? (this._outT || 0) + dt : 0;
+    if (!this.materialized && (riding || (d < 38 && this.inView !== false))) this.materialize();
+    else if (this.materialized && !riding && (d > 55 || this._outT > 4)) this.dematerialize();
     if (this.materialized) this.updatePassengers(dt);
   }
 
@@ -437,15 +439,7 @@ export class Bus {
       } else if (!p.leaving) p.char.root.rotation.y = 0;
       p.walking = moving;
       p.char.root.position.set(p.x, 0.15, p.z);
-      if (this.inView !== false && p.char.root.visible) {
-        // someone sitting still on a bus that isn't right next to you animates at a third of the rate
-        p._acc = (p._acc || 0) + dt;
-        const slow = !moving && (this.camDist ?? 0) > 10;
-        if (!slow || (p._tick = ((p._tick || 0) + 1) % 3) === 0) {
-          p.char.update(p._acc, { speed: moving ? 1.1 : 0, sit: !!p.seat && !p.walk.length });
-          p._acc = 0;
-        }
-      }
+      if (this.inView !== false && p.char.root.visible) p.char.update(dt, { speed: moving ? 1.1 : 0, sit: !!p.seat && !p.walk.length });
     }
     if (this.driver?.placeholder) {
       // the driver was a stand-in: swap for a real model once one is loaded

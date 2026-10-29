@@ -1117,6 +1117,24 @@ function finishVRMChar(ch) {
   ch.setLegwear(true);
 }
 
+/**
+ * VRM models split one body into many skinned pieces, and each piece carries its own copy of the
+ * skeleton, so every frame the same bone matrices were computed and uploaded ~15 times per person.
+ * Pieces that use the same bones with the same bind pose now share a single skeleton.
+ */
+function shareSkeletons(root) {
+  const byKey = new Map();
+  root.traverse((o) => {
+    if (!o.isSkinnedMesh || !o.skeleton) return;
+    const sk = o.skeleton;
+    let key = sk.bones.map((b) => b.id).join(',') + '|';
+    for (const m of sk.boneInverses) for (const v of m.elements) key += Math.round(v * 1e4) + ',';
+    const shared = byKey.get(key);
+    if (shared && shared !== sk) o.bind(shared, o.bindMatrix);
+    else if (!shared) byKey.set(key, sk);
+  });
+}
+
 async function createFullVRM(opts) {
   const gltf = await makeLoader().parseAsync(opts.vrm.slice(0), '');
   const vrm = gltf.userData.vrm;
@@ -1125,6 +1143,7 @@ async function createFullVRM(opts) {
   VRMUtils.rotateVRM0(vrm);
   const ch = new CharacterBase();
   ch.vrm = vrm;
+  shareSkeletons(vrm.scene);
   ch.root.add(vrm.scene);
   setupVRMChar(ch, vrm.scene, vrm.humanoid, opts);
   ch.expressions = vrm.expressionManager || null;
@@ -1147,6 +1166,7 @@ async function createFullVRM(opts) {
 async function createClonedVRM(opts) {
   const tpl = await getTemplate(opts.key, opts.vrm);
   const scene = skeletonClone(tpl.scene);
+  shareSkeletons(scene);
   const map = new Map();
   const walk = (a, b) => {
     map.set(a, b);

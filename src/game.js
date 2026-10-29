@@ -39,12 +39,12 @@ const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.ceil(t % 60)).padStart(
 const MGR_GRACE = 150;
 // the workday, in minutes after midnight
 const SHIFT = { start: 540, lunch: 720, lunchEnd: 780, end: 1020 };
-// graphics quality presets: distances (m) for outlines / shadows / face details, max resolution,
-// shadow map size, shadow redraw interval (frames) and how many people are drawn at once
+// graphics quality presets: distances (m) for toon outlines / shadows / small face details,
+// max resolution and shadow map size
 const QUALITY = {
-  high: { outline: 9, shadow: 16, face: 16, pr: 1.5, smap: 2048, shadowEvery: 1, maxChars: 99, riders: 40 },
-  medium: { outline: 6, shadow: 10, face: 10, pr: 1.25, smap: 2048, shadowEvery: 2, maxChars: 22, riders: 14 },
-  low: { outline: 0, shadow: 0, face: 6, pr: 1, smap: 1024, shadowEvery: 3, maxChars: 12, riders: 8 },
+  high: { outline: 99, shadow: 99, face: 99, pr: 1.5, smap: 2048 },
+  medium: { outline: 10, shadow: 20, face: 14, pr: 1.5, smap: 2048 },
+  low: { outline: 0, shadow: 8, face: 6, pr: 1, smap: 1024 },
 };
 // Things you can tie on as an emergency skirt, and how they fail (like Mika's attempts in the manga)
 const MAKESHIFT = {
@@ -96,6 +96,7 @@ export class Game {
     this.paused = false;
     this.keys = new Set();
     this.npcs = [];
+    this.stubPool = [];
     this.levels = {};
     this.shops = {};
     this.cwChars = [];
@@ -110,9 +111,7 @@ export class Game {
     r.setSize(window.innerWidth, window.innerHeight);
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFShadowMap;
-    // the sun's shadow map is redrawn every other frame (see render)
-    r.shadowMap.autoUpdate = false;
-    r.shadowMap.needsUpdate = true;
+
     r.outputColorSpace = THREE.SRGBColorSpace;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.15, 400);
@@ -177,37 +176,44 @@ export class Game {
       if (buf) tpls.push({ key: t.key, buf, gender: t.gender === 'male' || t.gender === 'female' ? t.gender : guessModelGender(t.title), legwearMaterials: t.legwearMaterials, wetMaterials: t.wetMaterials?.length ? t.wetMaterials : null, cfg: t.cfg || null });
     }
     this.civTemplates = tpls;
-    // named townsfolk: coworkers from the player's other save slots
-    for (const e of this.extraCivs.slice(0, 10)) {
+    // named townsfolk (coworkers from the player's other save slots) are kept as settings only;
+    // their model is built when they're picked to walk around
+    this.namedCivs = this.extraCivs.slice(0, 10).filter((e) => e.def.outfits?.[0]);
+    // a small stock to start with: more are made as people come into view
+    for (let i = 0; i < 12; i++) {
+      const ch = tpls.length ? await this.makeCivilian(tpls[i % tpls.length]) : this.makeMannequinCiv();
+      this.civPool.push(ch);
+    }
+  }
+
+  /** Build one townsperson model: a random look from a template, or now and then a named person. */
+  async makeCivilian(t) {
+    const live = new Set([...this.civPool, ...this.npcs.map((n) => n.char)].map((c) => c.civName).filter(Boolean));
+    const free = (this.namedCivs || []).filter((e) => !live.has(e.name));
+    if (free.length && Math.random() < 0.2) {
+      const e = free[Math.floor(Math.random() * free.length)];
       try {
-        const o = e.def.outfits?.[0];
-        if (!o) continue;
+        const o = e.def.outfits[0];
+        const g = e.def.gender || guessGender(e.name);
         const ch = await createCharacter({
           vrm: await modelBuffer(o.model), key: modelKey(o.model), legwearMaterials: o.model?.legwearMaterials || null,
           underwearOverlay: !!o.model?.underwearOverlay, colors: o.colors, tintable: !!o.model?.tintable || !!o.model?.asset,
-          legwearType: o.legwearType, gender: e.def.gender || guessGender(e.name), wetMaterials: o.model?.wetMaterials,
-          cfg: o.model?.cfg || null, underwear: e.def.underwear?.panty ? e.def.underwear : randomUnderwear(e.def.gender || guessGender(e.name)), underwearRes: 512,
+          legwearType: o.legwearType, gender: g, wetMaterials: o.model?.wetMaterials,
+          cfg: o.model?.cfg || null, underwear: e.def.underwear?.panty ? e.def.underwear : randomUnderwear(g), underwearRes: 512,
         });
         ch.civilian = true;
         ch.civName = e.name;
         ch.civHome = e.def.home || null;
-        ch.gender = e.def.gender || guessGender(e.name);
-        this.civPool.push(ch);
+        ch.gender = g;
+        return ch;
       } catch (err) {
-        console.warn('extra civilian failed', err);
+        console.warn('named civilian failed', err);
       }
     }
-    const N = 60;
-    for (let i = 0; i < N; i++) {
-      let ch;
-      if (tpls.length) {
-        const t = tpls[i % tpls.length];
-        ch = await createCharacter(this.civOpts(t));
-        ch.gender = t.gender;
-      } else ch = this.makeMannequinCiv();
-      ch.civilian = true;
-      this.civPool.push(ch);
-    }
+    const ch = await createCharacter(this.civOpts(t));
+    ch.gender = t.gender;
+    ch.civilian = true;
+    return ch;
   }
 
   /** Options for a random townsperson from a template: random colors, and random underwear (everyone has secrets). */
@@ -232,12 +238,10 @@ export class Game {
     this._refilling = true;
     (async () => {
       try {
-        for (let i = 0; i < 10 && !this.ended; i++) {
+        // top the stock of spare models up to a handful (more are made as people come into view)
+        for (let i = 0; this.civPool.length < 6 && i < 6 && !this.ended; i++) {
           const t = this.civTemplates[Math.floor(Math.random() * this.civTemplates.length)];
-          const ch = await createCharacter(this.civOpts(t));
-          ch.civilian = true;
-          ch.gender = t.gender;
-          this.civPool.push(ch);
+          this.civPool.push(await this.makeCivilian(t));
           this.civMade = (this.civMade || 0) + 1;
         }
       } finally {
@@ -247,8 +251,13 @@ export class Game {
   }
 
   /** False while waiting for more townsfolk copies to load (so no placeholder figures appear). */
-  civAvailable() {
+  civAvailable(stubOk = false) {
     if (this.civPool.length) return true;
+    if (stubOk) {
+      // people can appear before their model does: they get one when they come into view
+      this.refillCivilians();
+      return true;
+    }
     if (this.civTemplates?.length) {
       this.refillCivilians();
       return false;
@@ -257,15 +266,15 @@ export class Game {
   }
 
   acquireCivilian(home = false, want = null) {
-    if (this.civPool.length < 8) this.refillCivilians();
+    if (this.civPool.length < 3) this.refillCivilians();
     let ch;
     const wi = want ? this.civPool.indexOf(want) : -1;
     if (wi >= 0) ch = this.civPool.splice(wi, 1)[0];
     else if (this.civPool.length) ch = this.civPool.splice(Math.floor(Math.random() * this.civPool.length), 1)[0];
     else {
-      // nobody loaded yet: a hidden stand-in that gets swapped for a real model as soon as one is ready
+      // no spare model right now: a hidden stand-in that gets a real model once it's on screen
+      if (this.civTemplates?.length) return this.stubChar();
       ch = this.makeMannequinCiv();
-      if (this.civTemplates?.length) ch.placeholder = true;
     }
     ch.root.visible = true;
     ch.root.rotation.set(0, 0, 0);
@@ -282,8 +291,18 @@ export class Game {
     if (!ch) return;
     ch.root.removeFromParent();
     ch.setProp(null);
+    if (ch.isStub) {
+      if (!this.stubPool.includes(ch)) this.stubPool.push(ch);
+      return;
+    }
     if (ch.placeholder) return;
-    if (!this.civPool.includes(ch)) this.civPool.push(ch);
+    if (this.civPool.includes(ch)) return;
+    // keep a modest stock of spare models; the rest are freed (they're rebuilt from templates when needed)
+    if (this.civPool.length >= 12) {
+      ch.dispose?.();
+      return;
+    }
+    this.civPool.push(ch);
   }
 
   outfitFor(def, key) {
@@ -1428,7 +1447,7 @@ export class Game {
   spawnCustomer(word) {
     const L = this.level;
     const count = this.npcs.filter((n) => n.kind === 'customer').length;
-    if (count >= (L.maxCustomers || 4) || !this.civAvailable()) return;
+    if (count >= (L.maxCustomers || 4) || !this.civAvailable(true)) return;
     const spot = this.freeSpot();
     if (!spot) return;
     const e = L.pois.entrance;
@@ -1481,7 +1500,7 @@ export class Game {
     let count = this.npcs.filter((n) => n.kind === 'pedestrian').length;
     const want = this.pedTarget();
     let guard = 0;
-    while (count < want && guard++ < 60 && this.civAvailable()) {
+    while (count < want && guard++ < 60 && this.civAvailable(true)) {
       // people from your other saves are often around their own building
       if (L.apartments && Math.random() < 0.35) {
         const local = this.civPool.find((ch) => {
@@ -2305,7 +2324,7 @@ export class Game {
     const rainMul = this.outdoors && this.isRaining ? 0.75 : 1;
     const seated = !!p.sitAt;
     for (const n of this.npcs) {
-      n.updateConeVisual(this.stealthActive() && !p.bus);
+      n.updateConeVisual(this.stealthActive() && !p.bus && n.inView !== false && Math.hypot(n.x - p.x, n.z - p.z) < 20);
       if (!active || !n.canSee()) {
         n.suspicion = Math.max(0, n.suspicion - dt);
         continue;
@@ -2801,7 +2820,7 @@ export class Game {
     cw.writeups++;
     s.graceT = performance.now() + 120000; // like the player, the manager leaves them alone for a while after
     ui.toast(`${msg} (${s.name}: write-up ${Math.min(3, cw.writeups)}/3)`, 'bad', 5000);
-    const m = this.level.pois.manager;
+    const m = this.level.pois.manager || { stand: { x: s.x, z: s.z } };
     if (cw.writeups >= 3) {
       cw.fired = true;
       cw.firedDay = this.state.day;
@@ -3002,6 +3021,16 @@ export class Game {
     await ui.fade(true);
     const m = this.level.pois.manager;
     const p = this.player;
+    if (!m) {
+      // not at work any more (the report came in as you left): it's a phone call instead
+      await ui.fade(false);
+      this.transitioning = false;
+      this.addShame(SHAME.managerTalk, true);
+      await this.dialog(`${mgrName} calls`, STORY.managerTalk(mgrName, this.profile.name, this.lw, Math.min(3, st.writeups), why), undefined, { who: 'player', pose: 'cover', mood: { sad: 0.8 }, bg: 'dark' });
+      if (st.writeups >= 3) this.lose('Fired!', `${mgrName} doesn't even make you come back in.\n\nThree write-ups. Fired.`);
+      else ui.toast(`Write-up ${st.writeups}/3.`, 'bad', 5000);
+      return;
+    }
     this.standUp(true);
     this.stopHiding(true);
     this.dropItem(false, true);
@@ -5208,13 +5237,14 @@ export class Game {
   adaptResolution(frameSec) {
     if (this.settings.dynamicRes === false || frameSec > 0.5) return;
     const a = (this._res ||= { ema: 1 / 60, t: 0, scale: 1 });
-    a.ema += (frameSec - a.ema) * 0.05;
+    a.ema += (frameSec - a.ema) * 0.02;
     a.t += frameSec;
-    if (a.t < 2) return;
+    // judged over several seconds, so a single hitch never flips the resolution back and forth
+    if (a.t < 5) return;
     a.t = 0;
     let next = a.scale;
-    if (a.ema > 1 / 45) next = Math.max(0.6, a.scale - 0.1);
-    else if (a.ema < 1 / 55) next = Math.min(1, a.scale + 0.1);
+    if (a.ema > 1 / 40) next = Math.max(0.6, a.scale - 0.15);
+    else if (a.ema < 1 / 57 && a.scale < 1) next = Math.min(1, a.scale + 0.15);
     if (next !== a.scale) {
       a.scale = next;
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.Q.pr) * next);
@@ -5230,7 +5260,6 @@ export class Game {
     const ol = d < Q.outline && outlinesOn();
     const sh = d < Q.shadow && !noShadow;
     const fc = d < Q.face;
-    ch._far = d > 14;
     const key = (ol ? 1 : 0) + (sh ? 2 : 0) + (fc ? 4 : 0);
     if (ch._detailKey === key) return;
     ch._detailKey = key;
@@ -5250,6 +5279,11 @@ export class Game {
     for (const o of ch._dm.face) o.visible = fc;
   }
 
+  /**
+   * Per frame: who is on screen. Anyone off screen is hidden and costs nothing to draw or pose (their
+   * skeleton isn't even updated). Anonymous townsfolk who stay out of view for a while hand their
+   * model back to the pool and get one again when they come into view.
+   */
   cullCharacters() {
     const cam = this.camera;
     cam.updateMatrixWorld();
@@ -5262,36 +5296,44 @@ export class Game {
     const cx = cam.position.x;
     const cz = cam.position.z;
     const maxD = this.outdoors ? 75 : 60;
+    const now = performance.now();
+    const show = (ch, on) => {
+      ch.root.visible = on;
+      ch.root.matrixWorldAutoUpdate = on;
+    };
     for (const n of this.npcs) {
-      if (n.char.placeholder) {
-        // swap stand-ins for real townsfolk models once they've loaded; keep them out of sight until then
-        if (this.civPool.length) {
-          n.swapChar(this.acquireCivilian());
-          if (n.kind === 'pedestrian') this.dressCivilian(n);
-        } else {
-          this.refillCivilians();
-          n.inView = false;
-          n.char.root.visible = false;
-          continue;
-        }
-      }
       const d = Math.hypot(n.x - cx, n.z - cz);
       sph.center.set(n.x, 0.9, n.z);
       sph.radius = 1.3;
-      const vis = d < maxD && fr.intersectsSphere(sph);
-      n.inView = vis && !n.away;
-      n.char.root.visible = vis && !n.away;
-      n._camD = d;
-      if (n.inView) this.charDetail(n.char, d);
-    }
-    // only the nearest few are drawn when a place is packed
-    const shown = this.npcs.filter((n) => n.inView);
-    if (shown.length > this.Q.maxChars) {
-      shown.sort((a, b) => a._camD - b._camD);
-      for (const n of shown.slice(this.Q.maxChars)) {
-        if (n === this.player.borrow?.npc || n.state === 'talk') continue;
-        n.inView = false;
-        n.char.root.visible = false;
+      const vis = d < maxD && fr.intersectsSphere(sph) && !n.away;
+      if (n.char.placeholder) {
+        // no model yet (or handed back): take one from the pool only once they're actually on screen
+        if (vis && this.civPool.length) {
+          const stub = n.char;
+          n.swapChar(this.acquireCivilian(), true);
+          if (stub.isStub) this.stubPool.push(stub);
+          if (n.kind === 'pedestrian') this.dressCivilian(n);
+        } else {
+          if (vis) this.refillCivilians();
+          n.inView = false;
+          show(n.char, false);
+          continue;
+        }
+      }
+      n.inView = vis;
+      show(n.char, vis);
+      if (vis) {
+        n._outSince = 0;
+        this.charDetail(n.char, d);
+      } else if (this.anonymous(n)) {
+        n._outSince ||= now;
+        if (now - n._outSince > 6000) {
+          // out of sight for a while: give the model back, keep only the person's state
+          const ch = n.char;
+          n.swapChar(this.stubChar(), true);
+          this.releaseCivilian(ch);
+          n._outSince = 0;
+        }
       }
     }
     for (const b of this.buses?.buses || []) {
@@ -5301,26 +5343,34 @@ export class Game {
       const onIt = this.player.bus === b;
       const vis = onIt || (d < 55 && fr.intersectsSphere(sph));
       b.inView = vis;
-      b.camDist = onIt ? 0 : d;
-      // riders of a far-off bus can't be made out through the windows: skip them entirely
-      const riders = vis && (onIt || d < 30);
-      // from outside, only so many riders are drawn: window seats first
-      let room = onIt ? 99 : this.Q.riders;
-      const order = onIt ? b.passengers : [...b.passengers].sort((a, c) => (c.seat?.window ? 1 : 0) - (a.seat?.window ? 1 : 0));
-      for (const q of order) {
-        const on = riders && (q.delay <= 0 || q.char.root.visible) && room > 0;
-        q.char.root.visible = on;
-        if (on) {
-          room--;
-          // riders seen from outside, through the windows, are a bit farther than the bus itself
-          this.charDetail(q.char, onIt ? Math.hypot(q.x - (this.player.lx || 0), q.z - (this.player.lz || 0)) : d + 3, true);
-        }
+      for (const q of b.passengers) {
+        const on = vis && (q.delay <= 0 || q.char.root.visible);
+        show(q.char, on);
+        if (on) this.charDetail(q.char, onIt ? Math.hypot(q.x - (this.player.lx || 0), q.z - (this.player.lz || 0)) : d, true);
       }
       if (b.driver) {
-        b.driver.root.visible = riders && !b.driver.placeholder;
+        show(b.driver, vis && !b.driver.placeholder);
         if (b.driver.root.visible) this.charDetail(b.driver, onIt ? 3 : d, true);
       }
     }
+  }
+
+  /** Townsfolk with no identity of their own (not coworkers, not someone you're dealing with). */
+  anonymous(n) {
+    if (!n.char.civilian || n.char.placeholder || n.char.civName || n.commuter || n.coworkerEncounter) return false;
+    if (!['pedestrian', 'customer', 'clerk', 'resident'].includes(n.kind)) return false;
+    if (n.state === 'talk' || n.lending || n.stripping || n === this.player.borrow?.npc) return false;
+    return true;
+  }
+
+  /** A model-less stand-in: no meshes worth drawing, just enough for the logic. */
+  stubChar() {
+    const ch = this.stubPool.pop() || this.makeMannequinCiv();
+    ch.placeholder = true;
+    ch.isStub = true;
+    ch.root.visible = false;
+    ch.root.matrixWorldAutoUpdate = false;
+    return ch;
   }
 
   render() {
@@ -5388,8 +5438,6 @@ export class Game {
     this.cullCharacters();
     this.updateMarker();
     this.updateTags();
-    this._shadowTick = ((this._shadowTick || 0) + 1) % this.Q.shadowEvery;
-    if (this._shadowTick === 0) this.renderer.shadowMap.needsUpdate = true;
     this.renderer.render(this.scene, this.camera);
   }
 }

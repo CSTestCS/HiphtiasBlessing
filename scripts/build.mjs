@@ -6,7 +6,7 @@ mkdirSync('dist', { recursive: true });
 await build({
   entryPoints: ['src/main.js'],
   bundle: true,
-  minify: true,
+  minify: process.env.NOMIN !== '1',
   format: 'iife',
   target: 'chrome120',
   outfile: 'dist/bundle.js',

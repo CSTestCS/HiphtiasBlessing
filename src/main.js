@@ -407,7 +407,7 @@ async function showSettings() {
     st.useBundledCivilians = s.querySelector('#s-civ').checked;
     await putSettings(st);
   };
-  s.querySelectorAll('input:not([id^="s-vol"])').forEach((el) => (el.oninput = el.onchange = () => (fmt(), save())));
+  s.querySelectorAll('input:not([id^="s-vol"]), select').forEach((el) => (el.oninput = el.onchange = () => (fmt(), save())));
   bindVolumeSliders(s, st, () => putSettings(st));
   s.querySelector('#s-reset').onclick = async () => {
     Object.assign(st, { hourSeconds: DEFAULT_SETTINGS.hourSeconds, shameScale: DEFAULT_SETTINGS.shameScale, exprMax: DEFAULT_SETTINGS.exprMax, detectScale: 1, sleepRecovery: true, wetMaxSee: 0.5, allowedUnfinished: 2, minimap: true, dynamicRes: true, outlines: true, quality: 'medium', useBundledCivilians: true });
