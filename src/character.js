@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { VRMLoaderPlugin, VRMUtils, VRMHumanoid, VRMExpressionManager, VRMExpression, VRMExpressionMorphTargetBind } from '@pixiv/three-vrm';
-import { DYE_HEX } from './dyes.js';
+import { DYE_HEX, coordinatedColors } from './dyes.js';
 
 // socks, stockings and thigh-highs stay on after a mishap: only pants/skirts/shorts count
 export const LEGWEAR_RE = /(bottom|pants|trouser|skirt|short|jean|slack|legging)/i;
@@ -1063,8 +1063,8 @@ function setupVRMChar(ch, scene, hum, opts) {
   // trying on the same clothes in other colors (fitting rooms): skin, hair and eyes stay as they are
   const slots = opts.cfg?.slots || null;
   ch.retint = () => {
-    const r = randomCivilianTints();
-    const accent = randomCivilianTints().top;
+    const r = coordinatedColors();
+    const accent = r.accent;
     for (const { m, leg, name, base, baseShade } of ch.mats) {
       if (/outline/i.test(m.name || '')) continue;
       const slot = slots && slots[name];
@@ -1125,7 +1125,7 @@ function applyTints(ch, opts) {
 export const SKIN_TONES = ['#ffe3cf', '#f6d1b6', '#e8b98f', '#d29a6e', '#b07a52', '#8a5a3a', '#6b4430'];
 function randomCivilianTints() {
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
-  return { skin: pick(SKIN_TONES), hair: pick(DYE_HEX), eye: pick(DYE_HEX), top: pick(DYE_HEX), bottom: pick(DYE_HEX), shoe: pick(DYE_HEX) };
+  return { skin: pick(SKIN_TONES), hair: pick(DYE_HEX), eye: pick(DYE_HEX), ...coordinatedColors() };
 }
 
 function finishVRMChar(ch) {
@@ -1896,7 +1896,7 @@ export function createMannequin(opts = {}) {
 
 export function randomColors(rng = Math.random) {
   const pick = (arr) => arr[Math.floor(rng() * arr.length)];
-  return { skin: pick(SKIN_TONES), hair: pick(DYE_HEX), top: pick(DYE_HEX), bottom: pick(DYE_HEX), under: pick(DYE_HEX), eye: pick(DYE_HEX), shoe: pick(DYE_HEX), accent: pick(DYE_HEX) };
+  return { skin: pick(SKIN_TONES), hair: pick(DYE_HEX), under: pick(DYE_HEX), eye: pick(DYE_HEX), ...coordinatedColors(rng) };
 }
 
 /** Halo and wings for Celesti (works for VRM or mannequin). No light: she doesn't glow. */

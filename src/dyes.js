@@ -177,3 +177,37 @@ export const DYES = [
 export const DYE_HEX = DYES.map((d) => d[1]);
 const NAME = new Map(DYES.map(([n, h]) => [h, n]));
 export const dyeName = (hex) => NAME.get(hex) || hex;
+
+// ---- color coordination for random outfits ---------------------------------
+// Only picks from the pool above; it never shifts a color's brightness or tint.
+function hsl(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  let h = 0;
+  if (d) h = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return { h: h * 60, s, l };
+}
+const INFO = DYE_HEX.map((hex) => ({ hex, ...hsl(hex) }));
+const neutral = (c) => c.s < 0.18 || c.l < 0.1 || c.l > 0.94;
+const hueGap = (a, b) => { const d = Math.abs(a.h - b.h) % 360; return Math.min(d, 360 - d); };
+const isLight = (c) => c.l >= 0.55;
+/** Goes with the top: a complementary hue (opposite side of the wheel) or a strong light/dark contrast. */
+const goesWith = (c, top) => c.hex !== top.hex && (Math.abs(c.l - top.l) >= 0.35 || (!neutral(c) && !neutral(top) && hueGap(c, top) >= 120) || (neutral(c) !== neutral(top) && Math.abs(c.l - top.l) >= 0.2));
+
+/** Top is fully random; legwear contrasts it in brightness; accents go with it; shoes lean black and dark brown. */
+export function coordinatedColors(rng = Math.random, topHex = null) {
+  const pick = (a) => a[Math.floor(rng() * a.length)];
+  const top = (topHex && INFO.find((c) => c.hex === topHex)) || pick(INFO);
+  const matching = INFO.filter((c) => goesWith(c, top));
+  // light top -> dark legwear, dark top -> light legwear
+  let legs = matching.filter((c) => (isLight(top) ? c.l < 0.4 : c.l > 0.6));
+  if (!legs.length) legs = INFO.filter((c) => (isLight(top) ? c.l < 0.4 : c.l > 0.6));
+  const accent = pick(matching.length ? matching : INFO);
+  // shoes: mostly blacks and dark browns, now and then a dark shade near the top's hue
+  const basics = INFO.filter((c) => c.l < 0.32 && /black|brown/i.test(NAME.get(c.hex)));
+  const nearTop = neutral(top) ? [] : INFO.filter((c) => c.l < 0.35 && !neutral(c) && hueGap(c, top) <= 30);
+  const shoe = nearTop.length && rng() < 0.2 ? pick(nearTop) : pick(basics.length ? basics : INFO.filter((c) => c.l < 0.3));
+  return { top: top.hex, bottom: pick(legs).hex, accent: accent.hex, shoe: shoe.hex };
+}

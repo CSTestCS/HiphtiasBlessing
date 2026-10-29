@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { ui, esc } from './ui.js';
 import { storage, newId } from './storage.js';
-import { dyeName } from './dyes.js';
+import { dyeName, coordinatedColors } from './dyes.js';
 import { randomApartment, randomWorkSlot, civBodyFrom, randomBodyFor, aptById, UNDERWEAR, UNDERWEAR_COLORS, prettyUnderwear, randomUnderwear, JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, FEMALE_NAMES, MALE_NAMES, nameFor, guessGender, guessModelGender, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
 import { createCharacter, inspectVRM, randomColors, addAngelic, clearTemplates, setOutlines } from './character.js';
 import { Game, controlsTable } from './game.js';
@@ -867,7 +867,8 @@ function outfitEditor(o, prefix, full) {
       tintable && full
         ? `<label>Skin</label>${swatches('skin', o.colors.skin, prefix + 'skin')}<label>Hair</label>${swatches('hair', o.colors.hair, prefix + 'hair')}
            <label>Top</label>${swatches('top', o.colors.top, prefix + 'top')}<label>Pants / skirt</label>${swatches('bottom', o.colors.bottom, prefix + 'bottom')}
-           <label>Shoes</label>${swatches('top', o.colors.shoe, prefix + 'shoe')}<label>Accents</label>${swatches('top', o.colors.accent, prefix + 'accent')}`
+           <label>Shoes</label>${swatches('top', o.colors.shoe, prefix + 'shoe')}<label>Accents</label>${swatches('top', o.colors.accent, prefix + 'accent')}
+           <label>Eyes</label>${swatches('eye', o.colors.eye, prefix + 'eye')}`
         : ''
     }
     ${full && !m ? `<label>Underwear color</label>${swatches('under', o.colors.under, prefix + 'under')}` : ''}`;
@@ -998,7 +999,7 @@ function bindOutfitEditor(s, o, prefix, target, rerender = renderCreator, onRefr
     bindMatList(s, o.model, prefix + 'wet', refresh, 'wetMaterials');
     bindMatList(s, o.model, prefix + 'keep', refresh, 'keepMaterials');
   }
-  for (const k of ['skin', 'hair', 'top', 'bottom', 'under', 'shoe', 'accent']) {
+  for (const k of ['skin', 'hair', 'top', 'bottom', 'under', 'shoe', 'accent', 'eye']) {
     s.querySelectorAll(`[data-${prefix}${k}]`).forEach((el) => {
       el.onclick = () => {
         o.colors[k] = el.getAttribute(`data-${prefix}${k}`);
@@ -1284,10 +1285,7 @@ function chooseOutfits(g) {
       s.querySelectorAll('[data-oaddd]').forEach((b) => (b.onclick = () => addOutfit(b.dataset.oaddd, false)));
       s.querySelector('#o-rand').onclick = () => {
         for (const e of entries) {
-          daily[e.key].top = tintList[1 + Math.floor(Math.random() * (tintList.length - 1))];
-          daily[e.key].bottom = Math.random() < 0.5 ? null : tintList[1 + Math.floor(Math.random() * (tintList.length - 1))];
-          daily[e.key].shoe = tintList[1 + Math.floor(Math.random() * (tintList.length - 1))];
-          daily[e.key].accent = tintList[1 + Math.floor(Math.random() * (tintList.length - 1))];
+          Object.assign(daily[e.key], coordinatedColors());
         }
         render();
       };
