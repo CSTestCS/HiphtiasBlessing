@@ -1187,6 +1187,7 @@ async function createFullVRM(opts) {
     ch.animate(dt, a);
     ch.updateProp();
     vrm.update(Math.min(dt, 1 / 20));
+    for (const m of ch.extraMtoons || []) m.update(dt);
   };
   ch.dispose = () => VRMUtils.deepDispose(vrm.scene);
   finishVRMChar(ch);
@@ -1256,6 +1257,7 @@ async function createClonedVRM(opts) {
     hum.update();
     if (em) em.update();
     for (const m of mtoons) m.update(dt);
+    for (const m of ch.extraMtoons || []) m.update(dt);
   };
   ch.dispose = () => {
     scene.traverse((o) => {
@@ -1654,6 +1656,12 @@ export function fitClothing(srcScene, srcHum, dst, filter) {
     const mats = (Array.isArray(o.material) ? o.material : [o.material]).map((m) => {
       const c = m.clone();
       fixTransparency(c);
+      // MToon pushes its alpha cutoff and opacity to the shader only in update(): the wearer
+      // updates these copies every frame, or the cut-out parts draw as solid black shapes
+      if (c.isMToonMaterial && c.update) {
+        c.update(0);
+        (dst.extraMtoons ||= []).push(c);
+      }
       return c;
     });
     const mesh = new THREE.SkinnedMesh(geo, Array.isArray(o.material) ? mats : mats[0]);
@@ -1803,6 +1811,8 @@ export function borrowLegwear(lender, borrower) {
     meshes.forEach((m) => {
       m.removeFromParent();
       m.geometry?.dispose?.();
+      const ms = Array.isArray(m.material) ? m.material : [m.material];
+      if (borrower.extraMtoons) borrower.extraMtoons = borrower.extraMtoons.filter((x) => !ms.includes(x));
     });
     borrower.borrowed = null;
     borrower.setLegwear(borrower.legwearOn);
