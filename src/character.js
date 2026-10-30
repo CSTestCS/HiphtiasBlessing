@@ -132,25 +132,195 @@ const templates = new Map();
 export function clearTemplates() {
   for (const p of templates.values()) p.then((v) => v && VRMUtils.deepDispose(v.scene)).catch(() => {});
   templates.clear();
+  tplUse.clear();
 }
+export function templateStats() {
+  let mb = 0;
+  for (const st of streams.values()) if (st.state === 'full') mb += st.mb;
+  return { states: [...streams.entries()].map(([k, st]) => k.slice(4) + '=' + st.state + '/' + st.srcs.length), fullTexMB: Math.round(mb), fullTemplates: [...streams.values()].filter((x) => x.state === 'full').length, parsed: templates.size, civ: [...templates.keys()].filter((k) => k.startsWith('civ:')).length, inUse: [...tplUse.entries()].filter(([, u]) => u.refs > 0).map(([k, u]) => k.slice(4, 14) + ':' + u.refs) };
+}
+export function hasTemplate(key) {
+  return templates.has(key);
+}
+
+// ---- Texture streaming for townsperson models ---------------------------------------------
+// Each model's full-size textures are only decoded while someone wearing it is near the camera.
+// The rest of the time only the file's compressed images (a few MB) and small copies are kept.
+const streams = new Map(); // template key -> { state: 'full'|'low'|'loading', srcs: [{ source, textures, blob }], mb, lastNear }
+async function prepareStreaming(key, vrm, parser) {
+  const bySource = new Map();
+  vrm.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of [].concat(o.material)) for (const k of TEX_KEYS) {
+      const t = m && m[k];
+      if (!t || !t.isTexture || !t.source?.data) continue;
+      if (!bySource.has(t.source)) bySource.set(t.source, { source: t.source, textures: new Set() });
+      bySource.get(t.source).textures.add(t);
+    }
+  });
+  const srcs = [];
+  let mb = 0;
+  for (const e of bySource.values()) {
+    // find the image this texture came from in the file, and keep its compressed bytes
+    let ti = null;
+    for (const t of e.textures) {
+      const a = parser.associations.get(t);
+      if (a && a.textures != null) ti = a.textures;
+    }
+    const tdef = ti != null ? parser.json.textures?.[ti] : null;
+    const si = tdef ? tdef.source ?? tdef.extensions?.EXT_texture_webp?.source ?? tdef.extensions?.KHR_texture_basisu?.source : null;
+    const idef = si != null ? parser.json.images?.[si] : null;
+    if (!idef || idef.bufferView == null) continue;
+    try {
+      const bv = await parser.getDependency('bufferView', idef.bufferView);
+      e.blob = new Blob([bv], { type: idef.mimeType || 'image/png' });
+    } catch (_) {
+      continue;
+    }
+    // the far-away copies are made now, while the full image is still at hand
+    for (const t of e.textures) lowCopy(t);
+    e.low = lowCopy([...e.textures][0]).image;
+    const d = e.source.data;
+    mb += ((d.width || 0) * (d.height || 0) * 4) / 1e6;
+    srcs.push(e);
+  }
+  streams.set(key, { key, state: 'full', srcs, mb, lastNear: performance.now() });
+}
+/** Are this model's full textures ready to show? (Models without streaming always are.) */
+export function fullTexturesReady(key) {
+  const st = key && streams.get(key);
+  return !st || st.state === 'full';
+}
+/** Once a second or so: decode full textures for models someone is near, free them for the rest. */
+export function streamTemplateTextures(nearKeys) {
+  const now = performance.now();
+  for (const [key, st] of streams) {
+    if (nearKeys.has(key)) {
+      st.lastNear = now;
+      if (st.state === 'low') loadFull(st);
+    } else if (st.state === 'full' && now - st.lastNear > 4000) dropFull(st);
+  }
+}
+function dropFull(st) {
+  for (const e of st.srcs) {
+    const d = e.source.data;
+    // the small copy takes its place (GPU and memory shrink to match); anything still pointing
+    // at this texture just shows the small version
+    e.source.data = e.low;
+    e.source.needsUpdate = true;
+    if (d && d !== e.low && d.close) d.close();
+  }
+  st.state = 'low';
+}
+async function loadFull(st) {
+  st.state = 'loading';
+  try {
+    // decoded off the main thread, all at once; nothing is shown until every one is ready
+    const todo = st.srcs.filter((e) => e.source.data === e.low);
+    const bmps = await Promise.all(todo.map((e) => createImageBitmap(e.blob, { premultiplyAlpha: 'none' }))); // same as the model loader
+    if (!streams.has(st.key)) return bmps.forEach((b) => b.close?.()); // the model was freed meanwhile
+    todo.forEach((e, i) => {
+      e.source.data = bmps[i];
+      e.source.needsUpdate = true;
+      for (const t of e.textures) t.needsUpdate = true;
+    });
+    st.state = 'full';
+    st.lastNear = performance.now();
+  } catch (err) {
+    console.warn('texture stream failed', err);
+    st.state = 'low';
+  }
+}
+/** After the GPU was reset: decode again whatever is needed. */
+export function resetTextureStreams() {
+  for (const st of streams.values()) if (st.state === 'full') dropFull(st);
+}
+
+// Townsperson templates (keys 'civ:...') are parsed on demand and freed again once nobody wears a
+// copy of them, keeping only a few around. Only their settings stay in memory.
+const tplUse = new Map(); // key -> { refs, last }
+const TEMPLATE_CAP = 5;
+function useTemplate(key) {
+  const u = tplUse.get(key) || { refs: 0, last: 0 };
+  u.refs++;
+  u.last = performance.now();
+  tplUse.set(key, u);
+}
+function releaseTemplate(key) {
+  const u = tplUse.get(key);
+  if (u) {
+    u.refs = Math.max(0, u.refs - 1);
+    u.last = performance.now();
+  }
+  evictTemplates();
+}
+function evictTemplates() {
+  const civ = [...templates.keys()].filter((k) => k.startsWith('civ:'));
+  if (civ.length <= TEMPLATE_CAP) return;
+  const idle = civ.filter((k) => !(tplUse.get(k)?.refs > 0)).sort((a, b) => (tplUse.get(a)?.last || 0) - (tplUse.get(b)?.last || 0));
+  for (const k of idle.slice(0, civ.length - TEMPLATE_CAP)) {
+    const p = templates.get(k);
+    templates.delete(k);
+    tplUse.delete(k);
+    streams.delete(k);
+    p.then((v) => {
+      if (!v) return;
+      // the small far-away copies of its textures go too
+      v.scene.traverse((o) => {
+        if (!o.isMesh) return;
+        for (const m of [].concat(o.material)) for (const t of [m?.map, m?.shadeMultiplyTexture]) {
+          const lc = t && lowTex.get(t);
+          if (lc && lc !== t) lc.dispose();
+        }
+      });
+      VRMUtils.deepDispose(v.scene);
+    }).catch(() => {});
+    // and the textures prepared for its underwear
+    for (const c of [uvMaskCache, cleanCache]) for (const key of [...c.keys()]) if (key.startsWith(k + '|')) c.delete(key);
+  }
+}
+/**
+ * Geometry parsed from a .vrm is a set of views into the whole file (images included), which keeps
+ * all of it in memory. Give each array its own copy so the file itself can be freed.
+ */
+function detachFromFile(scene) {
+  const own = (arr) => (arr && arr.buffer && arr.buffer.byteLength > arr.byteLength ? arr.slice() : arr);
+  const fix = (attr) => {
+    if (!attr) return;
+    if (attr.isInterleavedBufferAttribute) attr.data.array = own(attr.data.array);
+    else attr.array = own(attr.array);
+  };
+  const seen = new Set();
+  scene.traverse((o) => {
+    const g = o.geometry;
+    if (!g || seen.has(g)) return;
+    seen.add(g);
+    if (g.index) fix(g.index);
+    for (const k in g.attributes) fix(g.attributes[k]);
+    for (const k in g.morphAttributes) for (const a of g.morphAttributes[k]) fix(a);
+  });
+}
+
 export function getTemplate(key, buffer) {
   if (!templates.has(key)) {
     templates.set(
       key,
       makeLoader()
         .parseAsync(buffer.slice(0), '')
-        .then((gltf) => {
+        .then(async (gltf) => {
           const vrm = gltf.userData.vrm;
           if (!vrm) throw new Error('Not a VRM');
           VRMUtils.removeUnnecessaryVertices(gltf.scene);
           VRMUtils.rotateVRM0(vrm);
           vrm.scene.updateMatrixWorld(true);
+          detachFromFile(vrm.scene);
           vrm.scene.traverse((o) => {
             if (!o.isMesh) return;
             fixTransparency(o.material);
             // copies are seen small and in crowds: keep their textures small to save memory
             for (const m of Array.isArray(o.material) ? o.material : [o.material]) shrinkTextures(m, 1024);
           });
+          if (key.startsWith('civ:')) await prepareStreaming(key, vrm, gltf.parser);
           return vrm;
         })
     );
@@ -164,6 +334,8 @@ export function getTemplate(key, buffer) {
 // to real blending; anything that can't blend falls back to fully hidden
 // pixels (alpha test) rather than opaque ones.
 const shrunk = new WeakMap();
+// MToon keeps these behind getters, so Object.keys() never lists them
+const TEX_KEYS = ['map', 'shadeMultiplyTexture', 'normalMap', 'emissiveMap', 'shadingShiftTexture', 'matcapTexture', 'rimMultiplyTexture', 'outlineWidthMultiplyTexture', 'uvAnimationMaskTexture', 'alphaMap'];
 function shrinkTextures(m, max) {
   if (!m) return;
   for (const k of Object.keys(m)) {
@@ -280,6 +452,55 @@ export function syncMtoon(m) {
 function syncAllMtoon(ch) {
   ch.scene?.traverse((o) => {
     if (o.isMesh) for (const m of Array.isArray(o.material) ? o.material : [o.material]) syncMtoon(m);
+  });
+}
+
+// Small copies of textures for characters seen from far away (one per texture, made when first needed).
+const lowTex = new WeakMap();
+function lowCopy(t, max = 256) {
+  if (lowTex.has(t)) return lowTex.get(t);
+  if (!t.image) return t;
+  let out = t;
+  const img = t.image;
+  const w = img?.width || 0;
+  const h = img?.height || 0;
+  if (Math.max(w, h) > max) {
+    try {
+      const sc = max / Math.max(w, h);
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w * sc));
+      c.height = Math.max(1, Math.round(h * sc));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      out = t.clone();
+      out.source = new THREE.Source(c); // its own image (a clone would share the full-size one)
+      out.needsUpdate = true;
+    } catch (_) {
+      out = t;
+    }
+  }
+  lowTex.set(t, out);
+  return out;
+}
+/** Swap a character between its full textures (near) and small copies (far). */
+export function setTexturesLow(ch, low) {
+  ch._texLow = low;
+  ch.root?.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of [].concat(o.material)) {
+      if (!m || !TEX_KEYS.some((k) => m[k] && m[k].isTexture)) continue;
+      const u = (m.userData ||= {});
+      if (low) {
+        if (!u.hiMap) {
+          u.hiMap = {};
+          for (const k of TEX_KEYS) if (m[k] && m[k].isTexture) u.hiMap[k] = m[k];
+        }
+        for (const k in u.hiMap) m[k] = lowCopy(u.hiMap[k]);
+      } else if (u.hiMap) {
+        for (const k in u.hiMap) m[k] = u.hiMap[k];
+        u.hiMap = null;
+      }
+      syncMtoon(m);
+    }
   });
 }
 
@@ -1211,6 +1432,7 @@ async function createFullVRM(opts) {
 
 async function createClonedVRM(opts) {
   const tpl = await getTemplate(opts.key, opts.vrm);
+  useTemplate(opts.key);
   const scene = skeletonClone(tpl.scene);
   shareSkeletons(scene);
   const map = new Map();
@@ -1265,10 +1487,16 @@ async function createClonedVRM(opts) {
     hum.update();
     if (em) em.update();
   };
+  ch.tplKey = opts.key;
+  let released = false;
   ch.dispose = () => {
     scene.traverse((o) => {
       if (o.isMesh) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose());
     });
+    if (!released) {
+      released = true;
+      releaseTemplate(opts.key);
+    }
   };
   finishVRMChar(ch);
   if (opts.scale) ch.root.scale.setScalar(opts.scale);
@@ -2183,6 +2411,60 @@ function uvIslandMask(ch, m, R, flipY) {
   return mask;
 }
 
+/** For each pixel just outside the islands (up to `reach` px), the island pixel nearest to it. Worked out once per UV layout. */
+const bleedMaps = new WeakMap();
+function bleedMap(mask, R, reach = 16) {
+  let bm = bleedMaps.get(mask);
+  if (bm) return bm;
+  const src = new Int32Array(R * R).fill(-1);
+  let front = [];
+  for (let i = 0; i < R * R; i++) if (mask[i]) src[i] = i;
+  for (let i = 0; i < R * R; i++) {
+    if (mask[i]) continue;
+    const x = i % R;
+    if ((x > 0 && mask[i - 1]) || (x < R - 1 && mask[i + 1]) || (i >= R && mask[i - R]) || (i < R * R - R && mask[i + R])) front.push(i);
+  }
+  const dst = [];
+  const from = [];
+  for (let p = 0; p < reach && front.length; p++) {
+    const next = [];
+    for (const i of front) {
+      if (src[i] >= 0) continue;
+      const x = i % R;
+      const n = x > 0 && src[i - 1] >= 0 ? i - 1 : x < R - 1 && src[i + 1] >= 0 ? i + 1 : i >= R && src[i - R] >= 0 ? i - R : i < R * R - R && src[i + R] >= 0 ? i + R : -1;
+      if (n < 0) continue;
+      dst.push(i);
+      from.push(n); // copies happen in this order, so a neighbor's color is always set first
+      next.push(i);
+    }
+    for (const i of next) src[i] = i;
+    const nf = [];
+    for (const i of next) {
+      const x = i % R;
+      if (x > 0 && src[i - 1] < 0) nf.push(i - 1);
+      if (x < R - 1 && src[i + 1] < 0) nf.push(i + 1);
+      if (i >= R && src[i - R] < 0) nf.push(i - R);
+      if (i < R * R - R && src[i + R] < 0) nf.push(i + R);
+    }
+    front = nf;
+  }
+  bm = { dst: Int32Array.from(dst), from: Int32Array.from(from) };
+  bleedMaps.set(mask, bm);
+  return bm;
+}
+/** One quick pass: every pixel near a UV seam takes the color of the island pixel next to it. */
+function bleedFast(id, mask, R) {
+  const { dst, from } = bleedMap(mask, R);
+  const d = id.data;
+  for (let k = 0; k < dst.length; k++) {
+    const a = dst[k] * 4;
+    const b = from[k] * 4;
+    d[a] = d[b];
+    d[a + 1] = d[b + 1];
+    d[a + 2] = d[b + 2];
+  }
+}
+
 /** Bleed island edge colors outward so filtering at UV seams never picks up the background. */
 function padIslands(id, mask, R, passes = 8) {
   if (!mask) return;
@@ -2340,7 +2622,11 @@ export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
     return t;
   };
   // drop the textures from a previous design on this character
-  for (const t of ch._uwTex || []) t.dispose();
+  for (const t of ch._uwTex || []) {
+    t.dispose();
+    const lc = lowTex.get(t);
+    if (lc && lc !== t) lc.dispose();
+  }
   ch._uwTex = [];
   for (const [e, parts] of targets) {
     const m = e.m;
@@ -2382,7 +2668,7 @@ export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
       // smaller mip levels average across them and would otherwise show a skin-colored split
       if (islands && overlays.length) {
         const id = g.getImageData(0, 0, R, R);
-        padIslands(id, islands, R, 16);
+        bleedFast(id, islands, R);
         g.putImageData(id, 0, 0);
       }
       return c;
@@ -2405,7 +2691,11 @@ export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
       const prev = ch.dispose;
       ch.dispose = () => {
         prev?.();
-        for (const t of ch._uwTex || []) t.dispose();
+        for (const t of ch._uwTex || []) {
+    t.dispose();
+    const lc = lowTex.get(t);
+    if (lc && lc !== t) lc.dispose();
+  }
         ch._uwTex = [];
       };
     }

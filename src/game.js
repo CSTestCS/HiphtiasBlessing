@@ -8,7 +8,7 @@ import { NPC, angDiff, pick, propMesh } from './npc.js';
 import { drawPortrait } from './portrait.js';
 import { sound, reactionSound, applyVolumeSettings, volumeSlidersHTML, bindVolumeSliders } from './audio.js';
 import { lwWords } from './data.js';
-import { createCharacter, createMannequin, outfitClothes, randomColors, addAngelic, setExpressionMax, setWetMaxSee, setOutlines, outlinesOn, borrowLegwear, workKindFor } from './character.js';
+import { createCharacter, createMannequin, templateStats, hasTemplate, setTexturesLow, fullTexturesReady, streamTemplateTextures, resetTextureStreams, outfitClothes, randomColors, addAngelic, setExpressionMax, setWetMaxSee, setOutlines, outlinesOn, borrowLegwear, workKindFor } from './character.js';
 import { buildLobby } from './levels/lobby.js';
 import { buildHallway, buildPool, buildLaundry } from './levels/building.js';
 import { Rain } from './weather.js';
@@ -43,9 +43,9 @@ const SHIFT = { start: 540, lunch: 720, lunchEnd: 780, end: 1020 };
 // graphics quality presets: distances (m) for toon outlines / shadows / small face details,
 // max resolution and shadow map size
 const QUALITY = {
-  high: { outline: 99, shadow: 99, face: 99, pr: 1.5, smap: 2048 },
-  medium: { outline: 10, shadow: 20, face: 14, pr: 1.5, smap: 2048 },
-  low: { outline: 0, shadow: 8, face: 6, pr: 1, smap: 1024 },
+  high: { outline: 99, shadow: 99, face: 99, tex: 40, pr: 1.5, smap: 2048 },
+  medium: { outline: 10, shadow: 20, face: 14, tex: 18, pr: 1.5, smap: 2048 },
+  low: { outline: 0, shadow: 8, face: 6, tex: 10, pr: 1, smap: 1024 },
 };
 // Things you can tie on as an emergency skirt, and how they fail (like Mika's attempts in the manga)
 const MAKESHIFT = {
@@ -170,6 +170,8 @@ export class Game {
     await this.initCivilians();
     ui.hideScreen();
     window.addEventListener('resize', (this._onResize = () => this.resize()));
+    // after a GPU reset the streamed textures are decoded again as they're needed
+    this.renderer.domElement.addEventListener('webglcontextrestored', () => resetTextureStreams());
     // also catches size changes that send no resize event (maximize, display scaling)
     if (window.ResizeObserver) (this._ro = new ResizeObserver(() => this.resize())).observe(this.renderer.domElement);
     this.resize();
@@ -178,14 +180,12 @@ export class Game {
   async initCivilians() {
     const tpls = [];
     if (this.settings.useBundledCivilians !== false) {
-      for (const b of BUNDLED.civilians) {
-        const buf = await modelBuffer({ asset: b.asset });
-        if (buf) tpls.push({ key: 'asset:' + b.asset, buf, gender: b.gender, cfg: null, wetMaterials: null });
-      }
+      for (const b of BUNDLED.civilians) tpls.push({ key: 'asset:' + b.asset, src: { asset: b.asset }, gender: b.gender, cfg: null, wetMaterials: null });
     }
+    // only the settings of each townsperson model are kept: the file is read (and parsed) when
+    // someone is built from it, and freed again when nobody needs it
     for (const t of this.settings.civilians || []) {
-      const buf = await modelBuffer({ key: t.key });
-      if (buf) tpls.push({ key: t.key, buf, gender: t.gender === 'male' || t.gender === 'female' ? t.gender : guessModelGender(t.title), legwearMaterials: t.legwearMaterials, wetMaterials: t.wetMaterials?.length ? t.wetMaterials : null, cfg: t.cfg || null });
+      if (t.key) tpls.push({ key: t.key, src: { key: t.key }, gender: t.gender === 'male' || t.gender === 'female' ? t.gender : guessModelGender(t.title), legwearMaterials: t.legwearMaterials, wetMaterials: t.wetMaterials?.length ? t.wetMaterials : null, cfg: t.cfg || null });
     }
     this.civTemplates = tpls;
     // named townsfolk (coworkers from the player's other save slots) are kept as settings only;
@@ -193,9 +193,20 @@ export class Game {
     this.refreshNamedCivs();
     // a small stock to start with: more are made as people come into view
     for (let i = 0; i < 12; i++) {
-      const ch = tpls.length ? await this.makeCivilian(tpls[i % tpls.length]) : this.makeMannequinCiv();
+      const ch = tpls.length ? await this.makeCivilian(this.pickTemplate()) : this.makeMannequinCiv();
       this.civPool.push(ch);
     }
+  }
+
+  tplStats() {
+    const live = this.npcs.filter((n) => n.char.civilian && !n.char.placeholder);
+    return { ...templateStats(), pool: this.civPool.length, live: live.length, liveInView: live.filter((n) => n.inView).length };
+  }
+
+  /** Which townsperson model to build next: any of them, equally often. */
+  pickTemplate() {
+    const all = this.civTemplates;
+    return all[Math.floor(Math.random() * all.length)];
   }
 
   /** Build one townsperson model: a random look from a template, or now and then a named person. */
@@ -222,7 +233,12 @@ export class Game {
         console.warn('named civilian failed', err);
       }
     }
-    const ch = await createCharacter(this.civOpts(t));
+    const opts = this.civOpts(t);
+    // the file is only read when this model isn't parsed already
+    if (!hasTemplate(opts.key)) opts.vrm = await modelBuffer(t.src);
+    else opts.vrm = true;
+    if (!opts.vrm) return this.makeMannequinCiv();
+    const ch = await createCharacter(opts);
     ch.gender = t.gender;
     ch.civilian = true;
     return ch;
@@ -231,7 +247,7 @@ export class Game {
   /** Options for a random townsperson from a template: random colors, and random underwear (everyone has secrets). */
   civOpts(t) {
     return {
-      vrm: t.buf, key: 'civ:' + t.key, randomize: true, underwearOverlay: false, legwearMaterials: t.legwearMaterials || null, gender: t.gender,
+      vrm: null, key: 'civ:' + t.key, randomize: true, underwearOverlay: false, legwearMaterials: t.legwearMaterials || null, gender: t.gender,
       wetMaterials: t.wetMaterials ?? null, cfg: t.cfg || null, underwear: randomUnderwear(t.gender), underwearRes: 512,
     };
   }
@@ -252,9 +268,11 @@ export class Game {
       try {
         // top the stock of spare models up to a handful (more are made as people come into view)
         for (let i = 0; this.civPool.length < 6 && i < 6 && !this.ended; i++) {
-          const t = this.civTemplates[Math.floor(Math.random() * this.civTemplates.length)];
+          const t = this.pickTemplate();
           this.civPool.push(await this.makeCivilian(t));
           this.civMade = (this.civMade || 0) + 1;
+          // one at a time, with a breather between them, so building never piles into one frame
+          await new Promise((r) => setTimeout(r, 120));
         }
       } finally {
         this._refilling = false;
@@ -660,6 +678,11 @@ export class Game {
         this.restyle(w);
       }
       lk.char = w.char;
+      // a close-up: full textures, even for someone who was far away a moment ago
+      if (w.char._texLow && fullTexturesReady(w.char.tplKey)) {
+        setTexturesLow(w.char, false);
+        w.char._detailKey = null;
+      }
       lk.name = this.speakerName(w);
     }
     if (!lk.char) return null;
@@ -6070,12 +6093,18 @@ export class Game {
    */
   charDetail(ch, d, noShadow = false) {
     const Q = this.Q;
+    // townsperson models someone on screen is close enough to need at full detail (a bit early)
+    if (ch.civilian && ch.tplKey && d < (Q.tex ?? 18) * 1.2) (this._nearTpl ||= new Set()).add(ch.tplKey);
     const ol = d < Q.outline && outlinesOn();
     const sh = d < Q.shadow && !noShadow;
     const fc = d < Q.face;
-    const key = (ol ? 1 : 0) + (sh ? 2 : 0) + (fc ? 4 : 0);
+    // townsfolk far away wear small copies of their textures; up close, the full ones
+    // (and until a model's full textures are decoded, after nobody was near it for a while)
+    const lo = !!ch.civilian && (d > (Q.tex ?? 18) * (ch._texLow ? 0.9 : 1) || !fullTexturesReady(ch.tplKey));
+    const key = (ol ? 1 : 0) + (sh ? 2 : 0) + (fc ? 4 : 0) + (lo ? 8 : 0);
     if (ch._detailKey === key) return;
     ch._detailKey = key;
+    if (!!ch._texLow !== lo) setTexturesLow(ch, lo);
     if (!ch._dm) {
       ch._dm = { meshes: [], outlines: [], face: [] };
       ch.root.traverse((o) => {
@@ -6166,6 +6195,12 @@ export class Game {
         show(b.driver, vis && !b.driver.placeholder);
         if (b.driver.root.visible) this.charDetail(b.driver, onIt ? 3 : d, true);
       }
+    }
+    // twice a second: decode full textures for models someone is near, free them for the rest
+    if (now - (this._streamT || 0) > 500) {
+      this._streamT = now;
+      streamTemplateTextures(this._nearTpl || new Set());
+      this._nearTpl = new Set();
     }
   }
 
