@@ -2516,7 +2516,7 @@ function uvIslandMask(ch, m, R, flipY) {
 
 /** For each pixel just outside the islands (up to `reach` px), the island pixel nearest to it. Worked out once per UV layout. */
 const bleedMaps = new WeakMap();
-function bleedMap(mask, R, reach = Math.round(R / 16)) {
+function bleedMap(mask, R, reach = 8) {
   let bm = bleedMaps.get(mask);
   if (bm) return bm;
   // breadth-first outward from the islands: each outside pixel (up to `reach` away) records the
@@ -2561,74 +2561,6 @@ function bleedMap(mask, R, reach = Math.round(R / 16)) {
   bleedMaps.set(mask, bm);
   return bm;
 }
-/**
- * Underwear designs often stop a pixel or two short of a UV seam, leaving a sliver of skin at the
- * edge; far away, the smaller mip levels smear that sliver into a visible split. Where a design
- * comes within a few pixels of a seam, it's extended right up to (and past) the edge.
- */
-const seamBands = new WeakMap();
-function seamBand(mask, R, w = 4) {
-  let band = seamBands.get(mask);
-  if (band) return band;
-  // island pixels within w px of the island edge
-  let d = new Uint8Array(R * R);
-  let front = [];
-  for (let i = 0; i < R * R; i++) {
-    if (!mask[i]) continue;
-    const x = i % R;
-    if ((x > 0 && !mask[i - 1]) || (x < R - 1 && !mask[i + 1]) || (i >= R && !mask[i - R]) || (i < R * R - R && !mask[i + R])) {
-      d[i] = 1;
-      front.push(i);
-    }
-  }
-  for (let k = 2; k <= w && front.length; k++) {
-    const nf = [];
-    for (const i of front) {
-      const x = i % R;
-      for (const j of [x > 0 ? i - 1 : -1, x < R - 1 ? i + 1 : -1, i >= R ? i - R : -1, i < R * R - R ? i + R : -1]) {
-        if (j >= 0 && mask[j] && !d[j]) {
-          d[j] = k;
-          nf.push(j);
-        }
-      }
-    }
-    front = nf;
-  }
-  band = d;
-  seamBands.set(mask, band);
-  return band;
-}
-function reachSeams(canvas, mask, R, steps = 6) {
-  const band = seamBand(mask, R);
-  const g = canvas.getContext('2d', { willReadFrequently: true });
-  const id = g.getImageData(0, 0, R, R);
-  const d = id.data;
-  // grow the design (color and opacity) into seam-band and outside pixels it doesn't cover yet
-  const solid = (i) => d[i * 4 + 3] > 160;
-  let front = [];
-  for (let i = 0; i < R * R; i++) if (solid(i) && band[i]) front.push(i);
-  if (!front.length) return;
-  const open = (j) => (!mask[j] || band[j]) && !solid(j);
-  for (let k = 0; k < steps && front.length; k++) {
-    const nf = [];
-    for (const i of front) {
-      const x = i % R;
-      for (const j of [x > 0 ? i - 1 : -1, x < R - 1 ? i + 1 : -1, i >= R ? i - R : -1, i < R * R - R ? i + R : -1]) {
-        if (j < 0 || !open(j)) continue;
-        const a = j * 4;
-        const b = i * 4;
-        d[a] = d[b];
-        d[a + 1] = d[b + 1];
-        d[a + 2] = d[b + 2];
-        d[a + 3] = 255;
-        nf.push(j);
-      }
-    }
-    front = nf;
-  }
-  g.putImageData(id, 0, 0);
-}
-
 /** One quick pass: every pixel near a UV seam takes the color of the island pixel next to it. */
 function bleedFast(id, mask, R) {
   const { dst, from } = bleedMap(mask, R);
@@ -2841,7 +2773,6 @@ export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
       const accent = (bra && uw.braAccent) || uw.accent;
       const mask = plain && pattern && accent ? await patternMask(pattern, R).catch(() => null) : null;
       const ov = tintedOverlay(img, plain ? color : null, R, mask, accent);
-      if (islands) reachSeams(ov, islands, R);
       overlays.push(ov);
     }
     // per character: just the skin tint and the new design on top of the cleaned texture
@@ -2859,8 +2790,8 @@ export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
         g.globalCompositeOperation = 'source-over';
       }
       for (const ov of overlays) g.drawImage(ov, 0, 0);
-      // bleed the finished colors (underwear included) well past the UV seams: zoomed out, the
-      // smaller mip levels average across them and would otherwise show a skin-colored split
+      // fill the empty gutter outside the UV islands with the nearest edge color (never touches
+      // the visible design) so filtering at the edge doesn't pick up stray background
       if (islands && overlays.length) {
         const id = g.getImageData(0, 0, R, R);
         bleedFast(id, islands, R);
