@@ -14,10 +14,24 @@ const DEAD = 0.3;
 
 const key = (type, code) => window.dispatchEvent(new KeyboardEvent(type, { code, key: code, bubbles: true }));
 
+let pad = null;
 export function initGamepad(getGame) {
-  const pad = new PadInput(getGame);
-  window.addEventListener('gamepadconnected', () => ui.toast?.('Controller connected.', '', 2500, null));
+  pad = new PadInput(getGame);
+  window.addEventListener('gamepadconnected', (e) => ui.toast?.(`Controller connected: ${shortName(e.gamepad.id)}`, '', 3000, null));
   return pad;
+}
+
+/** What the game currently sees, for the Settings screen. */
+export function controllerStatus() {
+  let pads = [];
+  try {
+    pads = [...(navigator.getGamepads?.() || [])].filter((g) => g && g.connected);
+  } catch (_) {}
+  if (!pads.length) return 'No controller detected. Plug one in and press any button on it.';
+  return pads.map((g) => `${g.index === pad?.active ? '▶ ' : ''}${shortName(g.id)}${g.mapping === 'standard' ? '' : ' (unrecognized layout)'}`).join(' · ');
+}
+function shortName(id) {
+  return String(id || 'Controller').replace(/\s*\(.*?Vendor.*?\)\s*/i, ' ').trim().slice(0, 60);
 }
 
 class PadInput {
@@ -29,6 +43,9 @@ class PadInput {
     this.last = performance.now();
     this.kb = null; // the on-screen keyboard, when open
     this.used = false;
+    this.rest = {};
+    this.active = null;
+    this.pads = [];
     requestAnimationFrame(this.loop);
   }
 
@@ -37,16 +54,17 @@ class PadInput {
     const now = performance.now();
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
-    const gp = [...(navigator.getGamepads?.() || [])].find((g) => g && g.connected);
+    const gp = this.pickPad();
     if (!gp) return;
-    const b = gp.buttons.map((x) => x.pressed || x.value > 0.5);
+    const raw = read(gp);
+    const b = raw.b;
     const down = (i) => b[i] && !this.prev[i];
     const up = (i) => !b[i] && this.prev[i];
-    const ax = gp.axes;
-    const lx = Math.abs(ax[0]) > DEAD ? ax[0] : 0;
-    const ly = Math.abs(ax[1]) > DEAD ? ax[1] : 0;
-    const rx = Math.abs(ax[2]) > DEAD ? ax[2] : 0;
-    const ry = Math.abs(ax[3]) > DEAD ? ax[3] : 0;
+    const dz = (v) => (Math.abs(v) > DEAD ? v : 0);
+    const lx = dz(raw.lx);
+    const ly = dz(raw.ly);
+    const rx = dz(raw.rx);
+    const ry = dz(raw.ry);
     if (b.some(Boolean) || lx || ly || rx || ry) this.used = true;
     if (!this.used) return (this.prev = b);
     const game = this.getGame();
@@ -55,9 +73,39 @@ class PadInput {
     else if (menus) {
       this.releasePlay(game);
       this.navigate(b, down, lx, ly, ry, dt, game);
-    } else this.play(game, b, down, up, lx, ly, rx, ry, dt);
+    } else {
+      this.lastFocus = null; // menus opened later start at their top
+      this.play(game, b, down, up, lx, ly, rx, ry, dt);
+    }
     this.prev = b;
   };
+
+  /**
+   * Windows often lists more than one "controller" (Steam's virtual pad, a duplicate driver entry,
+   * a keyboard or headset with a gamepad interface...), and the first one may never send anything.
+   * Follow whichever one was last actually pressed or moved; until then prefer a standard layout.
+   */
+  pickPad() {
+    let pads = [];
+    try {
+      pads = [...(navigator.getGamepads?.() || [])].filter((g) => g && g.connected);
+    } catch (_) {}
+    this.pads = pads;
+    if (!pads.length) return null;
+    for (const g of pads) {
+      const r = read(g);
+      const rest = (this.rest[g.index] ||= r.axes.slice());
+      // an axis that sits off-center from the start (some devices report triggers or a hat as -1)
+      // only counts as movement once it changes
+      const moved = r.axes.some((v, i) => Math.abs(v - rest[i]) > 0.5 && Math.abs(v) > 0.5);
+      if (r.b.some(Boolean) || moved) {
+        if (this.active !== g.index) this.prev = r.b.map(() => false);
+        this.active = g.index;
+        break;
+      }
+    }
+    return pads.find((g) => g.index === this.active) || pads.find((g) => g.mapping === 'standard') || pads[0];
+  }
 
   // ---- in play ------------------------------------------------------------------------------
   play(game, b, down, up, lx, ly, rx, ry, dt) {
@@ -104,6 +152,34 @@ class PadInput {
     const list = this.controls();
     if (!list.length) return;
     let cur = list.includes(document.activeElement) ? document.activeElement : null;
+    // a new menu or dialog: highlight its first control so A works straight away
+    // (after an editor redraws itself, the same control again, or the one nearest where it was,
+    // without scrolling the page)
+    const view = ui.dialogOpen ? 'dialog' : viewName();
+    if (!cur) {
+      const last = this.lastFocus && this.lastFocus.view === view ? this.lastFocus : null;
+      let pick = last && last.key && list.find((e) => focusKey(e) === last.key);
+      if (!pick && last && !ui.dialogOpen) {
+        let bd = Infinity;
+        for (const e of list) {
+          const r = e.getBoundingClientRect();
+          if (r.bottom < 0 || r.top > innerHeight) continue;
+          const d = Math.hypot(r.left + r.width / 2 - last.x, r.top + r.height / 2 - last.y);
+          if (d < bd) ((bd = d), (pick = e));
+        }
+      }
+      const safe = (e) => e.tagName === 'BUTTON' && !e.classList.contains('secondary') && !e.classList.contains('danger') && inView(e);
+      cur = pick || (ui.dialogOpen && list[0]) || list.find(safe) || list.find(inView) || list[0];
+      focusEl(cur, !pick);
+      // this press only lit up the menu: don't also move or click on it
+      this.navT = 0.32;
+      this.navDir = b[BTN.UP] || ly < -0.6 ? 'up' : b[BTN.DOWN] || ly > 0.6 ? 'down' : b[BTN.LEFT] || lx < -0.6 ? 'left' : b[BTN.RIGHT] || lx > 0.6 ? 'right' : null;
+      if (down(BTN.A)) return;
+    }
+    {
+      const r = cur.getBoundingClientRect();
+      this.lastFocus = { view, key: focusKey(cur), x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }
     // direction from the D-pad or the stick (repeats while held)
     let dir = null;
     if (b[BTN.UP] || ly < -0.6) dir = 'up';
@@ -117,7 +193,7 @@ class PadInput {
       this.navDir = dir;
       // dropdowns and sliders change with left/right
       if (cur && (dir === 'left' || dir === 'right') && (cur.tagName === 'SELECT' || cur.type === 'range')) adjust(cur, dir === 'right' ? 1 : -1);
-      else focusEl(cur ? spatial(cur, list, dir) || cur : list[0]);
+      else focusEl(spatial(cur, list, dir) || cur);
     }
     if (!dir) this.navDir = null;
     // right stick scrolls the panel
@@ -126,7 +202,6 @@ class PadInput {
       if (panel) panel.scrollTop += ry * 900 * dt;
     }
     if (down(BTN.A)) {
-      if (!cur) return focusEl(list[0]);
       if (cur.tagName === 'INPUT' && /^(text|search|)$/.test(cur.type || '')) return this.openKeyboard(cur);
       if (cur.tagName === 'SELECT') return adjust(cur, 1);
       cur.click();
@@ -223,6 +298,30 @@ class PadInput {
 }
 
 // ---- helpers ------------------------------------------------------------------------------------
+/**
+ * Buttons and sticks in the standard (Xbox) layout. Controllers the browser doesn't recognize
+ * usually still put the face buttons first and the left stick on axes 0/1; their right stick is
+ * on axes 2/5 or 3/4, and the D-pad is often a "hat" axis.
+ */
+function read(g) {
+  const b = [...g.buttons].map((x) => !!x && (x.pressed || x.value > 0.5));
+  const axes = [...g.axes];
+  if (g.mapping === 'standard') return { b, axes, lx: axes[0] || 0, ly: axes[1] || 0, rx: axes[2] || 0, ry: axes[3] || 0 };
+  while (b.length < 16) b.push(false);
+  let rx = axes[2] || 0;
+  let ry = axes[3] || 0;
+  if (axes.length >= 6) ((rx = axes[2] || 0), (ry = axes[5] || 0));
+  // a hat axis: 8 positions spread over -1..1, and a value above 1 when centered
+  const hat = axes.length > 9 ? axes[9] : null;
+  if (hat != null && Math.abs(hat) <= 1) {
+    const p = Math.round((hat + 1) * 3.5); // 0 = up, clockwise
+    if (p === 7 || p === 0 || p === 1) b[12] = true;
+    if (p >= 1 && p <= 3) b[15] = true;
+    if (p >= 3 && p <= 5) b[13] = true;
+    if (p >= 5 && p <= 7) b[14] = true;
+  }
+  return { b, axes, lx: axes[0] || 0, ly: axes[1] || 0, rx, ry };
+}
 function esc(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 }
@@ -234,13 +333,28 @@ function visible(e) {
   if (d && !d.open && !e.closest('summary') && e.tagName !== 'SUMMARY') return false;
   return true;
 }
-function focusEl(e) {
+function focusKey(e) {
+  if (e.id) return '#' + e.id;
+  const a = [...e.attributes].filter((x) => x.name.startsWith('data-')).map((x) => `${x.name}=${x.value}`).join(',');
+  return a ? e.tagName + '[' + a + ']' : null;
+}
+function viewName() {
+  const v = ui.screen.querySelector('[data-view]');
+  if (v) return 'v:' + v.getAttribute('data-view');
+  const h = ui.screen.querySelector('h1, h2');
+  return 'h:' + (h ? h.textContent.trim() : '');
+}
+function inView(e) {
+  const r = e.getBoundingClientRect();
+  return r.bottom > 0 && r.top < innerHeight;
+}
+function focusEl(e, scroll = true) {
   if (!e) return;
   document.querySelectorAll('.padfocus').forEach((x) => x.classList.remove('padfocus'));
   e.classList.add('padfocus');
   if (!e.hasAttribute('tabindex') && !/^(BUTTON|INPUT|SELECT|SUMMARY)$/.test(e.tagName)) e.setAttribute('tabindex', '-1');
   e.focus({ preventScroll: true });
-  e.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  if (scroll) e.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 /** The control in that direction: nearest along it, preferring ones roughly in line. */
 function spatial(cur, list, dir) {

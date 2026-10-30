@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { ui, esc } from './ui.js';
 import { storage, newId } from './storage.js';
 import { dyeName, coordinatedColors } from './dyes.js';
-import { initGamepad } from './gamepad.js';
+import { initGamepad, controllerStatus } from './gamepad.js';
 import { randomApartment, randomWorkSlot, civBodyFrom, randomBodyFor, aptById, UNDERWEAR, UNDERWEAR_COLORS, prettyUnderwear, randomUnderwear, JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, FEMALE_NAMES, MALE_NAMES, nameFor, guessGender, guessModelGender, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
 import { createCharacter, inspectVRM, outfitClothes, randomColors, addAngelic, clearTemplates, setOutlines } from './character.js';
 import { Game, controlsTable } from './game.js';
@@ -398,6 +398,8 @@ async function showSettings() {
       <label><input type="checkbox" id="s-dres" ${st.dynamicRes !== false ? 'checked' : ''}/> Dynamic resolution (lowers render resolution when the frame rate drops)</label>
       <label><input type="checkbox" id="s-outl" ${st.outlines !== false ? 'checked' : ''}/> Toon outlines on characters</label>
       <label><input type="checkbox" id="s-civ" ${st.useBundledCivilians ? 'checked' : ''}/> Use the bundled townsperson models for civilians</label>
+      <label>Controller</label>
+      <p class="note" id="s-pad">${esc(controllerStatus())}</p>
       <h3 style="margin:18px 0 6px">Sound</h3>
       ${volumeSlidersHTML(st)}
       <div class="footer"><button class="secondary" id="s-reset">Defaults</button><button id="s-back">Done</button></div>
@@ -413,6 +415,13 @@ async function showSettings() {
     s.querySelector('#v-cmp').textContent = `${s.querySelector('#s-cmp').value}`;
   };
   fmt();
+  // keep the controller line current while the screen is open
+  const padT = setInterval(() => {
+    const el = document.getElementById('s-pad');
+    if (!el) return clearInterval(padT);
+    const t = controllerStatus();
+    if (el.textContent !== t) el.textContent = t;
+  }, 500);
   const save = async () => {
     st.hourSeconds = +s.querySelector('#s-hour').value;
     st.shameScale = +s.querySelector('#s-shame').value;

@@ -3596,6 +3596,19 @@ export class Game {
       after();
       return;
     }
+    // each coworker has their own reporting cooldown: someone who just went to the manager about you
+    // doesn't run straight back a second time, they just glare
+    const rt = this.cwRuntime[n.index] || (this.cwRuntime[n.index] = {});
+    if (rt.reportCool && rt.reportCool.day === this.state.day && this.clock < rt.reportCool.until) {
+      n.noticeCooldown = 30;
+      this.bubble(n, pick(['I JUST reported you. Unbelievable.', '*glares*', "Still?! I'm telling them again later.", '*shakes head*']));
+      this.talkMood(n, pers === 'distant' ? { relaxed: 0.2 } : { angry: 0.7 }, 3);
+      this.addShame(SHAME.report * 0.25);
+      after();
+      return;
+    }
+    rt.reportCool = { day: this.state.day, until: this.clock + 60 };
+    n.noticeCooldown = 30;
     const lines = {
       strict: `${nm}'s face hardens. "Absolutely unacceptable. There is a DRESS CODE, ${name}." ${pr.They} march${pr.they === 'they' ? '' : 'es'} straight to the manager's office.`,
       distant: `${nm} looks at you, then at your ${lw}... or lack thereof. Without a word, ${pr.they} head${pr.they === 'they' ? '' : 's'} for the manager's office.`,
