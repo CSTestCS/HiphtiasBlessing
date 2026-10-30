@@ -8,7 +8,7 @@ import { NPC, angDiff, pick, propMesh } from './npc.js';
 import { drawPortrait } from './portrait.js';
 import { sound, reactionSound, applyVolumeSettings, volumeSlidersHTML, bindVolumeSliders } from './audio.js';
 import { lwWords } from './data.js';
-import { createCharacter, createMannequin, templateStats, hasTemplate, setTexturesLow, fullTexturesReady, streamTemplateTextures, resetTextureStreams, outfitClothes, randomColors, addAngelic, setExpressionMax, setWetMaxSee, setOutlines, outlinesOn, borrowLegwear, workKindFor } from './character.js';
+import { applyUnderwear, createCharacter, createMannequin, templateStats, hasTemplate, setTexturesLow, fullTexturesReady, streamTemplateTextures, resetTextureStreams, outfitClothes, randomColors, addAngelic, setExpressionMax, setWetMaxSee, setOutlines, outlinesOn, borrowLegwear, workKindFor } from './character.js';
 import { buildLobby } from './levels/lobby.js';
 import { buildHallway, buildPool, buildLaundry } from './levels/building.js';
 import { Rain } from './weather.js';
@@ -42,6 +42,8 @@ const MGR_GRACE = 150;
 const SHIFT = { start: 540, lunch: 720, lunchEnd: 780, end: 1020 };
 // graphics quality presets: distances (m) for toon outlines / shadows / small face details,
 // max resolution and shadow map size
+// stations where the work is done sitting at a desk
+const DESK_TAGS = new Set(['mydesk', 'desk', 'officedesk', 'reception', 'studytable', 'computer', 'circ', 'frontdesk', 'concierge']);
 const QUALITY = {
   high: { outline: 99, shadow: 99, face: 99, tex: 40, pr: 1.5, smap: 2048 },
   medium: { outline: 10, shadow: 20, face: 14, tex: 18, pr: 1.5, smap: 2048 },
@@ -150,6 +152,7 @@ export class Game {
     this.scene.add(this.markers);
     this.bindInput();
     window.__game = this;
+    window.__applyUnderwear = applyUnderwear; // used by the test scripts
   }
 
   // =====================================================================
@@ -1052,22 +1055,14 @@ export class Game {
       }
       this.cam.dist = 3.2;
     } else if (phase === 'hallway' || phase === 'pool' || phase === 'laundry') {
-      if (this.bldgDir === 'out' && phase !== 'laundry') this.clock = Math.max(this.clock, 460);
-      if (phase === 'laundry') this.clock = Math.max(this.clock, 1380);
       this.cam.dist = phase === 'pool' ? 4.2 : 3.2;
       this.spawnResidents(phase, prev);
     } else if (phase === 'lobby') {
-      if (this.lobbyDir === 'out') this.clock = Math.max(this.clock, 465);
       this.spawnShopPeople();
       this.customerTimer = 6;
       this.cam.dist = 3.6;
     } else if (outdoor) {
-      if (phase === 'commute_am') this.clock = Math.max(this.clock, 468);
-      if (phase === 'commute_pm' && prev === 'work') this.clock = Math.max(this.clock, SHIFT.end);
-      if (phase === 'dayoff' && prev === 'lobby' && !this.dayoffStarted) {
-        this.clock = 600;
-        this.dayoffStarted = true;
-      }
+      // time only ever skips overnight: the clock just keeps running through doors
       if (!this.buses) this.buses = new BusSystem(this, L);
       this.spawnPedestrians(true);
       this.cam.dist = 4.5;
@@ -1081,7 +1076,6 @@ export class Game {
         this.work.pendingStaff = [];
       } else {
         this.lateMins = Math.round(this.clock - 540);
-        this.clock = Math.max(this.clock, 530);
         this.work = {
           day: st.day, clockedIn: false, clockedOut: false, done: 0, task: null, step: 0, lastTpl: null, sneakT: 0,
           mishapPending: st.day === 1 ? { task: Math.floor(Math.random() * 4), at: Math.random() } : null, coverT: 0, requests: [], active: null, reqT: 20, events: {}, pendingStaff: [],
@@ -1362,21 +1356,38 @@ export class Game {
     mgr.plan([{ work: true, t: 10, yaw: m.desk.yaw }]);
     this.manager = mgr;
     this.npcs.push(mgr);
-    // a security guard keeps an eye on the front entrance
+    // a security guard keeps watch further inside, facing the building (their back to the door)
+    // and glancing back at the entrance now and then, so walking in isn't an instant catch
     const e = L.pois.entrance;
     const sp = L.spawn;
     const ix = sp.x - e.x;
     const iz = sp.z - e.z;
     const il = Math.hypot(ix, iz) || 1;
-    let gx = sp.x + (iz / il) * 2.4;
-    let gz = sp.z - (ix / il) * 2.4;
-    if (L.blockedPoint(gx, gz, 0.35)) {
-      gx = sp.x - (iz / il) * 2.4;
-      gz = sp.z + (ix / il) * 2.4;
+    const dx = ix / il;
+    const dz = iz / il;
+    let post = null;
+    for (const [fw, sd] of [[7, 3.5], [7, -3.5], [9, 2.5], [9, -2.5], [6, 0], [10, 0]]) {
+      const gx = sp.x + dx * fw + dz * sd;
+      const gz = sp.z + dz * fw - dx * sd;
+      if (!L.blockedPoint(gx, gz, 0.4) && L.findPath(sp.x, sp.z, gx, gz)) {
+        post = { x: gx, z: gz };
+        break;
+      }
     }
-    if (!L.blockedPoint(gx, gz, 0.35)) {
-      const guard = new NPC(this, this.acquireCivilian(), { kind: 'guard', name: 'Security guard', x: gx, z: gz, yaw: Math.atan2(ix, iz), range: 14 });
-      guard.plan([{ t: 99999, yaw: Math.atan2(ix, iz) }]);
+    if (post) {
+      const inward = Math.atan2(dx, dz);
+      const guard = new NPC(this, this.acquireCivilian(), { kind: 'guard', name: 'Security guard', x: post.x, z: post.z, yaw: inward, range: 12 });
+      const watch = () => {
+        if (guard.removed) return;
+        guard.plan([
+          { t: 18 + Math.random() * 20, yaw: inward + (Math.random() - 0.5) * 1.2 },
+          { t: 2.5 + Math.random() * 2, yaw: inward + Math.PI }, // a glance back at the door
+          { t: 0, call: watch },
+        ]);
+      };
+      watch();
+      // after anything interrupts them, back to the post
+      guard.guardWatch = () => guard.plan([{ go: post }, { t: 0, call: watch }]);
       guard.char.setMood({ relaxed: 0.2 });
       this.npcs.push(guard);
     }
@@ -2027,7 +2038,8 @@ export class Game {
     const p = this.player;
     const L = this.level;
     if (!L) return;
-    if (['commute_am', 'commute_pm', 'dayoff', 'shop', 'lobby', 'hallway', 'pool', 'laundry', 'work'].includes(this.phase)) this.clock += dt * this.minPerSec;
+    // the clock runs everywhere, at home too (only sleeping skips time)
+    if (['morning', 'evening', 'commute_am', 'commute_pm', 'dayoff', 'shop', 'lobby', 'hallway', 'pool', 'laundry', 'work', 'visit', 'visitwork'].includes(this.phase) && !this.ended) this.clock += dt * this.minPerSec;
     if (this.phase === 'work') this.updateShift(dt);
     if (this.phase === 'work') this.updateSwapLead();
     if (this.stealthActive()) this.rareMishapTick(dt);
@@ -5011,6 +5023,14 @@ export class Game {
   tryInteract() {
     const a = this.curAction;
     if (!a || a.disabled || this.player.inter) return;
+    // desk work (emails, filing at a desk...) is done sitting in the desk's chair: legs under the table
+    if (a.time > 0 && DESK_TAGS.has(a.sid) && !this.player.sitAt && !this.player.carry) {
+      const p = this.player;
+      const seat = (this.level.seats || [])
+        .filter((st) => (!st.taken || st.taken === 'player') && Math.hypot(st.x - p.x, st.z - p.z) < 2.2)
+        .sort((x, y) => Math.hypot(x.x - p.x, x.z - p.z) - Math.hypot(y.x - p.x, y.z - p.z))[0];
+      if (seat) this.sitDown(seat);
+    }
     if (a.time > 0) this.player.inter = { action: a, t: 0, time: a.time };
     else {
       this.actionSound(a);
@@ -6091,7 +6111,7 @@ export class Game {
    * Level of detail by distance (see QUALITY): toon outlines, shadows and small face details drop
    * off with distance; bus riders (noShadow) never cast a shadow, the bus covers them anyway.
    */
-  charDetail(ch, d, noShadow = false) {
+  charDetail(ch, d, noShadow = false, rider = false) {
     const Q = this.Q;
     // townsperson models someone on screen is close enough to need at full detail (a bit early)
     if (ch.civilian && ch.tplKey && d < (Q.tex ?? 18) * 1.2) (this._nearTpl ||= new Set()).add(ch.tplKey);
@@ -6100,7 +6120,8 @@ export class Game {
     const fc = d < Q.face;
     // townsfolk far away wear small copies of their textures; up close, the full ones
     // (and until a model's full textures are decoded, after nobody was near it for a while)
-    const lo = !!ch.civilian && (d > (Q.tex ?? 18) * (ch._texLow ? 0.9 : 1) || !fullTexturesReady(ch.tplKey));
+    // (and while you ride the bus, everyone outside it: the riders around you get the detail)
+    const lo = !!ch.civilian && (d > (Q.tex ?? 18) * (ch._texLow ? 0.9 : 1) || !fullTexturesReady(ch.tplKey) || (!!this.player.bus && !rider));
     const key = (ol ? 1 : 0) + (sh ? 2 : 0) + (fc ? 4 : 0) + (lo ? 8 : 0);
     if (ch._detailKey === key) return;
     ch._detailKey = key;
@@ -6189,11 +6210,11 @@ export class Game {
       for (const q of b.passengers) {
         const on = vis && (q.delay <= 0 || q.char.root.visible);
         show(q.char, on);
-        if (on) this.charDetail(q.char, onIt ? Math.hypot(q.x - (this.player.lx || 0), q.z - (this.player.lz || 0)) : d, true);
+        if (on) this.charDetail(q.char, onIt ? Math.hypot(q.x - (this.player.lx || 0), q.z - (this.player.lz || 0)) : d, true, onIt);
       }
       if (b.driver) {
         show(b.driver, vis && !b.driver.placeholder);
-        if (b.driver.root.visible) this.charDetail(b.driver, onIt ? 3 : d, true);
+        if (b.driver.root.visible) this.charDetail(b.driver, onIt ? 3 : d, true, onIt);
       }
     }
     // twice a second: decode full textures for models someone is near, free them for the rest
@@ -6309,6 +6330,7 @@ export function controlsTable() {
     <tr><td>E</td><td>Interact (hold for timed actions): tasks, sit down, hide, pick things up, board/leave buses</td></tr>
     <tr><td>G</td><td>Put down the item you're carrying</td></tr>
     <tr><td>T</td><td>Hold the carried item over your head (keeps the rain off, uncovers the front)</td></tr>
+    <tr><td>Controller</td><td>Left stick move (RT or L3 run) · right stick look · LT aim · A interact (hold) · B crouch · X drop item · Y makeshift skirt · LB item overhead · RB next request · View map · Menu pause · R3 chat log. In menus: D-pad/stick to move, A select, B back, left/right change dropdowns and sliders; text fields open an on-screen keyboard (X backspace, Y space, LB/RB cursor, LT shift, Menu done).</td></tr>
     <tr><td>Tab</td><td>Switch which work request you're doing</td></tr>
     <tr><td>F</td><td>Tie the item you're carrying on as a makeshift skirt (box, paper, tote bag, towel...). It won't last.</td></tr>
     <tr><td>M</td><td>Open the full map (the minimap can be turned off in Settings)</td></tr>

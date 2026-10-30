@@ -619,7 +619,10 @@ export function randomUnderwear(gender) {
   }
   // now and then a print on a woman's plain underwear: the pattern's light parts take an accent color
   const print = gender !== 'male' && Math.random() < 0.2 ? { pattern: pick(UNDERWEAR.patterns), accent: pick(UNDERWEAR_COLORS) } : {};
-  return { panty, bra, color: pick(UNDERWEAR_COLORS), ...print };
+  const color = pick(UNDERWEAR_COLORS);
+  // a mismatched set now and then: the bra gets its own color (and print, or none)
+  const mix = bra && Math.random() < 0.3 ? { braColor: pick(UNDERWEAR_COLORS), braPattern: Math.random() < 0.2 ? pick(UNDERWEAR.patterns) : '', braAccent: pick(UNDERWEAR_COLORS) } : {};
+  return { panty, bra, color, ...print, ...mix };
 }
 
 /** An outfit body taken from an imported civilian model, with that model's part settings. */

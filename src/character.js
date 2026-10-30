@@ -143,9 +143,68 @@ export function hasTemplate(key) {
   return templates.has(key);
 }
 
+// ---- One copy of identical textures ---------------------------------------------------------
+// Models made in the same tool tend to ship the very same eye, mouth, lash and skin textures.
+// Those are recognised by a small fingerprint and share one image (stored and uploaded once).
+const canon = []; // { w, h, fp, source }
+function fingerprint(img) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 16;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(img, 0, 0, 16, 16);
+  return g.getImageData(0, 0, 16, 16).data;
+}
+function shareDuplicateTextures(scene, pinned) {
+  const seen = new Map();
+  scene.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of [].concat(o.material)) for (const k of TEX_KEYS) {
+      const t = m && m[k];
+      const img = t && t.isTexture && t.source?.data;
+      if (!img || !img.width || seen.has(t.source)) continue;
+      let fp;
+      try {
+        fp = fingerprint(img);
+      } catch (_) {
+        continue;
+      }
+      const hit = canon.find((e) => e.w === img.width && e.h === img.height && e.source.data && e.source.data === e.full && near(e.fp, fp));
+      if (hit) {
+        seen.set(t.source, hit.source);
+        hit.users++;
+        if (pinned) hit.pinned = true;
+      } else {
+        canon.push({ w: img.width, h: img.height, fp, source: t.source, full: img, users: 1, pinned });
+        seen.set(t.source, t.source);
+      }
+    }
+  });
+  // point every texture at the shared image
+  scene.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of [].concat(o.material)) for (const k of TEX_KEYS) {
+      const t = m && m[k];
+      if (t && t.isTexture && seen.has(t.source) && seen.get(t.source) !== t.source) t.source = seen.get(t.source);
+    }
+  });
+}
+function near(a, b) {
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d += Math.abs(a[i] - b[i]);
+  return d / a.length < 2.5;
+}
+/** A shared image whose full version another loaded model still shows must not be shrunk. */
+function sourceStillNeeded(source, except) {
+  // (shared with a coworker's or your own model, which are never shrunk)
+  if (canon.some((c) => c.source === source && c.pinned)) return true;
+  for (const st of streams.values()) if (st !== except && st.state !== 'low' && st.srcs.some((e) => e.source === source)) return true;
+  return false;
+}
+
 // ---- Texture streaming for townsperson models ---------------------------------------------
 // Each model's full-size textures are only decoded while someone wearing it is near the camera.
 // The rest of the time only the file's compressed images (a few MB) and small copies are kept.
+const lowImages = new WeakSet(); // the small stand-in images of streamed textures
 const streams = new Map(); // template key -> { state: 'full'|'low'|'loading', srcs: [{ source, textures, blob }], mb, lastNear }
 async function prepareStreaming(key, vrm, parser) {
   const bySource = new Map();
@@ -180,6 +239,7 @@ async function prepareStreaming(key, vrm, parser) {
     // the far-away copies are made now, while the full image is still at hand
     for (const t of e.textures) lowCopy(t);
     e.low = lowCopy([...e.textures][0]).image;
+    lowImages.add(e.low);
     const d = e.source.data;
     mb += ((d.width || 0) * (d.height || 0) * 4) / 1e6;
     srcs.push(e);
@@ -203,12 +263,14 @@ export function streamTemplateTextures(nearKeys) {
 }
 function dropFull(st) {
   for (const e of st.srcs) {
+    if (sourceStillNeeded(e.source, st)) continue;
     const d = e.source.data;
     // the small copy takes its place (GPU and memory shrink to match); anything still pointing
     // at this texture just shows the small version
     e.source.data = e.low;
     e.source.needsUpdate = true;
-    if (d && d !== e.low && d.close) d.close();
+    if (d && d !== e.low && d.close && !canon.some((c) => c.full === d)) d.close();
+    for (const c of canon) if (c.source === e.source) c.full = null; // no longer a full image to share
   }
   st.state = 'low';
 }
@@ -216,11 +278,13 @@ async function loadFull(st) {
   st.state = 'loading';
   try {
     // decoded off the main thread, all at once; nothing is shown until every one is ready
-    const todo = st.srcs.filter((e) => e.source.data === e.low);
+    const todo = st.srcs.filter((e) => lowImages.has(e.source.data));
     const bmps = await Promise.all(todo.map((e) => createImageBitmap(e.blob, { premultiplyAlpha: 'none' }))); // same as the model loader
     if (!streams.has(st.key)) return bmps.forEach((b) => b.close?.()); // the model was freed meanwhile
     todo.forEach((e, i) => {
+      if (!lowImages.has(e.source.data)) return bmps[i].close?.(); // a model sharing it loaded it already
       e.source.data = bmps[i];
+      for (const c of canon) if (c.source === e.source) c.full = bmps[i];
       e.source.needsUpdate = true;
       for (const t of e.textures) t.needsUpdate = true;
     });
@@ -263,6 +327,12 @@ function evictTemplates() {
     templates.delete(k);
     tplUse.delete(k);
     streams.delete(k);
+    p.then((v) => {
+      if (!v) return;
+      const srcs = new Set();
+      v.scene.traverse((o) => { if (o.isMesh) for (const m of [].concat(o.material)) for (const kk of TEX_KEYS) if (m?.[kk]?.source) srcs.add(m[kk].source); });
+      for (let i = canon.length - 1; i >= 0; i--) if (srcs.has(canon[i].source) && --canon[i].users <= 0) canon.splice(i, 1);
+    }).catch(() => {});
     p.then((v) => {
       if (!v) return;
       // the small far-away copies of its textures go too
@@ -320,6 +390,7 @@ export function getTemplate(key, buffer) {
             // copies are seen small and in crowds: keep their textures small to save memory
             for (const m of Array.isArray(o.material) ? o.material : [o.material]) shrinkTextures(m, 1024);
           });
+          shareDuplicateTextures(vrm.scene, !key.startsWith('civ:'));
           if (key.startsWith('civ:')) await prepareStreaming(key, vrm, gltf.parser);
           return vrm;
         })
@@ -504,27 +575,34 @@ export function setTexturesLow(ch, low) {
   });
 }
 
+// Clothing that blends still writes depth: otherwise two see-through pieces (a jacket over a skirt)
+// are drawn in whichever order their centers happen to sort, and the back one can end up on top.
+const CLOTH_DEPTH = (m) => {
+  const n = cleanName(m.name);
+  return (CLOTH_RE.test(n) || LEGWEAR_RE.test(n)) && !SKIN_RE.test(n) && !HAIR_RE.test(n);
+};
 function fixTransparency(mat) {
   for (const m of Array.isArray(mat) ? mat : [mat]) {
     if (!m || m._fixedAlpha) continue;
     m._fixedAlpha = true;
+    const cloth = CLOTH_DEPTH(m);
     if (m.transparent) {
-      m.depthWrite = false;
-      if (!m.alphaTest) m.alphaTest = 0.01;
+      m.depthWrite = cloth;
+      if (!m.alphaTest) m.alphaTest = cloth ? 0.15 : 0.01;
       continue;
     }
     if (m.alphaTest > 0 && m.map && textureHasSemiAlpha(m.map)) {
       m.transparent = true;
-      m.depthWrite = false;
-      m.alphaTest = 0.02;
+      m.depthWrite = cloth;
+      m.alphaTest = cloth ? 0.15 : 0.02;
       m.needsUpdate = true;
     } else if (!m.alphaTest && m.map && textureHasAlpha(m.map)) {
       // marked opaque but the texture has see-through pixels: those would show as black.
       // Blend them when they're soft, otherwise cut them out.
       if (textureHasSemiAlpha(m.map)) {
         m.transparent = true;
-        m.depthWrite = false;
-        m.alphaTest = 0.02;
+        m.depthWrite = cloth;
+        m.alphaTest = cloth ? 0.15 : 0.02;
       } else m.alphaTest = 0.5;
       m.needsUpdate = true;
     }
@@ -1172,7 +1250,7 @@ class CharacterBase {
         const want = see > 0.02;
         if (want !== m.transparent) {
           m.transparent = want || o.transparent;
-          m.depthWrite = want ? false : o.depthWrite;
+          m.depthWrite = want ? CLOTH_DEPTH(m) : o.depthWrite; // soaked clothes still keep their layering
           m.needsUpdate = true;
         }
         m.opacity = (o.opacity ?? 1) * (1 - WET_MAX_SEE * see); // capped by the 'soaked see-through' setting
@@ -1327,15 +1405,71 @@ function setupVRMChar(ch, scene, hum, opts) {
   };
 }
 
+/**
+ * Tint a material. raw: multiply straight onto the texture (white textures made for tinting).
+ * Otherwise the piece's texture is swapped for a grey copy whose average brightness is fixed, so the
+ * picked color comes out as picked: soot black is black, and a darker or tinted texture doesn't
+ * shift it. The texture's own detail (folds, seams, prints) stays.
+ */
 function mulColor(m, c, raw) {
   if (!c) return;
   const col = new THREE.Color(c);
-  if (!raw) {
-    const mx = Math.max(col.r, col.g, col.b, 0.05);
-    col.multiplyScalar(1 / mx).multiplyScalar(Math.min(1, mx * 1.2 + 0.2));
-  }
+  if (!raw) neutralTextures(m);
   if (m.color) m.color.multiply(col);
   if (m.shadeColorFactor) m.shadeColorFactor.multiply(col);
+}
+
+const greyTex = new WeakMap();
+function greyCopy(t) {
+  if (!t || !t.image) return t;
+  if (greyTex.has(t)) return greyTex.get(t);
+  let out = t;
+  try {
+    const img = t.image;
+    const w = img.width;
+    const h = img.height;
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0);
+    const id = g.getImageData(0, 0, w, h);
+    const d = id.data;
+    // brightness of every pixel, and the average over the visible ones
+    let sum = 0;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 128) continue;
+      sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+      n++;
+    }
+    const mean = n ? sum / n : 255;
+    // the average lands just under white, so the material color decides how bright it is
+    const k = (0.9 * 255) / Math.max(8, mean);
+    for (let i = 0; i < d.length; i += 4) {
+      const l = Math.min(255, (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) * k);
+      d[i] = d[i + 1] = d[i + 2] = l;
+    }
+    g.putImageData(id, 0, 0);
+    out = t.clone();
+    out.source = new THREE.Source(c);
+    out.needsUpdate = true;
+  } catch (_) {
+    out = t;
+  }
+  greyTex.set(t, out);
+  return out;
+}
+function neutralTextures(m) {
+  if (m._neutral) return;
+  m._neutral = true;
+  const map = m.map;
+  if (map) m.map = greyCopy(map);
+  if (m.shadeMultiplyTexture) m.shadeMultiplyTexture = m.shadeMultiplyTexture === map ? m.map : greyCopy(m.shadeMultiplyTexture);
+  // start from plain white so only the picked color counts
+  if (m.color) m.color.setRGB(1, 1, 1);
+  if (m.shadeColorFactor) m.shadeColorFactor.setRGB(1, 1, 1);
+  m.needsUpdate = true;
 }
 
 function applyTints(ch, opts) {
@@ -1703,49 +1837,18 @@ function coverMask(S, pts) {
   return mask;
 }
 
-/** Hide body triangles that are fully covered by visible fitted clothing (stops poke-through). */
+/**
+ * Bodies are never cut away under clothing (a missing chunk of body looks far worse than a bit of
+ * skin poking through). This only puts back anything an older version hid.
+ */
 export function refreshBodyHiding(ch) {
-  const fitted = [];
-  ch.scene?.traverse((o) => o.userData?.covers && fitted.push(o));
-  for (const m of ch.borrowed || []) if (m.userData?.covers && !fitted.includes(m)) fitted.push(m);
-  if (!fitted.length && !ch._bodyHidden) return;
-  const body = (fitted[0] && fitted[0].userData.body) || ch._bodyHidden;
-  if (!body || !body.geometry.index) return;
-  if (!body.userData.ownGeo) {
-    body.geometry = body.geometry.clone();
-    body.userData.ownGeo = true;
-    body.userData.origIndex = body.geometry.index.array.slice();
-    body.userData.origGroups = body.geometry.groups.map((g) => ({ ...g }));
-  }
-  const orig = body.userData.origIndex;
-  const visible = fitted.filter((m) => m.visible && m.parent);
-  const n = body.geometry.attributes.position.count;
-  const cov = new Uint8Array(n);
-  const vindex = fitted[0]?.userData.vindex;
-  for (const m of visible) {
-    const c = m.userData.covers;
-    for (let i = 0; i < n; i++) {
-      const k = vindex ? vindex[i] : i;
-      if (k >= 0 && c[k]) cov[i] = 1;
-    }
-  }
-  // filter triangles group by group so multi-material meshes (toon + outline) keep working
-  const groups = body.userData.origGroups.length ? body.userData.origGroups : [{ start: 0, count: orig.length, materialIndex: 0 }];
-  const keep = [];
-  const newGroups = [];
-  for (const g of groups) {
-    const start = keep.length;
-    for (let t = g.start; t < g.start + g.count; t += 3) {
-      if (cov[orig[t]] && cov[orig[t + 1]] && cov[orig[t + 2]]) continue;
-      keep.push(orig[t], orig[t + 1], orig[t + 2]);
-    }
-    newGroups.push({ start, count: keep.length - start, materialIndex: g.materialIndex });
-  }
-  const Arr = orig.constructor;
-  body.geometry.setIndex(new THREE.BufferAttribute(new Arr(keep), 1));
+  const body = ch._bodyHidden;
+  if (!body || !body.userData.origIndex) return;
+  const Arr = body.userData.origIndex.constructor;
+  body.geometry.setIndex(new THREE.BufferAttribute(new Arr(body.userData.origIndex), 1));
   body.geometry.clearGroups();
-  if (body.userData.origGroups.length) for (const g of newGroups) body.geometry.addGroup(g.start, g.count, g.materialIndex);
-  ch._bodyHidden = body;
+  for (const g of body.userData.origGroups || []) body.geometry.addGroup(g.start, g.count, g.materialIndex);
+  ch._bodyHidden = null;
 }
 
 /** Copy the meshes of `src` selected by `filter(mesh)` onto character `dst`. Returns the new meshes. */
@@ -1904,7 +2007,7 @@ export function fitClothing(srcScene, srcHum, dst, filter) {
     mesh.bind(skel, D.body.bindMatrix);
     mesh.frustumCulled = false;
     mesh.castShadow = true;
-    mesh.userData.covers = D.surface ? coverMask(D.surface, clothPts) : null;
+    mesh.userData.covers = null; // the body underneath is never cut away
     mesh.userData.body = D.body;
     mesh.userData.vindex = D.surface ? D.surface.vindex : null;
     out.push(mesh);
@@ -2413,38 +2516,44 @@ function uvIslandMask(ch, m, R, flipY) {
 
 /** For each pixel just outside the islands (up to `reach` px), the island pixel nearest to it. Worked out once per UV layout. */
 const bleedMaps = new WeakMap();
-function bleedMap(mask, R, reach = 16) {
+function bleedMap(mask, R, reach = Math.round(R / 16)) {
   let bm = bleedMaps.get(mask);
   if (bm) return bm;
-  const src = new Int32Array(R * R).fill(-1);
+  // breadth-first outward from the islands: each outside pixel (up to `reach` away) records the
+  // neighbor it takes its color from, in the order the copies must happen
+  const state = new Int8Array(R * R); // 1 = has a color, 2 = queued
+  for (let i = 0; i < R * R; i++) if (mask[i]) state[i] = 1;
+  const dst = [];
+  const from = [];
   let front = [];
-  for (let i = 0; i < R * R; i++) if (mask[i]) src[i] = i;
   for (let i = 0; i < R * R; i++) {
     if (mask[i]) continue;
     const x = i % R;
-    if ((x > 0 && mask[i - 1]) || (x < R - 1 && mask[i + 1]) || (i >= R && mask[i - R]) || (i < R * R - R && mask[i + R])) front.push(i);
+    if ((x > 0 && mask[i - 1]) || (x < R - 1 && mask[i + 1]) || (i >= R && mask[i - R]) || (i < R * R - R && mask[i + R])) {
+      state[i] = 2;
+      front.push(i);
+    }
   }
-  const dst = [];
-  const from = [];
   for (let p = 0; p < reach && front.length; p++) {
-    const next = [];
+    const done = [];
     for (const i of front) {
-      if (src[i] >= 0) continue;
       const x = i % R;
-      const n = x > 0 && src[i - 1] >= 0 ? i - 1 : x < R - 1 && src[i + 1] >= 0 ? i + 1 : i >= R && src[i - R] >= 0 ? i - R : i < R * R - R && src[i + R] >= 0 ? i + R : -1;
+      const n = x > 0 && state[i - 1] === 1 ? i - 1 : x < R - 1 && state[i + 1] === 1 ? i + 1 : i >= R && state[i - R] === 1 ? i - R : i < R * R - R && state[i + R] === 1 ? i + R : -1;
       if (n < 0) continue;
       dst.push(i);
-      from.push(n); // copies happen in this order, so a neighbor's color is always set first
-      next.push(i);
+      from.push(n);
+      done.push(i);
     }
-    for (const i of next) src[i] = i;
+    for (const i of done) state[i] = 1;
     const nf = [];
-    for (const i of next) {
+    for (const i of done) {
       const x = i % R;
-      if (x > 0 && src[i - 1] < 0) nf.push(i - 1);
-      if (x < R - 1 && src[i + 1] < 0) nf.push(i + 1);
-      if (i >= R && src[i - R] < 0) nf.push(i - R);
-      if (i < R * R - R && src[i + R] < 0) nf.push(i + R);
+      for (const j of [x > 0 ? i - 1 : -1, x < R - 1 ? i + 1 : -1, i >= R ? i - R : -1, i < R * R - R ? i + R : -1]) {
+        if (j >= 0 && state[j] === 0) {
+          state[j] = 2;
+          nf.push(j);
+        }
+      }
     }
     front = nf;
   }
@@ -2452,6 +2561,74 @@ function bleedMap(mask, R, reach = 16) {
   bleedMaps.set(mask, bm);
   return bm;
 }
+/**
+ * Underwear designs often stop a pixel or two short of a UV seam, leaving a sliver of skin at the
+ * edge; far away, the smaller mip levels smear that sliver into a visible split. Where a design
+ * comes within a few pixels of a seam, it's extended right up to (and past) the edge.
+ */
+const seamBands = new WeakMap();
+function seamBand(mask, R, w = 4) {
+  let band = seamBands.get(mask);
+  if (band) return band;
+  // island pixels within w px of the island edge
+  let d = new Uint8Array(R * R);
+  let front = [];
+  for (let i = 0; i < R * R; i++) {
+    if (!mask[i]) continue;
+    const x = i % R;
+    if ((x > 0 && !mask[i - 1]) || (x < R - 1 && !mask[i + 1]) || (i >= R && !mask[i - R]) || (i < R * R - R && !mask[i + R])) {
+      d[i] = 1;
+      front.push(i);
+    }
+  }
+  for (let k = 2; k <= w && front.length; k++) {
+    const nf = [];
+    for (const i of front) {
+      const x = i % R;
+      for (const j of [x > 0 ? i - 1 : -1, x < R - 1 ? i + 1 : -1, i >= R ? i - R : -1, i < R * R - R ? i + R : -1]) {
+        if (j >= 0 && mask[j] && !d[j]) {
+          d[j] = k;
+          nf.push(j);
+        }
+      }
+    }
+    front = nf;
+  }
+  band = d;
+  seamBands.set(mask, band);
+  return band;
+}
+function reachSeams(canvas, mask, R, steps = 6) {
+  const band = seamBand(mask, R);
+  const g = canvas.getContext('2d', { willReadFrequently: true });
+  const id = g.getImageData(0, 0, R, R);
+  const d = id.data;
+  // grow the design (color and opacity) into seam-band and outside pixels it doesn't cover yet
+  const solid = (i) => d[i * 4 + 3] > 160;
+  let front = [];
+  for (let i = 0; i < R * R; i++) if (solid(i) && band[i]) front.push(i);
+  if (!front.length) return;
+  const open = (j) => (!mask[j] || band[j]) && !solid(j);
+  for (let k = 0; k < steps && front.length; k++) {
+    const nf = [];
+    for (const i of front) {
+      const x = i % R;
+      for (const j of [x > 0 ? i - 1 : -1, x < R - 1 ? i + 1 : -1, i >= R ? i - R : -1, i < R * R - R ? i + R : -1]) {
+        if (j < 0 || !open(j)) continue;
+        const a = j * 4;
+        const b = i * 4;
+        d[a] = d[b];
+        d[a + 1] = d[b + 1];
+        d[a + 2] = d[b + 2];
+        d[a + 3] = 255;
+        nf.push(j);
+      }
+    }
+    front = nf;
+  }
+  g.putImageData(id, 0, 0);
+}
+
 /** One quick pass: every pixel near a UV seam takes the color of the island pixel next to it. */
 function bleedFast(id, mask, R) {
   const { dst, from } = bleedMap(mask, R);
@@ -2630,6 +2807,17 @@ export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
   ch._uwTex = [];
   for (const [e, parts] of targets) {
     const m = e.m;
+    // always start from the model's own textures and skin tint (not a previous design's result)
+    const u0 = (m.userData.uwOrig ||= { map: m.map, shade: m.shadeMultiplyTexture, normal: m.normalMap, color: m.color?.clone(), shadeColor: m.shadeColorFactor?.clone() });
+    if (u0.color && m.color) m.color.copy(u0.color);
+    if (u0.shadeColor && m.shadeColorFactor) m.shadeColorFactor.copy(u0.shadeColor);
+    // (the outline material shares the textures: put those back too)
+    const cur = { map: m.map, shade: m.shadeMultiplyTexture, normal: m.normalMap };
+    for (const x of ch.mats) {
+      if (x.m.map === cur.map) x.m.map = u0.map;
+      if (cur.shade && x.m.shadeMultiplyTexture === cur.shade) x.m.shadeMultiplyTexture = u0.shade;
+      if (cur.normal && x.m.normalMap === cur.normal) x.m.normalMap = u0.normal;
+    }
     const map = m.map;
     if (!map || !map.image) continue;
     const paint = isSkin(e); // painted on the skin: keep the skin, clear the old underwear
@@ -2646,8 +2834,15 @@ export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
       const name = part === 'panty' ? uw.panty : uw.bra;
       const img = await loadOverlay(part === 'panty' ? 'panties' : 'bras', name);
       const plain = /LegoBlack$/.test(name);
-      const mask = plain && uw.pattern && uw.accent ? await patternMask(uw.pattern, R).catch(() => null) : null;
-      overlays.push(tintedOverlay(img, plain ? uw.color : null, R, mask, uw.accent));
+      // the bra has its own color and print when set ('' = no print); otherwise it matches
+      const bra = part === 'bra';
+      const color = (bra && uw.braColor) || uw.color;
+      const pattern = bra && uw.braPattern != null ? uw.braPattern : uw.pattern;
+      const accent = (bra && uw.braAccent) || uw.accent;
+      const mask = plain && pattern && accent ? await patternMask(pattern, R).catch(() => null) : null;
+      const ov = tintedOverlay(img, plain ? color : null, R, mask, accent);
+      if (islands) reachSeams(ov, islands, R);
+      overlays.push(ov);
     }
     // per character: just the skin tint and the new design on top of the cleaned texture
     const build = (src, tintCol) => {
@@ -2680,6 +2875,10 @@ export async function applyUnderwear(ch, uw, cfg = {}, R = 1024) {
       t.wrapS = like.wrapS;
       t.wrapT = like.wrapT;
       t.anisotropy = 4;
+      // no blurred far-away copies: those blend skin from the next UV island into the underwear's
+      // edges, which shows as a split along the seams when zoomed out
+      t.generateMipmaps = false;
+      t.minFilter = THREE.LinearFilter;
       (ch._uwTex ||= []).push(t);
       return t;
     };

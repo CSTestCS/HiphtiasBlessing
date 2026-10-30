@@ -16,7 +16,22 @@ export const ui = {
   setScreen(html, transparent = false) {
     // menus need the mouse cursor back
     if (html && document.pointerLockElement) document.exitPointerLock();
+    // redrawing the same screen (an editor refreshing itself) keeps where you were scrolled to and
+    // which sections were open
+    const title = (h) => (/data-view="([^"]*)"/.exec(h || '') || /<h[12][^>]*>([^<]*)/.exec(h || '') || [])[1] || null;
+    const same = html && title(html) && title(html) === title(this.screen.innerHTML);
+    const scrollers = () => [this.screen, ...this.screen.querySelectorAll('.panel, .matlist')];
+    const opens = () => [...this.screen.querySelectorAll('details:not(.swpick)')];
+    const prevScroll = same ? scrollers().map((e) => e.scrollTop) : null;
+    const prevOpen = same ? opens().map((d) => d.open) : null;
     this.screen.innerHTML = html;
+    if (same) {
+      const od = opens();
+      if (od.length === prevOpen.length) od.forEach((d, i) => (d.open = prevOpen[i]));
+      scrollers().forEach((e, i) => {
+        if (prevScroll[i] != null) e.scrollTop = prevScroll[i];
+      });
+    }
     this.screen.classList.toggle('hidden', !html);
     this.screen.classList.toggle('transparent', transparent);
     this.screen.classList.remove('titlebg');

@@ -553,7 +553,7 @@ const ROOMS = {
       L.chair(r.cx + 1.7, z, -Math.PI / 2, undefined, true);
       WS(r.cx - 0.5, z, Math.PI / 2);
     }
-    L.box(r.x1 - 0.5, r.z1 - 1.8, 0.9, 1.8, 0.7, '#6c5ce7');
+    L.sofa(r.x1 - 0.55, r.z1 - 1.8, 1.8, -Math.PI / 2, '#6c5ce7');
     L.seat(r.x1 - 0.6, r.z1 - 1.8, -Math.PI / 2, 'break room couch');
     return 'BREAK ROOM';
   },
@@ -952,9 +952,9 @@ const PUBLIC = {
     for (const x of [-8, 8, -18, 18]) for (const z of [12, 18]) L.box(x, z, 0.9, 0.9, 3.2, '#ecf0f1');
     for (const cx of [-23, 23]) {
       L.box(cx, 16, 2, 1.2, 0.45, '#8d6e63');
-      L.box(cx - 2, 16, 0.9, 2.4, 0.75, '#6c5ce7');
-      L.box(cx + 2, 16, 0.9, 2.4, 0.75, '#6c5ce7');
-      L.box(cx, 18.4, 2.4, 0.9, 0.75, '#6c5ce7');
+      L.sofa(cx - 2, 16, 2.4, Math.PI / 2, '#6c5ce7');
+      L.sofa(cx + 2, 16, 2.4, -Math.PI / 2, '#6c5ce7');
+      L.sofa(cx, 18.4, 2.4, Math.PI, '#6c5ce7');
       L.pickup('newspaper', cx, 16, 0.45);
       L.pois.customerSpots.push(
         { x: cx - 2, z: 15.4, yaw: Math.PI / 2, sit: true },

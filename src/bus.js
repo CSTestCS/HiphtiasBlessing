@@ -83,7 +83,8 @@ export class Bus {
     add(0.1, 0.9, 0.9, -1.42, 0.65, 5.25, col);
     add(2.9, 2.5, 0.1, 0, 1.3, -5.7, col); // back
     // windows (transparent)
-    const glass = new THREE.MeshStandardMaterial({ color: '#aed6f1', transparent: true, opacity: 0.25, roughness: 0.1, depthWrite: false });
+    // tinted glass you can't see through from the street; clear only while you ride this bus
+    const glass = (this.glass = new THREE.MeshStandardMaterial({ color: '#34495e', roughness: 0.15, metalness: 0.4 }));
     add(0.05, 1.3, 11.4, 1.42, 1.75, 0, null, { material: glass, shadow: false });
     add(0.05, 1.3, 7.8, -1.42, 1.75, -1.8, null, { material: glass, shadow: false });
     add(2.9, 1.6, 0.05, 0, 1.6, 5.7, null, { material: glass, shadow: false }); // windshield
@@ -215,13 +216,23 @@ export class Bus {
     this.group.position.set(this.x, 0, this.z);
     this.group.rotation.y = this.yaw;
     this.roof.visible = !riding;
+    if (this._glassClear !== riding) {
+      this._glassClear = riding;
+      const gl = this.glass;
+      gl.transparent = riding;
+      gl.opacity = riding ? 0.25 : 1;
+      gl.depthWrite = !riding;
+      gl.color.set(riding ? '#aed6f1' : '#34495e');
+      gl.needsUpdate = true;
+    }
 
     // materialize passengers near the player
     const d = Math.hypot(player.x - this.x, player.z - this.z);
-    // riders only exist as models while the bus is near and on screen (or you're aboard)
-    this._outT = this.inView === false ? (this._outT || 0) + dt : 0;
-    if (!this.materialized && (riding || (d < 38 && this.inView !== false))) this.materialize();
-    else if (this.materialized && !riding && (d > 55 || this._outT > 4)) this.dematerialize();
+    // nobody can be seen through the tinted windows: riders (and the driver) only exist as models
+    // while you're aboard; the rest of the time they're just a head count
+    if (!this.materialized && riding) this.materialize();
+    else if (this.materialized && !riding) this.dematerialize();
+    void d;
     if (this.materialized) this.updatePassengers(dt);
   }
 

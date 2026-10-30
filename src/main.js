@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { ui, esc } from './ui.js';
 import { storage, newId } from './storage.js';
 import { dyeName, coordinatedColors } from './dyes.js';
+import { initGamepad } from './gamepad.js';
 import { randomApartment, randomWorkSlot, civBodyFrom, randomBodyFor, aptById, UNDERWEAR, UNDERWEAR_COLORS, prettyUnderwear, randomUnderwear, JOBS, PERSONALITIES, DEFAULT_COWORKER_NAMES, FEMALE_NAMES, MALE_NAMES, nameFor, guessGender, guessModelGender, DEFAULT_PERSONALITIES, COLORS, ROLE_NAMES, WEEKDAYS, weekday, DEFAULT_SETTINGS, BUNDLED } from './data.js';
 import { createCharacter, inspectVRM, outfitClothes, randomColors, addAngelic, clearTemplates, setOutlines } from './character.js';
 import { Game, controlsTable } from './game.js';
@@ -14,6 +15,7 @@ import { sound, applyVolumeSettings, volumeSlidersHTML, bindVolumeSliders } from
 
 const blobCache = new Map();
 let game = null;
+initGamepad(() => game);
 
 /** Model buffer for {asset} (bundled) or {key} (imported) models. */
 async function getModel(model) {
@@ -794,7 +796,7 @@ function renderCreator() {
   else body = creatorSummary();
   const showPreview = step === 0 || step === 2;
   const s = ui.setScreen(`
-    <div class="panel">
+    <div class="panel" data-view="newgame-${step}">
       <h2>New Game</h2>
       ${stepsBar()}
       <div class="${showPreview ? 'cols' : ''}">
@@ -921,22 +923,29 @@ function underwearEditor(def, attr) {
   const uw = def.underwear || {};
   const male = def.gender === 'male';
   const pants = male ? UNDERWEAR.male : UNDERWEAR.panties;
+  const plainP = /LegoBlack$/.test(uw.panty || '');
+  const plainB = /LegoBlack$/.test(uw.bra || '');
+  const patSel = (key, cur) => `<select data-${attr}-${key}><option value="">No print</option>${UNDERWEAR.patterns.map((n) => `<option value="${n}" ${cur === n ? 'selected' : ''}>${esc(prettyUnderwear(n))}</option>`).join('')}</select>`;
   return `<label>Underwear</label>
     <div class="row" style="gap:6px;flex-wrap:wrap">
       <select data-${attr}-p><option value="">The model's own</option>${pants.map((n) => `<option value="${n}" ${uw.panty === n ? 'selected' : ''}>${esc(prettyUnderwear(n))}</option>`).join('')}</select>
       ${male ? '' : `<select data-${attr}-b ${uw.panty ? '' : 'disabled'}><option value="">No bra</option>${UNDERWEAR.bras.map((n) => `<option value="${n}" ${uw.bra === n ? 'selected' : ''}>${esc(prettyUnderwear(n))}</option>`).join('')}</select>`}
       <button class="secondary" style="padding:4px 10px" data-${attr}-r>Random</button>
     </div>
-    ${uw.panty ? swatches('under', uw.color, attr + '-c', UNDERWEAR_COLORS) : ''}
     ${
-      uw.panty && !male
-        ? `<label>Print</label><select data-${attr}-pat><option value="">None</option>${UNDERWEAR.patterns.map((n) => `<option value="${n}" ${uw.pattern === n ? 'selected' : ''}>${esc(prettyUnderwear(n))}</option>`).join('')}</select>
-           ${uw.pattern ? `<label>Print color</label>${swatches('under', uw.accent, attr + '-a', UNDERWEAR_COLORS)}` : ''}`
+      uw.panty
+        ? `<label>${male ? 'Underwear' : 'Panties'} color</label>${swatches('under', uw.color, attr + '-c', UNDERWEAR_COLORS)}
+           ${!male && plainP ? `<label>Panties print</label>${patSel('pat', uw.pattern)}${uw.pattern ? `<label>Panties print color</label>${swatches('under', uw.accent, attr + '-a', UNDERWEAR_COLORS)}` : ''}` : ''}`
+        : ''
+    }
+    ${
+      uw.panty && uw.bra && !male
+        ? `<label>Bra color</label>${swatches('under', uw.braColor || uw.color, attr + '-bc', UNDERWEAR_COLORS)}
+           ${plainB ? `<label>Bra print</label>${patSel('bpat', uw.braPattern ?? uw.pattern)}${(uw.braPattern ?? uw.pattern) ? `<label>Bra print color</label>${swatches('under', uw.braAccent || uw.accent, attr + '-ba', UNDERWEAR_COLORS)}` : ''}` : ''}`
         : ''
     }
     ${uw.panty ? '<div class="note">Plain designs take the color (and the print, in the print color); printed designs keep their own pattern. Only shows on .vrm models.</div>' : ''}`;
 }
-
 function bindUnderwear(s, def, attr, target, rerender = null) {
   const re = rerender || (() => ((previewTarget = target), renderCreator()));
   const p = s.querySelector(`[data-${attr}-p]`);
@@ -953,6 +962,11 @@ function bindUnderwear(s, def, attr, target, rerender = null) {
   const pat = s.querySelector(`[data-${attr}-pat]`);
   if (pat) pat.onchange = () => ((def.underwear = { ...def.underwear, pattern: pat.value || null, accent: def.underwear.accent || UNDERWEAR_COLORS[Math.floor(Math.random() * UNDERWEAR_COLORS.length)] }), re());
   s.querySelectorAll(`[data-${attr}-a]`).forEach((el) => (el.onclick = () => ((def.underwear = { ...def.underwear, accent: el.getAttribute(`data-${attr}-a`) }), re())));
+  // the bra: its own color and print
+  s.querySelectorAll(`[data-${attr}-bc]`).forEach((el) => (el.onclick = () => ((def.underwear = { ...def.underwear, braColor: el.getAttribute(`data-${attr}-bc`) }), re())));
+  const bpat = s.querySelector(`[data-${attr}-bpat]`);
+  if (bpat) bpat.onchange = () => ((def.underwear = { ...def.underwear, braPattern: bpat.value || '', braAccent: def.underwear.braAccent || def.underwear.accent || UNDERWEAR_COLORS[Math.floor(Math.random() * UNDERWEAR_COLORS.length)] }), re());
+  s.querySelectorAll(`[data-${attr}-ba]`).forEach((el) => (el.onclick = () => ((def.underwear = { ...def.underwear, braAccent: el.getAttribute(`data-${attr}-ba`) }), re())));
 }
 
 function genderSelect(def, attr) {
@@ -1252,7 +1266,8 @@ function chooseOutfits(g) {
           <div class="row" style="margin-top:6px"><button class="secondary" data-ohprev="1">Preview at-home outfit</button></div>`
               : ''
           }
-          <div class="row" style="margin-top:8px"><button class="secondary" data-oadd="${e.key}">+ Add outfit (.vrm)</button><button class="secondary" data-oaddd="${e.key}">+ Add outfit (same body)</button></div>
+          <div class="row" style="margin-top:8px"><button class="secondary" data-oadd="${e.key}">+ Add outfit (.vrm)</button><button class="secondary" data-oaddd="${e.key}">+ Add outfit (same body)</button>
+            <select data-oaddc="${e.key}"><option value="">+ Add outfit (townsperson model)...</option>${BUNDLED.civilians.map((b) => `<option value="asset:${esc(b.asset)}">${esc(b.title)}</option>`).join('')}${civModels.filter((c) => c.key).map((c) => `<option value="civ:${esc(c.key)}">${esc(c.title)}</option>`).join('')}</select></div>
           <details data-oedit="${e.key}" ${openEdit === e.key ? 'open' : ''}><summary class="note" style="cursor:pointer;margin-top:8px">Edit this outfit (model, colors, parts, underwear)</summary>
             ${outfitEditor(e.def.outfits[d.outfit] || e.def.outfits[0], 'od' + e.key + 'x', e.key === 'player')}
             ${underwearEditor(e.def, 'oduw' + e.key)}
@@ -1341,11 +1356,11 @@ function chooseOutfits(g) {
           });
         }
       }
-      const addOutfit = async (key, withVrm) => {
+      const addOutfit = async (key, withVrm, civ = null) => {
         const e = entries.find((x) => x.key === key);
         const base = e.def.outfits[0];
         const o = {
-          model: base.model && base.model.asset ? { ...base.model } : null,
+          model: civ || (base.model && base.model.asset ? { ...base.model } : null),
           legwearType: base.legwearType,
           colors: { ...base.colors, ...randomColors(), skin: base.colors.skin, hair: base.colors.hair, under: base.colors.under },
         };
@@ -1368,9 +1383,25 @@ function chooseOutfits(g) {
       };
       s.querySelectorAll('[data-oadd]').forEach((b) => (b.onclick = () => addOutfit(b.dataset.oadd, true)));
       s.querySelectorAll('[data-oaddd]').forEach((b) => (b.onclick = () => addOutfit(b.dataset.oaddd, false)));
+      // an outfit from a townsperson model you already have installed
+      s.querySelectorAll('[data-oaddc]').forEach((sl) => (sl.onchange = () => {
+        const v = sl.value;
+        if (!v) return;
+        let model = null;
+        if (v.startsWith('asset:')) {
+          const b = BUNDLED.civilians.find((x) => x.asset === v.slice(6));
+          if (b) model = { asset: b.asset, title: b.title, tintable: true, legwearMaterials: null, underwearOverlay: false, wetMaterials: null };
+        } else {
+          const c = civModels.find((x) => x.key === v.slice(4));
+          if (c) model = civBodyFrom(c);
+        }
+        if (model) addOutfit(sl.dataset.oaddc, false, model);
+      }));
       s.querySelector('#o-rand').onclick = () => {
         for (const e of entries) {
           Object.assign(daily[e.key], coordinatedColors());
+          // new underwear too (style, colors and prints)
+          if (e.def.underwear?.panty || e.def.gender) e.def.underwear = randomUnderwear(e.def.gender === 'male' ? 'male' : 'female');
         }
         render();
       };

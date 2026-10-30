@@ -29,7 +29,7 @@ export function buildLobby(apt = null) {
   L.box(5.5, 2.5, 3, 0.9, 1.1, '#5d4037');
   L.pois.clerks = [{ x: 5.5, z: 1.6, yaw: Math.PI }];
   // sofas and plants (cover), seats
-  L.box(-5.5, 3.5, 2.6, 0.9, 0.75, '#3d5a80');
+  L.sofa(-5.5, 3.45, 2.6, 0, '#3d5a80');
   L.seat(-5.5, 3.3, 0, 'lobby sofa');
   L.seat(-6.3, 3.3, 0, 'lobby sofa');
   L.box(-5.5, 5.2, 1.4, 0.8, 0.45, '#6d4c41', { occlude: false });

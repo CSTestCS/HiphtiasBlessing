@@ -200,6 +200,7 @@ export class NPC {
       return;
     }
     if (this.kind === 'pedestrian') return g.pedestrianBrain(this);
+    if (this.guardWatch) return this.guardWatch();
     this.plan([{ t: 3 }]);
   }
 

@@ -91,6 +91,9 @@ Each coworker has a role (host, line cook, cashier, housekeeper...) with a home 
 - **Ordinary mishaps**: very rarely, anyone's clothes give out, blessed or not. A coworker it happens to has to sneak around for the rest of the day (an oddball may decide to keep doing it); everyone else is dressed properly again the next day.
 - **Customers with business in back rooms** go past the STAFF ONLY doors: hotel guests check in and go to a booked room, office clients sit in on meetings, and anyone may use the restroom.
 - **Former coworkers**: anyone fired or replaced (managers too) still lives in town. You may pass them on the street, where they recognize you, and they keep turning up as townsfolk in your other saves.
+- **Time** only skips overnight: the clock keeps running at home, through doors and on the way to work, and coworkers' commutes follow the same schedule as their workday.
+- **Desk work** (emails, filing at a desk...) is done sitting in the desk's chair, legs safely under the table.
+- **Security** stands further inside, facing the building, and only glances back at the door now and then.
 - **Getting to know coworkers**: when a coworker checks on you, when you run into one outside work, or when you visit, you can ask how things are going: they tell you their temperament, write-ups and complaints today.
 - **Visiting coworkers**: what they have on depends on the hour. Mid-day they're dressed but barefoot, in the morning and evening barefoot without legwear, and at night in their at-home clothes.
 - **Blessed coworkers** never report you, but blessed friends can't help you anymore either.
@@ -108,6 +111,8 @@ The city is a 4×4 grid of blocks with named streets, parks and shops, full of h
 - **Days off**: run 3 errands (supermarket, pharmacy, post office, laundromat, bank, hardware store, bookstore). Watch out for chaos, like running into a coworker in town (some will tell the manager on Monday) or a dog stealing your shopping.
 
 ## Controls
+Xbox-style controllers work everywhere: in play, in menus and dialogs, and for typing names (an on-screen keyboard: X backspace, Y space, LB/RB cursor, LT shift, Menu done). See the in-game Controls screen for the full layout.
+
 | Key | Action |
 | --- | --- |
 | Mouse | Look, all the way up or down (click the game to capture the mouse) |

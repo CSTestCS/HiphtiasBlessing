@@ -335,6 +335,33 @@ export class Level {
     this.box(bx, bz, along ? 0.45 : 0.06, along ? 0.06 : 0.45, 0.5, color, { y: 0.45, collide: false, occlude: false });
   }
 
+  /**
+   * A sofa: low seat, backrest, two armrests and cushion seams. (x, z) is the middle of the seat,
+   * yaw the way someone sitting on it faces (a multiple of 90 degrees), len its length.
+   */
+  sofa(x, z, len, yaw = 0, color = '#3d5a80') {
+    const fx = Math.round(Math.sin(yaw));
+    const fz = Math.round(Math.cos(yaw));
+    const along = fz !== 0; // the sofa runs along x when facing +-z
+    const W = (a, b) => (along ? a : b);
+    const D = (a, b) => (along ? b : a);
+    const dark = new THREE.Color(color).multiplyScalar(0.8).getStyle();
+    // seat base (the part that blocks walking), then cushions on top
+    this.box(x, z, W(len, 0.9), D(len, 0.9), 0.4, dark);
+    const n = Math.max(1, Math.round(len / 0.9));
+    const cw = (len - 0.3) / n;
+    for (let i = 0; i < n; i++) {
+      const o = -len / 2 + 0.15 + cw * (i + 0.5);
+      this.box(x + (along ? o : 0) + fx * 0.06, z + (along ? 0 : o) + fz * 0.06, W(cw - 0.04, 0.72), D(cw - 0.04, 0.72), 0.1, color, { y: 0.4, collide: false, occlude: false });
+    }
+    // backrest behind, armrests at the ends
+    this.box(x - fx * 0.36, z - fz * 0.36, W(len, 0.2), D(len, 0.2), 0.9, color, { collide: false });
+    for (const sgn of [-1, 1]) {
+      const o = sgn * (len / 2 - 0.08);
+      this.box(x + (along ? o : 0), z + (along ? 0 : o), W(0.18, 0.9), D(0.18, 0.9), 0.62, dark, { collide: false });
+    }
+  }
+
   plant(x, z, s = 1) {
     this.box(x, z, 0.4 * s, 0.4 * s, 0.4 * s, '#a0522d');
     const leaves = new THREE.Mesh(new THREE.IcosahedronGeometry(0.4 * s, 1), mat('#2e8b57'));
@@ -788,6 +815,10 @@ export class Frame {
   plant(x, z, s) {
     const p = this.tx(x, z);
     this.L.plant(p.x, p.z, s);
+  }
+  sofa(x, z, len, yaw, color) {
+    const p = this.tx(x, z);
+    this.L.sofa(p.x, p.z, len, yaw + this.phi, color);
   }
   pickup(kind, x, z, y, rotY = 0) {
     const p = this.tx(x, z);
